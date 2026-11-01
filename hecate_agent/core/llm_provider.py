@@ -18,11 +18,13 @@ import json
 import logging
 import os
 import random
+import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import Enum
 from functools import wraps
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +198,371 @@ def retry_on_rate_limit(
 
 
 # ---------------------------------------------------------------------------
+# Circuit Breaker Protection
+# ---------------------------------------------------------------------------
+
+
+class CircuitState(str, Enum):
+    """Operational states of an LLM upstream circuit breaker."""
+
+    CLOSED = "CLOSED"  # Normal operations: requests flow through to upstream
+    OPEN = "OPEN"  # Tripped: requests fail-fast to prevent cascading outages
+    HALF_OPEN = "HALF_OPEN"  # Cooldown period elapsed: single probe allowed to test recovery
+
+
+class CircuitBreakerOpenError(RuntimeError):
+    """Raised when an LLM provider call is blocked by an open circuit breaker."""
+
+    def __init__(
+        self,
+        provider: str,
+        cooldown_remaining: float,
+        failure_count: int,
+        last_error: Optional[str] = None,
+    ):
+        self.provider = provider
+        self.cooldown_remaining = max(0.0, cooldown_remaining)
+        self.failure_count = failure_count
+        self.last_error = last_error
+        msg = (
+            f"Circuit breaker is OPEN for LLM provider '{provider}' after "
+            f"{failure_count} consecutive upstream failures. "
+            f"Failing fast for another {self.cooldown_remaining:.1f}s to allow upstream recovery. "
+            f"Last error: {last_error or 'Unknown failure'}"
+        )
+        super().__init__(msg)
+
+
+def _is_breaker_failure(exc: BaseException) -> Tuple[bool, bool]:
+    """Classify an exception for circuit breaker tracking.
+
+    Returns:
+        (is_breaker_failure, is_auth_failure)
+    """
+    if isinstance(exc, CircuitBreakerOpenError):
+        return False, False
+
+    # Check HTTP status codes on the exception
+    for attr in ("status_code", "http_status", "code"):
+        val = getattr(exc, attr, None)
+        if val in (401, 403):
+            return True, True
+        if val in (429, 500, 502, 503, 504):
+            return True, False
+
+    resp = getattr(exc, "response", None)
+    if isinstance(resp, dict):
+        status = resp.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        err = resp.get("Error", {})
+        code = str(err.get("Code", ""))
+        if status in (401, 403) or code in (
+            "UnrecognizedClientException",
+            "AccessDeniedException",
+            "ExpiredTokenException",
+            "AuthFailure",
+            "InvalidSignatureException",
+        ):
+            return True, True
+        if status in (429, 500, 502, 503, 504) or code in (
+            "ThrottlingException",
+            "ProvisionedThroughputExceededException",
+            "RequestLimitExceeded",
+            "TooManyRequestsException",
+            "Throttling",
+            "ServiceUnavailable",
+            "ModelNotReadyException",
+            "InternalServerException",
+        ):
+            return True, False
+
+    cls_name = exc.__class__.__name__.lower()
+    if any(k in cls_name for k in ("authentication", "permissiondenied", "unauthorized", "forbidden")):
+        return True, True
+    if any(k in cls_name for k in ("ratelimit", "throttl", "serviceunavailable", "timeout", "connect", "network")):
+        return True, False
+
+    msg = str(exc).lower()
+    if any(
+        phrase in msg
+        for phrase in (
+            "unauthorized",
+            "invalid api key",
+            "invalid_api_key",
+            "forbidden",
+            "access denied",
+            "authentication failed",
+            "expired token",
+        )
+    ):
+        return True, True
+
+    if any(
+        phrase in msg
+        for phrase in (
+            "429",
+            "500",
+            "502",
+            "503",
+            "504",
+            "rate limit",
+            "too many requests",
+            "throttling",
+            "throttled",
+            "service unavailable",
+            "temporarily unavailable",
+            "connection refused",
+            "connection reset",
+            "connection error",
+            "network error",
+            "timeout",
+            "timed out",
+        )
+    ):
+        return True, False
+
+    import socket
+
+    if isinstance(exc, (TimeoutError, ConnectionError, socket.timeout)):
+        return True, False
+
+    return False, False
+
+
+class CircuitBreaker:
+    """Thread-safe circuit breaker protecting against cascading upstream LLM failures."""
+
+    def __init__(
+        self,
+        provider_name: str,
+        failure_threshold: Optional[int] = None,
+        cooldown_seconds: Optional[float] = None,
+        auth_failure_threshold: Optional[int] = None,
+        half_open_successes: int = 1,
+    ):
+        self.provider_name = provider_name
+        self._failure_threshold = failure_threshold
+        self._cooldown_seconds = cooldown_seconds
+        self._auth_failure_threshold = auth_failure_threshold
+        self.half_open_successes = half_open_successes
+
+        self._lock = threading.RLock()
+        self._state = CircuitState.CLOSED
+        self._failure_count = 0
+        self._auth_failure_count = 0
+        self._success_count = 0
+        self._last_failure_time: Optional[float] = None
+        self._last_error: Optional[str] = None
+
+    @property
+    def failure_threshold(self) -> int:
+        if self._failure_threshold is not None:
+            return self._failure_threshold
+        return int(os.getenv("HECATE_LLM_CIRCUIT_FAILURE_THRESHOLD", "5"))
+
+    @property
+    def cooldown_seconds(self) -> float:
+        if self._cooldown_seconds is not None:
+            return self._cooldown_seconds
+        return float(os.getenv("HECATE_LLM_CIRCUIT_COOLDOWN_SECONDS", "30.0"))
+
+    @property
+    def auth_failure_threshold(self) -> int:
+        if self._auth_failure_threshold is not None:
+            return self._auth_failure_threshold
+        return int(os.getenv("HECATE_LLM_CIRCUIT_AUTH_THRESHOLD", "2"))
+
+    @property
+    def state(self) -> CircuitState:
+        with self._lock:
+            self._check_cooldown_transition(time.monotonic())
+            return self._state
+
+    @property
+    def failure_count(self) -> int:
+        with self._lock:
+            return self._failure_count
+
+    @property
+    def last_error(self) -> Optional[str]:
+        with self._lock:
+            return self._last_error
+
+    @property
+    def cooldown_remaining(self) -> float:
+        with self._lock:
+            if self._state != CircuitState.OPEN or self._last_failure_time is None:
+                return 0.0
+            elapsed = time.monotonic() - self._last_failure_time
+            return max(0.0, self.cooldown_seconds - elapsed)
+
+    def _check_cooldown_transition(self, now: float) -> None:
+        """Transition from OPEN to HALF_OPEN once cooldown has expired. Must hold self._lock."""
+        if self._state == CircuitState.OPEN and self._last_failure_time is not None:
+            elapsed = now - self._last_failure_time
+            if elapsed >= self.cooldown_seconds:
+                logger.info(
+                    "Circuit breaker for '%s' cooldown expired (%.1fs elapsed). Transitioning to HALF_OPEN probe.",
+                    self.provider_name,
+                    elapsed,
+                )
+                self._state = CircuitState.HALF_OPEN
+                self._success_count = 0
+
+    def before_call(self) -> None:
+        """Check circuit breaker state before executing a call. Raises CircuitBreakerOpenError if OPEN."""
+        with self._lock:
+            now = time.monotonic()
+            self._check_cooldown_transition(now)
+            if self._state == CircuitState.OPEN:
+                elapsed = now - (self._last_failure_time or now)
+                remaining = max(0.0, self.cooldown_seconds - elapsed)
+                raise CircuitBreakerOpenError(
+                    provider=self.provider_name,
+                    cooldown_remaining=remaining,
+                    failure_count=self._failure_count,
+                    last_error=self._last_error,
+                )
+
+    def record_success(self) -> None:
+        """Record a successful call, resetting state to CLOSED."""
+        with self._lock:
+            if self._state == CircuitState.HALF_OPEN:
+                self._success_count += 1
+                if self._success_count >= self.half_open_successes:
+                    logger.info(
+                        "Circuit breaker probe call for '%s' succeeded. Resetting to CLOSED.",
+                        self.provider_name,
+                    )
+                    self._state = CircuitState.CLOSED
+                    self._failure_count = 0
+                    self._auth_failure_count = 0
+                    self._last_error = None
+            elif self._state == CircuitState.CLOSED:
+                self._failure_count = 0
+                self._auth_failure_count = 0
+
+    def record_failure(self, exc: BaseException) -> None:
+        """Record a failed call and trip breaker to OPEN if threshold exceeded."""
+        is_fail, is_auth = _is_breaker_failure(exc)
+        if not is_fail:
+            return
+
+        with self._lock:
+            now = time.monotonic()
+            self._last_failure_time = now
+            self._last_error = f"{exc.__class__.__name__}: {exc}"
+
+            if is_auth:
+                self._auth_failure_count += 1
+            self._failure_count += 1
+
+            if self._state == CircuitState.HALF_OPEN:
+                logger.warning(
+                    "Circuit breaker probe call for '%s' failed. Tripping back to OPEN.",
+                    self.provider_name,
+                )
+                self._state = CircuitState.OPEN
+            elif self._state == CircuitState.CLOSED:
+                threshold = self.auth_failure_threshold if is_auth else self.failure_threshold
+                count = self._auth_failure_count if is_auth else self._failure_count
+                if count >= threshold:
+                    self._state = CircuitState.OPEN
+                    logger.error(
+                        "Circuit breaker tripped to OPEN for '%s' after %d consecutive failures (threshold: %d). "
+                        "Failing fast for %.1fs. Error: %s",
+                        self.provider_name,
+                        count,
+                        threshold,
+                        self.cooldown_seconds,
+                        self._last_error,
+                    )
+
+    def reset(self) -> None:
+        """Manually reset the breaker to CLOSED state."""
+        with self._lock:
+            self._state = CircuitState.CLOSED
+            self._failure_count = 0
+            self._auth_failure_count = 0
+            self._success_count = 0
+            self._last_failure_time = None
+            self._last_error = None
+
+    def trip(self, reason: str = "manual") -> None:
+        """Manually trip the breaker to OPEN state."""
+        with self._lock:
+            self._state = CircuitState.OPEN
+            self._last_failure_time = time.monotonic()
+            self._last_error = f"ManualTrip: {reason}"
+
+    def status_dict(self) -> Dict[str, Any]:
+        """Return diagnostic dictionary of current circuit breaker metrics."""
+        with self._lock:
+            self._check_cooldown_transition(time.monotonic())
+            return {
+                "provider": self.provider_name,
+                "state": self._state.value,
+                "failure_count": self._failure_count,
+                "auth_failure_count": self._auth_failure_count,
+                "failure_threshold": self.failure_threshold,
+                "cooldown_seconds": self.cooldown_seconds,
+                "cooldown_remaining": self.cooldown_remaining,
+                "last_error": self._last_error,
+            }
+
+
+_CIRCUIT_BREAKERS: Dict[str, CircuitBreaker] = {}
+_CB_LOCK = threading.Lock()
+
+
+def get_circuit_breaker(provider_name: str) -> CircuitBreaker:
+    """Retrieve or create the circuit breaker instance for a given provider."""
+    with _CB_LOCK:
+        if provider_name not in _CIRCUIT_BREAKERS:
+            _CIRCUIT_BREAKERS[provider_name] = CircuitBreaker(provider_name)
+        return _CIRCUIT_BREAKERS[provider_name]
+
+
+def reset_all_circuit_breakers() -> None:
+    """Reset all registered circuit breakers to CLOSED state."""
+    with _CB_LOCK:
+        for cb in _CIRCUIT_BREAKERS.values():
+            cb.reset()
+
+
+def get_all_circuit_breakers() -> Dict[str, CircuitBreaker]:
+    """Retrieve all registered circuit breakers."""
+    with _CB_LOCK:
+        return dict(_CIRCUIT_BREAKERS)
+
+
+def with_circuit_breaker(
+    fn: Callable[..., Any],
+    provider_name: Optional[str] = None,
+) -> Callable[..., Any]:
+    """Decorator enforcing circuit breaker protection on an LLM complete() method."""
+
+    @wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        enabled = os.getenv("HECATE_LLM_CIRCUIT_BREAKER_ENABLED", "true").lower() in ("1", "true", "yes")
+        if not enabled:
+            return fn(*args, **kwargs)
+
+        self_obj = args[0] if args else None
+        p_name = str(provider_name or getattr(self_obj, "provider_name", None) or "default")
+        cb = get_circuit_breaker(p_name)
+        cb.before_call()
+        try:
+            result = fn(*args, **kwargs)
+            cb.record_success()
+            return result
+        except BaseException as exc:
+            cb.record_failure(exc)
+            raise
+
+    return wrapper
+
+
+# ---------------------------------------------------------------------------
 # Abstract base
 # ---------------------------------------------------------------------------
 
@@ -209,11 +576,12 @@ class LLMProvider(ABC):
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         # Every provider's calls are visible to the live call log, whoever makes them,
-        # with automatic exponential backoff on HTTP 429 rate limits.
+        # with automatic exponential backoff on HTTP 429 rate limits and circuit breaker
+        # fast-failing during sustained upstream outages.
         if "complete" in cls.__dict__:
             from hecate_agent.core.llm_activity import recorded
 
-            cls.complete = recorded(retry_on_rate_limit(cls.__dict__["complete"]))  # type: ignore[method-assign]
+            cls.complete = recorded(with_circuit_breaker(retry_on_rate_limit(cls.__dict__["complete"])))  # type: ignore[method-assign]
 
     @abstractmethod
     def complete(

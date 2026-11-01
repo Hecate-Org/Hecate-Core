@@ -515,3 +515,127 @@ class TestRateLimitRetry:
         assert transient_503() == "recovered"
         assert calls[0] == 2
         assert len(slept) == 1
+
+
+# ---------------------------------------------------------------------------
+# Circuit Breaker tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestCircuitBreaker:
+    """Test LLM upstream circuit breaker protection."""
+
+    def test_circuit_breaker_transitions(self, monkeypatch):
+        from hecate_agent.core.llm_provider import (
+            CircuitBreaker,
+            CircuitBreakerOpenError,
+            CircuitState,
+        )
+
+        current_time = [1000.0]
+        monkeypatch.setattr("time.monotonic", lambda: current_time[0])
+
+        cb = CircuitBreaker("test-provider", failure_threshold=3, cooldown_seconds=20.0)
+        assert cb.state == CircuitState.CLOSED
+        assert cb.failure_count == 0
+
+        class Mock503(Exception):
+            status_code = 503
+
+        # First 2 failures: still CLOSED
+        cb.record_failure(Mock503("Service unavailable"))
+        assert cb.state == CircuitState.CLOSED
+        assert cb.failure_count == 1
+
+        cb.record_failure(Mock503("Service unavailable"))
+        assert cb.state == CircuitState.CLOSED
+        assert cb.failure_count == 2
+
+        # 3rd failure: trips to OPEN
+        cb.record_failure(Mock503("Service unavailable"))
+        assert cb.state == CircuitState.OPEN
+        assert cb.failure_count == 3
+        assert cb.cooldown_remaining == 20.0
+
+        # While OPEN, before_call() raises CircuitBreakerOpenError
+        with pytest.raises(CircuitBreakerOpenError) as exc_info:
+            cb.before_call()
+        assert "Circuit breaker is OPEN for LLM provider 'test-provider'" in str(exc_info.value)
+        assert exc_info.value.failure_count == 3
+
+        # Advance time by 10s: still OPEN (cooldown 10s remaining)
+        current_time[0] += 10.0
+        assert cb.state == CircuitState.OPEN
+        assert cb.cooldown_remaining == 10.0
+
+        # Advance time past 20s: transitions to HALF_OPEN
+        current_time[0] += 15.0
+        assert cb.state == CircuitState.HALF_OPEN
+
+        # Probe call succeeds: resets to CLOSED
+        cb.before_call()  # allowed
+        cb.record_success()
+        assert cb.state == CircuitState.CLOSED
+        assert cb.failure_count == 0
+        assert cb.last_error is None
+
+    def test_circuit_breaker_half_open_failure_trips_to_open(self, monkeypatch):
+        from hecate_agent.core.llm_provider import CircuitBreaker, CircuitState
+
+        current_time = [1000.0]
+        monkeypatch.setattr("time.monotonic", lambda: current_time[0])
+
+        cb = CircuitBreaker("test-probe", failure_threshold=1, cooldown_seconds=30.0)
+
+        class Mock429(Exception):
+            status_code = 429
+
+        cb.record_failure(Mock429("Rate limit"))
+        assert cb.state == CircuitState.OPEN
+
+        # Advance past cooldown
+        current_time[0] += 35.0
+        assert cb.state == CircuitState.HALF_OPEN
+
+        # Probe fails: immediately trips back to OPEN
+        cb.record_failure(Mock429("Still throttled"))
+        assert cb.state == CircuitState.OPEN
+
+    def test_circuit_breaker_auth_failure_threshold(self):
+        from hecate_agent.core.llm_provider import CircuitBreaker, CircuitState
+
+        cb = CircuitBreaker("test-auth", failure_threshold=5, auth_failure_threshold=2)
+
+        class Mock401(Exception):
+            status_code = 401
+
+        cb.record_failure(Mock401("Unauthorized / Invalid API Key"))
+        assert cb.state == CircuitState.CLOSED
+
+        cb.record_failure(Mock401("Unauthorized / Invalid API Key"))
+        assert cb.state == CircuitState.OPEN
+
+    def test_circuit_breaker_non_breaker_errors(self):
+        from hecate_agent.core.llm_provider import CircuitBreaker, CircuitState
+
+        cb = CircuitBreaker("test-non-breaker", failure_threshold=2)
+        cb.record_failure(ValueError("Bad prompt syntax"))
+        cb.record_failure(KeyError("missing key"))
+        assert cb.state == CircuitState.CLOSED
+        assert cb.failure_count == 0
+
+    def test_circuit_breaker_manual_trip_and_reset(self):
+        from hecate_agent.core.llm_provider import CircuitBreaker, CircuitState
+
+        cb = CircuitBreaker("test-manual")
+        assert cb.state == CircuitState.CLOSED
+
+        cb.trip("Administrative emergency stop")
+        assert cb.state == CircuitState.OPEN
+        assert "Administrative emergency stop" in cb.last_error
+
+        cb.reset()
+        assert cb.state == CircuitState.CLOSED
+        assert cb.failure_count == 0
+        assert cb.last_error is None

@@ -102,6 +102,12 @@ def update(force: bool) -> None:
     try:
         urllib.request.urlretrieve(_STIX_URL, str(stix_path))
         _sanitize_stix_bundle(stix_path)
+        from hecate_agent.core.attack_matrix import compile_stix_to_sqlite
+
+        try:
+            compile_stix_to_sqlite(stix_path)
+        except Exception as exc:
+            console.print(f"[yellow]Warning: Could not compile SQLite cache ({exc}); will use direct JSON.[/yellow]")
         # Reset provider so it picks up the new data
         reset_provider()
         console.print("[green]ATT&CK STIX data downloaded successfully.[/green]")
@@ -555,3 +561,134 @@ def techniques(tactic_key: str) -> None:
 
     console.print(table)
     console.print()
+
+
+@attack.command("export-layer")
+@click.option(
+    "-o",
+    "--output",
+    "output_path",
+    type=click.Path(dir_okay=False, writable=True),
+    help="Output JSON file path. If omitted, prints JSON to stdout.",
+)
+@click.option(
+    "--name",
+    "layer_name",
+    default="Hecate Detection Coverage",
+    show_default=True,
+    help="Layer title displayed in ATT&CK Navigator.",
+)
+@click.option(
+    "--description",
+    "description",
+    default=None,
+    help="Layer description or summary.",
+)
+@click.option(
+    "--score-by",
+    type=click.Choice(["hunts", "queries", "binary"]),
+    default="hunts",
+    show_default=True,
+    help="Scoring metric: 'hunts' (hunt count), 'queries' (query/rule count), 'binary' (1/0).",
+)
+@click.option(
+    "--tactic",
+    "tactic_filter",
+    help="Limit export to a single tactic (e.g. execution, initial-access).",
+)
+@click.option(
+    "--platform",
+    "platform_filter",
+    help="Limit export to techniques matching a platform (e.g. Windows, Linux).",
+)
+@click.option(
+    "--include-uncovered/--only-covered",
+    "include_uncovered",
+    default=False,
+    show_default=True,
+    help="Include all uncovered techniques with a score of 0.",
+)
+@click.option(
+    "--min-score",
+    type=float,
+    default=None,
+    help="Minimum score required for a technique to be included.",
+)
+@click.option(
+    "--hunts-dir",
+    type=click.Path(exists=True, file_okay=False),
+    help="Path to directory containing hunt markdown files (defaults to ./hunts).",
+)
+@click.option(
+    "--queries-dir",
+    type=click.Path(exists=True, file_okay=False),
+    help="Path to directory containing query folders (defaults to ./queries).",
+)
+def export_layer(
+    output_path: Optional[str],
+    layer_name: str,
+    description: Optional[str],
+    score_by: str,
+    tactic_filter: Optional[str],
+    platform_filter: Optional[str],
+    include_uncovered: bool,
+    min_score: Optional[float],
+    hunts_dir: Optional[str],
+    queries_dir: Optional[str],
+) -> None:
+    """Export MITRE ATT&CK Navigator JSON layer for visualization.
+
+    Generates a layer file adhering to the MITRE ATT&CK Navigator schema (v4.5/v5.0),
+    mapping your hunts and Sigma detection queries to techniques.
+
+    \b
+    Examples:
+      # Export to stdout (pipeable to jq)
+      hecate-agent attack export-layer
+
+      # Save to a JSON file
+      hecate-agent attack export-layer -o attack_layer.json
+
+      # Score by detection query volume
+      hecate-agent attack export-layer --score-by queries -o query_layer.json
+
+      # Include all ATT&CK techniques (heatmap including gaps)
+      hecate-agent attack export-layer --include-uncovered -o full_heatmap.json
+
+      # Focus on Windows execution techniques
+      hecate-agent attack export-layer --platform Windows --tactic execution -o win_exec.json
+    """
+    from hecate_agent.core.attack_matrix import is_using_stix
+    from hecate_agent.core.attack_navigator import NavigatorExporter
+
+    if not is_using_stix():
+        click.echo("Warning: STIX data not available; exporting with fallback ATT&CK matrix.", err=True)
+
+    exporter = NavigatorExporter(
+        hunts_dir=Path(hunts_dir) if hunts_dir else None,
+        queries_dir=Path(queries_dir) if queries_dir else None,
+    )
+
+    layer_dict = exporter.build_layer(
+        name=layer_name,
+        description=description,
+        score_by=score_by,
+        tactic_filter=tactic_filter,
+        platform_filter=platform_filter,
+        include_uncovered=include_uncovered,
+        min_score=min_score,
+    )
+
+    if output_path:
+        out = exporter.export_to_file(output_path=output_path, layer_dict=layer_dict)
+        console.print(f"[green]✓ Exported ATT&CK Navigator layer to:[/green] {out}")
+        console.print(f"[dim]Techniques included: {len(layer_dict.get('techniques', []))}[/dim]")
+        console.print(
+            "[dim]Open in https://mitre-attack.github.io/attack-navigator/ via 'Open Existing Layer' -> 'Upload from local'[/dim]"
+        )
+    else:
+        click.echo(json.dumps(layer_dict, indent=2))
+
+
+# Alias command 'layer'
+attack.add_command(export_layer, name="layer")

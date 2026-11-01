@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
+from hecate_agent.core.sqlite_utils import connect_sqlite
+
 logger = logging.getLogger(__name__)
 
 
@@ -66,7 +68,7 @@ class WebSearchCache:
 
     @contextlib.contextmanager
     def _connect(self, timeout: float = 5.0) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.db_path, timeout=timeout)
+        conn = connect_sqlite(self.db_path, timeout=timeout, wal=True, busy_timeout_ms=5000)
         try:
             with conn:
                 yield conn

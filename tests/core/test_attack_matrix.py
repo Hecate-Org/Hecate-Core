@@ -237,11 +237,18 @@ try:
 except ImportError:
     _has_stix2 = False
 
+_has_mitreattack = True
+try:
+    import mitreattack  # noqa: F401
+except ImportError:
+    _has_mitreattack = False
+
 # get_superseding_technique_id() imports stix2.Filter directly. In production a
 # StixProvider is only selected when mitreattack-python (which depends on
 # stix2) is installed; these tests build one directly against a mocked
 # _attack_data, so they need the optional dep stated explicitly.
 requires_stix2 = pytest.mark.skipif(not _has_stix2, reason="stix2 not installed")
+requires_mitreattack = pytest.mark.skipif(not _has_mitreattack, reason="mitreattack not installed")
 
 
 @pytest.mark.unit
@@ -553,3 +560,108 @@ class TestThreatActorGroups:
         # Search in text with no actor mentions
         assert search_groups_in_text("Generic PowerShell execution observed.") == []
         assert search_groups_in_text("") == []
+
+
+@pytest.mark.unit
+@requires_mitreattack
+class TestStixSqliteCache:
+    """Tests for STIX SQLite compilation and cached loading."""
+
+    def test_sqlite_cache_creation_and_loading(self, tmp_path):
+        pytest.importorskip("mitreattack.stix20")
+        import json
+        from hecate_agent.core.attack_matrix import StixProvider, compile_stix_to_sqlite
+
+        import uuid
+
+        bundle = {
+            "type": "bundle",
+            "id": f"bundle--{uuid.uuid4()}",
+            "objects": [
+                {
+                    "type": "x-mitre-collection",
+                    "id": f"x-mitre-collection--{uuid.uuid4()}",
+                    "x_mitre_version": "15.1",
+                },
+                {
+                    "type": "x-mitre-tactic",
+                    "id": f"x-mitre-tactic--{uuid.uuid4()}",
+                    "name": "Execution",
+                    "x_mitre_shortname": "execution",
+                },
+                {
+                    "type": "attack-pattern",
+                    "id": (t1_id := f"attack-pattern--{uuid.uuid4()}"),
+                    "name": "Command and Scripting Interpreter",
+                    "description": "Adversaries may abuse interpreters",
+                    "external_references": [
+                        {
+                            "source_name": "mitre-attack",
+                            "external_id": "T1059",
+                            "url": "https://attack.mitre.org/techniques/T1059",
+                        }
+                    ],
+                    "kill_chain_phases": [{"kill_chain_name": "mitre-attack", "phase_name": "execution"}],
+                    "x_mitre_platforms": ["Windows", "Linux"],
+                    "x_mitre_data_sources": ["Process: Process Creation"],
+                    "x_mitre_is_subtechnique": False,
+                },
+                {
+                    "type": "attack-pattern",
+                    "id": (t2_id := f"attack-pattern--{uuid.uuid4()}"),
+                    "name": "Old Tech",
+                    "external_references": [{"source_name": "mitre-attack", "external_id": "T1093"}],
+                },
+                {
+                    "type": "relationship",
+                    "id": f"relationship--{uuid.uuid4()}",
+                    "relationship_type": "revoked-by",
+                    "source_ref": t2_id,
+                    "target_ref": t1_id,
+                },
+                {
+                    "type": "intrusion-set",
+                    "id": f"intrusion-set--{uuid.uuid4()}",
+                    "name": "APT29",
+                    "description": "APT29 is a threat group",
+                    "aliases": ["APT29", "Cozy Bear"],
+                    "external_references": [
+                        {"source_name": "mitre-attack", "external_id": "G0016", "url": "https://attack.mitre.org/groups/G0016"}
+                    ],
+                },
+            ],
+        }
+
+        stix_file = tmp_path / "enterprise-attack.json"
+        stix_file.write_text(json.dumps(bundle))
+
+        sqlite_file = compile_stix_to_sqlite(stix_file)
+        assert sqlite_file.exists()
+        assert sqlite_file.stat().st_size > 0
+
+        # Load with StixProvider
+        provider = StixProvider(stix_file)
+        assert provider.get_version() == "v15.1 (STIX)"
+
+        # Tactics
+        tactics = provider.get_tactics()
+        assert "execution" in tactics
+        assert tactics["execution"]["name"] == "Execution"
+
+        # Technique
+        t1059 = provider.get_technique_by_id("T1059")
+        assert t1059 is not None
+        assert t1059["name"] == "Command and Scripting Interpreter"
+        assert "Windows" in t1059["platforms"]
+
+        # Revoked superseding technique
+        assert provider.get_superseding_technique_id("T1093") == "T1059"
+
+        # Groups
+        g = provider.get_group_by_id("G0016")
+        assert g is not None
+        assert g["name"] == "APT29"
+
+        found = provider.find_group("cozy bear")
+        assert found is not None
+        assert found["id"] == "G0016"
