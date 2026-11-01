@@ -128,24 +128,42 @@ def _host_telemetry_ribbon(host: HostSample) -> Panel:
 
     gpu_pct = host.gpu_percent
     gpu_str = f"{gpu_pct:.0f}%" if gpu_pct is not None else "0%"
+    gpu_bar_str = _bar(gpu_pct if gpu_pct is not None else 0.0, width=8).plain
     gpu_name = host.gpu_name if host.gpu_name != "unavailable" else "GPU"
     if host.gpu_memory_used and host.gpu_memory_total:
         gpu_detail = f"{gpu_name} ({gpu_str} · {_bytes(host.gpu_memory_used)}/{_bytes(host.gpu_memory_total)})"
     else:
         gpu_detail = f"{gpu_name} ({gpu_str})"
 
-    disk_str = _disk_summary(host, compact=True)
+    if host.disks:
+        total_used = sum(d.used for d in host.disks)
+        total_space = sum(d.total for d in host.disks)
+        disk_pct = _percent(total_used, total_space)
+        disk_str = f"{disk_pct:.0f}%" if disk_pct is not None else "n/a"
+        disk_bar_str = _bar(disk_pct, width=8).plain if disk_pct is not None else "░░░░░░░░"
+        if len(host.disks) == 1:
+            mount = host.disks[0].mount
+            disk_detail = f"{mount} {_bytes(total_used)}/{_bytes(total_space)}"
+        else:
+            disk_detail = f"{_bytes(total_used)}/{_bytes(total_space)}"
+        c_disk = Text.assemble(
+            ("DRIVES ", "bold bright_cyan"),
+            (f"{disk_str} ", "bright_white"),
+            (f"[{disk_bar_str}] ", "dim bright_cyan"),
+            (disk_detail, "dim"),
+        )
+    else:
+        c_disk = Text.assemble(("DRIVES ", "bold bright_cyan"), ("no local mounted drives detected", "dim"))
 
     table = Table(box=None, expand=True, show_header=False, padding=(0, 1))
-    table.add_column("CPU", ratio=1)
-    table.add_column("RAM", ratio=1)
-    table.add_column("GPU", ratio=1)
-    table.add_column("STORAGE", ratio=1)
+    table.add_column("CPU", ratio=1, no_wrap=True, overflow="ellipsis")
+    table.add_column("RAM", ratio=1, no_wrap=True, overflow="ellipsis")
+    table.add_column("GPU", ratio=1, no_wrap=True, overflow="ellipsis")
+    table.add_column("STORAGE", ratio=1, no_wrap=True, overflow="ellipsis")
 
-    c_cpu = Text.assemble(("CPU ", "bold bright_cyan"), (f"{cpu_str} ", "bright_white"), (f"[{cpu_bar_str}]", "dim bright_cyan"), (" host", "dim"))
+    c_cpu = Text.assemble(("CPU ", "bold bright_cyan"), (f"{cpu_str} ", "bright_white"), (f"[{cpu_bar_str}] ", "dim bright_cyan"), ("host", "dim"))
     c_mem = Text.assemble(("RAM ", "bold bright_cyan"), (f"{mem_str} ", "bright_white"), (f"[{mem_bar_str}] ", "dim bright_cyan"), (f"{mem_detail}", "dim"))
-    c_gpu = Text.assemble(("GPU ", "bold bright_cyan"), (gpu_detail, "bright_white"))
-    c_disk = Text.assemble(("DRIVES ", "bold bright_cyan"), (disk_str, "bright_white"))
+    c_gpu = Text.assemble(("GPU ", "bold bright_cyan"), (f"{gpu_str} ", "bright_white"), (f"[{gpu_bar_str}] ", "dim bright_cyan"), (gpu_detail, "dim"))
 
     table.add_row(c_cpu, c_mem, c_gpu, c_disk)
     return Panel(

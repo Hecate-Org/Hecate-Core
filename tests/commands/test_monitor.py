@@ -1438,3 +1438,40 @@ def test_runner_status_sampler_tiered_caching(tmp_path: Path, monkeypatch) -> No
 def test_check_key_non_blocking_returns_none() -> None:
     key = m._check_key(timeout=0.0)
     assert key is None
+
+
+def test_host_telemetry_ribbon_gauges_drives_and_gpu() -> None:
+    c = Console(width=220, record=True, force_terminal=False)
+    host1 = m.HostSample(
+        cpu_percent=15.0,
+        memory_used=8 * 1024**3,
+        memory_total=32 * 1024**3,
+        gpu_name="NVIDIA GeForce RTX 4090",
+        gpu_percent=20.0,
+        gpu_memory_used=4 * 1024**3,
+        gpu_memory_total=24 * 1024**3,
+        disks=[m.DiskSample(mount="/", used=200 * 1024**3, total=250 * 1024**3)],
+    )
+    c.print(m._host_telemetry_ribbon(host1))
+    text1 = c.export_text()
+    assert "CPU 15%" in text1
+    assert "RAM 25%" in text1
+    assert "8.0 GiB/32.0 GiB" in text1
+    assert "GPU 20%" in text1
+    assert "NVIDIA GeForce RTX 4090" in text1
+    assert "DRIVES 80%" in text1
+    assert "/ 200.0 GiB/250.0 GiB" in text1
+
+    c = Console(width=220, record=True, force_terminal=False)
+    host2 = m.HostSample(
+        cpu_percent=None,
+        memory_used=None,
+        memory_total=None,
+        gpu_name="unavailable",
+        gpu_percent=None,
+        disks=[],
+    )
+    c.print(m._host_telemetry_ribbon(host2))
+    text2 = c.export_text()
+    assert "GPU (0%)" in text2
+    assert "no local mounted drives detected" in text2
