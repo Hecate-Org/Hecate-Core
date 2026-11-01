@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import sqlite3
+import tempfile
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -658,15 +659,21 @@ def compile_stix_to_sqlite(stix_path: Path, sqlite_path: Optional[Path] = None) 
         sqlite_path = stix_path.with_suffix(".sqlite3")
 
     sqlite_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = sqlite_path.with_suffix(".tmp")
-    if temp_path.exists():
-        temp_path.unlink()
+    fd, temp_name = tempfile.mkstemp(
+        dir=sqlite_path.parent,
+        prefix=f".{sqlite_path.name}.",
+        suffix=".tmp",
+    )
+    os.close(fd)
+    temp_path = Path(temp_name)
+    success = False
 
-    from mitreattack.stix20 import MitreAttackData
-
-    attack_data = MitreAttackData(str(stix_path))
-    conn = sqlite3.connect(str(temp_path))
+    conn = None
     try:
+        from mitreattack.stix20 import MitreAttackData
+
+        attack_data = MitreAttackData(str(stix_path))
+        conn = sqlite3.connect(str(temp_path))
         with conn:
             conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
             conn.execute(
@@ -894,10 +901,15 @@ def compile_stix_to_sqlite(stix_path: Path, sqlite_path: Optional[Path] = None) 
                             "INSERT OR REPLACE INTO group_aliases (alias_clean, group_id) VALUES (?, ?)",
                             (clean, gid),
                         )
+        success = True
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
+        if success:
+            temp_path.replace(sqlite_path)
+        else:
+            temp_path.unlink(missing_ok=True)
 
-    temp_path.replace(sqlite_path)
     return sqlite_path
 
 

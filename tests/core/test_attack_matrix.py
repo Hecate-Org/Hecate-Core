@@ -665,3 +665,16 @@ class TestStixSqliteCache:
         found = provider.find_group("cozy bear")
         assert found is not None
         assert found["id"] == "G0016"
+
+    def test_sqlite_compilation_cleans_up_temp_on_failure(self, tmp_path):
+        from hecate_agent.core.attack_matrix import compile_stix_to_sqlite
+
+        stix_file = tmp_path / "bad-attack.json"
+        stix_file.write_text("invalid json")
+
+        with pytest.raises(Exception):
+            compile_stix_to_sqlite(stix_file)
+
+        # Ensure no lingering .tmp files in parent directory
+        tmp_files = list(tmp_path.glob("*.tmp"))
+        assert len(tmp_files) == 0
