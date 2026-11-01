@@ -41,8 +41,10 @@ class HuntsMetrics:
     ics_ttps: Dict[str, int] = field(default_factory=dict)
     tactic_hunts: Dict[str, Dict[str, int]] = field(default_factory=dict)
     tactic_rules: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    tactic_iocs: Dict[str, Dict[str, int]] = field(default_factory=dict)
     matrix_hunts: Dict[str, int] = field(default_factory=dict)
     matrix_rules: Dict[str, int] = field(default_factory=dict)
+    matrix_iocs: Dict[str, int] = field(default_factory=dict)
     enterprise_total: int = 0
     mobile_total: int = 0
     ics_total: int = 0
@@ -190,15 +192,21 @@ def _collect_hunts_metrics(workspace: Optional[Path] = None) -> HuntsMetrics:
     grounding_unsupported = 0
     tactic_hunts: Dict[str, Dict[str, int]] = {}
     tactic_rules: Dict[str, Dict[str, int]] = {}
+    tactic_iocs: Dict[str, Dict[str, int]] = {}
     matrix_hunts: Dict[str, int] = {}
     matrix_rules: Dict[str, int] = {}
+    matrix_iocs: Dict[str, int] = {}
 
     from hecate_agent.core.attack_matrix import canonical_tactic, categorize_techniques_by_matrix
 
     classifications: Dict[frozenset[str], Dict[str, Any]] = {}
 
     def record_tactic_document(
-        ids: Set[str], counts: Dict[str, Dict[str, int]], totals: Dict[str, int], declared: Optional[Set[str]] = None
+        ids: Set[str],
+        counts: Dict[str, Dict[str, int]],
+        totals: Dict[str, int],
+        declared: Optional[Set[str]] = None,
+        weight: int = 1,
     ) -> None:
         key = frozenset(ids)
         if key not in classifications:
@@ -215,10 +223,10 @@ def _collect_hunts_metrics(workspace: Optional[Path] = None) -> HuntsMetrics:
             )
         for domain, tactics in active.items():
             if tactics:
-                totals[domain] = totals.get(domain, 0) + 1
+                totals[domain] = totals.get(domain, 0) + weight
             for tactic in tactics:
                 domain_counts = counts.setdefault(domain, {})
-                domain_counts[tactic] = domain_counts.get(tactic, 0) + 1
+                domain_counts[tactic] = domain_counts.get(tactic, 0) + weight
 
     from hecate_agent.core.grounding import _ACRONYM_STOPWORDS
 
@@ -258,6 +266,7 @@ def _collect_hunts_metrics(workspace: Optional[Path] = None) -> HuntsMetrics:
             continue
 
         hunt_techniques: Set[str] = set()
+        hunt_iocs: Set[str] = set()
         m_fm = re.match(r"^---\s*\n(.*?)\n---\s*\n", text, re.DOTALL)
         if m_fm:
             try:
@@ -285,7 +294,6 @@ def _collect_hunts_metrics(workspace: Optional[Path] = None) -> HuntsMetrics:
                 drafts_count += 1
         else:
             drafts_count += 1
-        record_tactic_document(hunt_techniques, tactic_hunts, matrix_hunts)
 
         m_act = _RE_ACTOR_ROW.search(text)
         if m_act:
@@ -322,36 +330,59 @@ def _collect_hunts_metrics(workspace: Optional[Path] = None) -> HuntsMetrics:
                 clean_ip = val.replace("[", "").replace("]", "")
                 if _RE_IP.match(clean_ip):
                     network_ips.add(clean_ip)
+                    hunt_iocs.add(clean_ip)
             elif itype in {"domain", "hostname"}:
-                network_domains.add(val.replace("[", "").replace("]", "").lower())
+                clean_dom = val.replace("[", "").replace("]", "").lower()
+                network_domains.add(clean_dom)
+                hunt_iocs.add(clean_dom)
             elif itype == "url":
-                network_urls.add(val.replace("[", "").replace("]", ""))
+                clean_url = val.replace("[", "").replace("]", "")
+                network_urls.add(clean_url)
+                hunt_iocs.add(clean_url)
             elif itype in {"hash", "file_hash", "sha256", "md5", "sha1"}:
-                host_hashes.add(val.lower())
+                clean_hsh = val.lower()
+                host_hashes.add(clean_hsh)
+                hunt_iocs.add(clean_hsh)
             elif itype in {"file_path", "path", "file", "registry", "process"}:
                 host_paths.add(val)
+                hunt_iocs.add(val)
             elif itype in {"ja4", "jarm", "ssl_fingerprint", "tls_hash", "fingerprint"}:
                 fingerprints.add(val.lower())
+                hunt_iocs.add(val.lower())
             elif itype in {"iam_operation", "cloud_role", "k8s_action", "cloud_action"}:
                 cloud_ops.add(val)
+                hunt_iocs.add(val)
 
         m_ioc = re.search(r"###\s+Indicators of Compromise.*?(?=\n###\s+[A-Z]|\n## |\Z)", text, re.DOTALL | re.IGNORECASE)
         if m_ioc:
             ioc_txt = m_ioc.group(0)
             for ip in _RE_IP.findall(ioc_txt):
                 network_ips.add(ip)
+                hunt_iocs.add(ip)
             for d in _RE_DOMAIN.findall(ioc_txt):
-                network_domains.add(d.lower())
+                clean_d = d.lower()
+                network_domains.add(clean_d)
+                hunt_iocs.add(clean_d)
             for hsh in _RE_SHA256.findall(ioc_txt):
-                host_hashes.add(hsh.lower())
+                clean_h = hsh.lower()
+                host_hashes.add(clean_h)
+                hunt_iocs.add(clean_h)
             for hsh in _RE_MD5.findall(ioc_txt):
-                host_hashes.add(hsh.lower())
+                clean_h = hsh.lower()
+                host_hashes.add(clean_h)
+                hunt_iocs.add(clean_h)
             for hsh in _RE_SHA1.findall(ioc_txt):
-                host_hashes.add(hsh.lower())
+                clean_h = hsh.lower()
+                host_hashes.add(clean_h)
+                hunt_iocs.add(clean_h)
             m_fp = re.search(r"####\s+File Paths.*?(?=####|\Z)", ioc_txt, re.DOTALL | re.IGNORECASE)
             if m_fp:
                 for p in re.findall(r"`([^`]+)`", m_fp.group(0)):
                     host_paths.add(p)
+                    hunt_iocs.add(p)
+
+        record_tactic_document(hunt_techniques, tactic_hunts, matrix_hunts, weight=1)
+        record_tactic_document(hunt_techniques, tactic_iocs, matrix_iocs, weight=len(hunt_iocs))
 
         m_gs = _RE_GROUNDING_SUMMARY.search(text)
         if m_gs:
@@ -416,8 +447,10 @@ def _collect_hunts_metrics(workspace: Optional[Path] = None) -> HuntsMetrics:
         ics_ttps=cat_metrics.get("ics", {}),
         tactic_hunts=tactic_hunts,
         tactic_rules=tactic_rules,
+        tactic_iocs=tactic_iocs,
         matrix_hunts=matrix_hunts,
         matrix_rules=matrix_rules,
+        matrix_iocs=matrix_iocs,
         enterprise_total=cat_metrics.get("enterprise_total", 0),
         mobile_total=cat_metrics.get("mobile_total", 0),
         ics_total=cat_metrics.get("ics_total", 0),

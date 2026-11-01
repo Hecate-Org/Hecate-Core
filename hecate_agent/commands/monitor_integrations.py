@@ -135,6 +135,80 @@ def _integration_style(healthy: bool, detail: str) -> str:
     return "bold bright_red"
 
 
+def _color_group_rank(ok: bool, detail: str) -> int:
+    """Group by color: 1=Green (healthy), 2=Pink (output-only), 3=Magenta (reachable; disabled), 4=Red (failed/error), 5=Grey (disabled)."""
+    if ok and detail != "output only":
+        return 1
+    if ok and detail == "output only":
+        return 2
+    if detail == "reachable; disabled":
+        return 3
+    if detail == "disabled":
+        return 5
+    return 4
+
+
+def _detect_active_integration(
+    current: Optional[TrailEvent] = None,
+    events: Optional[List[TrailEvent]] = None,
+    live: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """Identify which integration service is actively in use right now."""
+    if live and (live.get("in_flight") or live.get("status") in ("CALLING", "STREAMING")):
+        return "LLM"
+
+    if not current:
+        return None
+
+    msg = current.message.lower()
+    stage = current.stage.lower()
+
+    if stage in ("hypothesis", "techniques", "scope", "write", "sigma", "review"):
+        return "LLM"
+    if stage == "research":
+        if "search" in msg or "tavily" in msg:
+            return "Tavily"
+        return "LLM"
+    if stage in ("intake", "source"):
+        for token, label in (
+            ("misp", "MISP"),
+            ("otx", "OTX"),
+            ("rss", "RSS"),
+            ("github poc", "GitHub PoC"),
+            ("vxug", "VXUG"),
+            ("cisa", "CISA AA"),
+            ("vulncheck", "VulnCheck"),
+            ("triage", "Triage"),
+            ("shadowserver", "Shadowsrv"),
+            ("certstream", "CertStrm"),
+        ):
+            if token in msg:
+                return label
+        return None
+    if stage == "enrichment":
+        for token, label in (
+            ("virustotal", "VT"),
+            ("vt", "VT"),
+            ("greynoise", "GreyNoise"),
+            ("abuseipdb", "AbuseIPDB"),
+            ("shodan", "Shodan"),
+            ("censys", "Censys"),
+            ("threatfox", "ThreatFox"),
+            ("malwarebazaar", "MalBazaar"),
+            ("malbazaar", "MalBazaar"),
+            ("urlhaus", "URLhaus"),
+            ("urlscan", "URLScan"),
+            ("hybrid", "Hybrid"),
+            ("rdap", "RDAP"),
+            ("crt.sh", "crt.sh"),
+            ("pdns", "PDNS"),
+            ("spur", "Spur"),
+        ):
+            if token in msg:
+                return label
+    return None
+
+
 def _integrations_panel(
     workspace: Optional[Path] = None,
     search_count: str = "pending",
@@ -664,6 +738,8 @@ def _integrations_panel(
             detail = "output only"
         ok, reason = _confirmed_integration(workspace, name, enabled)
         confirmed_data.append((label, ok, detail if ok else reason, metric))
+    active_integration = _detect_active_integration(current, events, live)
+    confirmed_data.sort(key=lambda item: (_color_group_rank(item[1], item[2]), item[0].lower()))
     services_data = confirmed_data
 
     table = Table(box=None, show_header=False, expand=True, padding=(0, 1))
@@ -687,13 +763,23 @@ def _integrations_panel(
             "OSV.dev": "OSVdev",
         }
         display_items = [
-            (aliases.get(label, label) if grid_compact_names else label, is_set, detail)
+            (
+                aliases.get(label, label) if grid_compact_names else label,
+                is_set,
+                detail,
+                label == active_integration,
+            )
             for label, is_set, detail, _ in services_data
         ]
         for start in range(0, len(display_items), 4):
             row = [
-                Text(label, style=_integration_style(ok, detail))
-                for label, ok, detail in display_items[start : start + 4]
+                Text(
+                    f" {label} " if is_active else label,
+                    style="bold black on bright_cyan"
+                    if is_active
+                    else _integration_style(ok, detail),
+                )
+                for label, ok, detail, is_active in display_items[start : start + 4]
             ]
             row.extend(Text("") for _ in range(4 - len(row)))
             table.add_row(*row)
@@ -702,21 +788,36 @@ def _integrations_panel(
         table.add_column("status", ratio=1, overflow="ellipsis", no_wrap=True)
         table.add_column("metric", justify="right", width=11, no_wrap=True)
         for label, is_set, detail, metric in services_data:
-            if is_set:
+            is_active = (label == active_integration)
+            if is_active:
+                lbl_style = "bold black on bright_cyan"
+                st = Text.assemble(("ACTIVE", "bold black on bright_cyan"), (" · ", "dim"), (detail, "bright_white"))
+                m_style = "bold bright_cyan"
+            elif is_set:
+                lbl_style = "dim"
                 st = Text.assemble(("ON", _integration_style(True, detail)), (" · ", "dim"), (detail, "bright_white"))
                 m_style = "bright_cyan" if metric != "--" else "dim"
             else:
+                lbl_style = "dim"
                 st = Text.assemble(("OFF", _integration_style(False, detail)), (" · ", "dim"), (detail, "dim"))
                 m_style = "dim"
-            table.add_row(label, st, Text(metric, style=m_style))
+            table.add_row(Text(label, style=lbl_style), st, Text(metric, style=m_style))
     else:
 
         def format_item(lbl: str, is_on: bool, det: str, met: str) -> Text:
-            st = "ON" if is_on else "OFF"
-            col = _integration_style(is_on, det)
-            m_col = "bright_cyan" if is_on and met != "--" else "dim"
+            is_active = (lbl == active_integration)
+            if is_active:
+                lbl_style = "bold black on bright_cyan"
+                st = "ACTIVE"
+                col = "bold black on bright_cyan"
+                m_col = "bold bright_cyan"
+            else:
+                lbl_style = "dim"
+                st = "ON" if is_on else "OFF"
+                col = _integration_style(is_on, det)
+                m_col = "bright_cyan" if is_on and met != "--" else "dim"
             return Text.assemble(
-                (f"{lbl:<9}", "dim"),
+                (f"{lbl:<9}", lbl_style),
                 (" ", "default"),
                 (st, col),
                 (" · ", "dim"),

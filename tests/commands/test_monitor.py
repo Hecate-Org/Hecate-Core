@@ -213,7 +213,7 @@ def test_the_newest_line_is_always_in_the_action_stream(height: int) -> None:
     runner = m.RunnerStatus(installed=True, service_state="inactive", workspace=Path("/nonexistent/workspace"))
     text = _render(_long_cycle(), runner, height=height)
     assert "draft_created -> H-0001 in 844s" in text.split("ACTION STREAM", 1)[1]
-    assert "RUNNER SERVICE" in text
+    assert "RUNNER" in text
 
 
 def test_a_tall_screen_gives_the_stream_the_whole_right_column() -> None:
@@ -221,7 +221,7 @@ def test_a_tall_screen_gives_the_stream_the_whole_right_column() -> None:
     runner = m.RunnerStatus(installed=True, service_state="inactive", workspace=Path("/nonexistent/workspace"))
     tall, short = _render(_long_cycle(40), runner, height=60), _render(_long_cycle(40), runner, height=30)
     assert tall.count("rejected rule") > short.count("rejected rule")
-    for title in ("RUNNER SERVICE", "LLM STATS", "DETECTION RULES"):
+    for title in ("RUNNER", "LLM", "HUNTS"):
         line = next(line for line in tall.splitlines() if title in line)
         assert line.index(title) < 140 // 3
     integrations_line = next(line for line in tall.splitlines() if "INTEGRATIONS" in line)
@@ -595,13 +595,12 @@ def test_hunts_summary_panel_narrow_rendering(tmp_path: Path) -> None:
     c.print(panel)
     text = c.export_text()
 
-    assert "HUNT SUMMARY" in text
-    assert "HUNTS" in text and "197 total" in text and "197 drafts" in text
+    assert "HUNTS" in text
+    assert "197 total" in text and "197 drafts" in text
     assert "THREATS" in text and "295" in text
-    assert "50 act, 10 camp, 235 mal" in text
-    assert "SIGMA" in text and "1,200 rules" in text
-    assert "NETWORK" in text and "1,053 IOCs" in text and "271 IPs" in text
-    assert "HOST" in text and "1,085 IOCs" in text and "477 hash" in text
+    assert "50 act, 10 camp" in text
+    assert "NETWORK" in text and "1,053 IOCs" in text and "271 IP" in text
+    assert "ENDPOINT" in text and "1,085 IOCs" in text and "477 hash" in text
 
     # Verify height is exactly 7 lines (5 data rows + 2 borders)
     assert len(text.splitlines()) == m._HUNTS_PANEL_HEIGHT
@@ -629,13 +628,12 @@ def test_hunts_summary_panel_wide_and_compact_rendering(tmp_path: Path) -> None:
     panel = m._hunts_summary_panel(workspace=tmp_path, narrow=False, metrics=mock_metrics)
     c.print(panel)
     text_wide = c.export_text()
-    assert "HUNT SUMMARY" in text_wide
+    assert "HUNTS" in text_wide
     assert "197 total" in text_wide
-    assert "295 tracked" in text_wide
-    assert "50 actors, 10 campaigns, 235 malware" in text_wide
-    assert "1,200 rules" in text_wide
+    assert "295 threats" in text_wide
+    assert "50 act, 10 camp, 235 mal" in text_wide
     assert "1,053 IOCs" in text_wide
-    assert "2,138 observables" in text_wide
+    assert "1,085 IOCs" in text_wide
 
     # Compact mode
     c_compact = Console(width=50, record=True, force_terminal=False)
@@ -679,7 +677,7 @@ def test_mitre_metrics_panel_rendering(tmp_path: Path) -> None:
     text_wide = c_wide.export_text()
 
     assert "MITRE" in text_wide
-    assert "ENTERPRISE" in text_wide and "346 TTPs" in text_wide
+    assert "ENTERPRISE" in text_wide and "(15 / 15 tactics) (346 Unique TTPs)" in text_wide
     assert "Recon 6" in text_wide and "ResDev 11" in text_wide
     assert "InitAcc 13" in text_wide and "Exec 33" in text_wide
     assert "Persist 39" in text_wide and "PrivEsc 35" in text_wide
@@ -687,8 +685,8 @@ def test_mitre_metrics_panel_rendering(tmp_path: Path) -> None:
     assert "Disc 26" in text_wide and "CredAcc 38" in text_wide
     assert "LatMove 16" in text_wide and "Collect 18" in text_wide
     assert "C2 26" in text_wide and "Exfil 8" in text_wide and "Impact 11" in text_wide
-    assert "MOBILE" in text_wide and "1 TTP" in text_wide
-    assert "ICS" in text_wide and "0 TTPs" in text_wide
+    assert "MOBILE" in text_wide and "(1 / 14 tactics) (1 Unique TTPs)" in text_wide
+    assert "ICS" in text_wide and "(0 / 12 tactics) (0 Unique TTPs)" in text_wide
     assert len(text_wide.splitlines()) == m._BOTTOM_ROW_HEIGHT
 
     # Narrow mode: vertically broken out with 10 data rows + 2 borders = 12 lines
@@ -697,8 +695,8 @@ def test_mitre_metrics_panel_rendering(tmp_path: Path) -> None:
     c_narrow.print(panel_narrow)
     text_narrow = c_narrow.export_text()
     assert len(text_narrow.splitlines()) == m._MITRE_PANEL_HEIGHT
-    assert "MOBILE" in text_narrow and "1 TTP" in text_narrow
-    assert "ICS" in text_narrow and "0 TTPs" in text_narrow
+    assert "MOBILE" in text_narrow and "(1 / 14 tactics)" in text_narrow
+    assert "ICS" in text_narrow and "(0 / 12 tactics)" in text_narrow
     assert "Stealth 66 · DefImp 18" in text_narrow
     assert "Disc 26 · CredAcc 38" in text_narrow
     assert "LatMove 16 · Collect 18" in text_narrow
@@ -708,32 +706,32 @@ def test_mitre_metrics_panel_rendering(tmp_path: Path) -> None:
     panel_compact = m._mitre_metrics_panel(workspace=tmp_path, compact=True, metrics=mock_metrics)
     c_compact.print(panel_compact)
     text_compact = c_compact.export_text()
-    assert "MOB & ICS" in text_compact and "Mob: 1" in text_compact
+    assert "MOB & ICS" in text_compact and "Mob" in text_compact
 
 
 def test_dashboard_includes_hunts_summary_in_both_layouts() -> None:
     events = _events("route: narrative", "done: draft_created")
     runner = m.RunnerStatus(installed=True, service_state="inactive", workspace=Path("/nonexistent/workspace"))
 
-    # Tall screen (height=60): HUNT SUMMARY is stacked on the left above INTEGRATIONS
+    # Tall screen (height=60): HUNTS is stacked on the left above INTEGRATIONS
     tall = _render(events, runner, height=60)
-    assert "HUNT SUMMARY" in tall
+    assert "HUNTS" in tall
     assert "MITRE" in tall
-    assert "VALIDATION" in tall
+    assert "DETECTIONS" in tall
     tall_lines = tall.splitlines()
-    tall_line = next(line for line in tall_lines if "HUNT SUMMARY" in line)
-    assert tall_line.index("HUNT SUMMARY") < 140 // 3
-    hunts_line_no = next(i for i, line_text in enumerate(tall_lines) if "HUNT SUMMARY" in line_text)
+    tall_line = next(line for line in tall_lines if "HUNTS" in line)
+    assert tall_line.index("HUNTS") < 140 // 3
+    hunts_line_no = next(i for i, line_text in enumerate(tall_lines) if "HUNTS" in line_text)
     integrations_line_no = next(i for i, line_text in enumerate(tall_lines) if "INTEGRATIONS" in line_text)
     assert hunts_line_no < integrations_line_no
 
-    # Short screen (height=30): HUNT SUMMARY is in the bottom usage row
+    # Short screen (height=30): HUNTS is in the bottom usage row
     short = _render(events, runner, height=30)
-    assert "HUNT SUMMARY" in short
+    assert "HUNTS" in short
     assert "MITRE" in short
-    assert "VALIDATION" in short
-    short_line = next(line for line in short.splitlines() if "HUNT SUMMARY" in line)
-    assert short_line.index("HUNT SUMMARY") >= 140 // 5
+    assert "DETECTIONS" in short
+    short_line = next(line for line in short.splitlines() if "HUNTS" in line)
+    assert short_line.index("HUNTS") >= 140 // 6
 
 
 def test_find_eval_workspace_detects_candidate(tmp_path: Path) -> None:
@@ -871,9 +869,9 @@ def test_hunts_summary_panel_grounding_rendering(tmp_path: Path) -> None:
     panel_wide = m._hunts_summary_panel(workspace=tmp_path, narrow=False, metrics=mock_metrics)
     c_wide.print(panel_wide)
     text_wide = c_wide.export_text()
-    assert "GROUNDING" in text_wide
-    assert "25 asserted" in text_wide
-    assert "5 derived" in text_wide
+    assert "FIDELITY" in text_wide
+    assert "25 asrt" in text_wide
+    assert "5 drv" in text_wide
     assert "2 unsupp" in text_wide
 
     # Narrow mode tags HUNTS row
@@ -975,11 +973,9 @@ def test_detection_rules_panel_rendering() -> None:
     panel = m._detection_rules_panel(metrics=mock_metrics, runner=runner)
     c.print(panel)
     text = c.export_text()
-    assert "DETECTION RULES" in text
+    assert "DETECTIONS" in text
     assert "1,382 rules" in text
-    assert "832 hunts" in text
-    assert "100% valid" in text
-    assert "Splunk SPL" in text
+    assert "pySigma compliant" in text
     assert "SPLUNK backend" in text
     assert "3 pending" in text
 
@@ -1003,13 +999,13 @@ def test_threat_observables_panel_rendering() -> None:
     panel = m._threat_observables_panel(metrics=mock_metrics)
     c.print(panel)
     text = c.export_text()
-    assert "THREAT OBSERVABLES" in text
+    assert "HUNTS" in text
     assert "1,420 IOCs" in text
     assert "680 IP, 740 dom" in text
     assert "890 IOCs" in text
     assert "420 hash, 470 path" in text
     assert "150 threats" in text
-    assert "42 act, 68 mal" in text
+    assert "42 act" in text
     assert "420 asrt" in text
     assert "310 drv" in text
     assert "0 unsupp" in text
@@ -1019,14 +1015,14 @@ def test_dashboard_wide_screen_bottom_ribbon() -> None:
     events = _events("route: narrative", "done: draft_created")
     runner = m.RunnerStatus(installed=True, service_state="inactive", workspace=Path("/nonexistent/workspace"))
 
-    # Width=200, Height=60: Very wide screen splits operations bottom into Purple Team, Detection Rules, Threat Observables
+    # Width=200, Height=60: Very wide screen splits operations bottom into Detections, Outbound, Integrations, Mitre
     m.console = Console(width=200, height=60, record=True, force_terminal=False)
     now = START + timedelta(minutes=10)
     m.console.print(m._render_dashboard(Path("/nonexistent/workspace"), events, {}, _host(), now, runner, ""))
     wide_text = m.console.export_text()
-    assert "VALIDATION" in wide_text
-    assert "DETECTION RULES" in wide_text
-    assert "THREAT OBSERVABLES" in wide_text
+    assert "DETECTIONS" in wide_text
+    assert "HUNTS" in wide_text
+    assert "OUTBOUND" in wide_text
 
 
 @pytest.mark.parametrize(("grid", "narrow"), [(True, True), (False, True), (False, False)])
@@ -1203,10 +1199,13 @@ def test_detailed_mitre_has_one_row_per_enterprise_tactic(width: int) -> None:
     for label in ("Reconnaissance", "Resource Development", "Privilege Escalation", "Credential Access", "Command and Control"):
         assert label in text
     execution = next(line for line in text.splitlines() if "Execution" in line)
-    assert execution.split()[2:5] == ["7", "2", "4"]
-    assert "TTPs" in text and "Hunts" in text and "Rules" in text
+    assert execution.split()[2:6] == ["7", "0", "2", "4"]
+    assert "TTPs" in text and "IOCs" in text and "Hunts" in text and "Rules" in text
     assert "MITRE METRICS" not in text
-    assert "10 unique TTPs" in text
+    if width >= 80:
+        assert "10 Unique TTPs" in text
+    else:
+        assert "ENTERPRISE" in text
     assert "MOBILE" in text and "ICS" in text
 
 
@@ -1216,10 +1215,10 @@ def test_wide_dashboard_swaps_observables_and_expands_mitre(monkeypatch: pytest.
     runner = m.RunnerStatus(installed=True, service_state="inactive", workspace=Path("/nonexistent/workspace"))
     console.print(m._render_dashboard(Path("/nonexistent/workspace"), _events("done: draft_created"), {}, _host(), START, runner, ""))
     lines = console.export_text().splitlines()
-    observables = next(line for line in lines if "THREAT OBSERVABLES" in line)
+    hunts = next(line for line in lines if "HUNTS" in line)
     mitre = next(line for line in lines if "MITRE" in line)
-    assert observables.index("THREAT OBSERVABLES") < 52
-    assert mitre.index("MITRE") > 150
+    assert hunts.index("HUNTS") < 52
+    assert mitre.index("MITRE") > 120
     assert any("Resource Development" in line for line in lines)
     assert any("BREACH SIM" in line for line in lines)
 
@@ -1293,9 +1292,9 @@ def test_render_dashboard_tab2_hunts_and_rules(tmp_path: Path, monkeypatch: pyte
     c.print(layout)
     text = c.export_text()
     assert "ACTIVE & RECENT HUNTS" in text
-    assert "DETECTION RULES" in text
+    assert "DETECTIONS" in text
     assert "MITRE" in text
-    assert "THREAT OBSERVABLES" in text
+    assert "HUNTS" in text
 
 
 def test_render_dashboard_tab3_feeds_and_outbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
