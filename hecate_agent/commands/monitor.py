@@ -2379,12 +2379,8 @@ def _render_dashboard(
     if usage_on_left:
         left.append(Layout(llm_panel, size=llm_height))
         left.append(Layout(hunts_panel, size=hunts_height))
-        if not expanded_mitre:
-            left.append(Layout(mitre_panel, size=mitre_height))
-        if not swap_detail_panels:
-            left.append(Layout(detections_panel, size=hunts_height))
-            left.append(Layout(outbound_panel, size=hunts_height))
-            left.append(Layout(integrations_panel, ratio=1))
+        left.append(Layout(detections_panel, size=8))
+        left.append(Layout(outbound_panel, ratio=1))
     else:
         left.append(Layout(detections_panel, ratio=1))
     if len(left) > 1:
@@ -2399,28 +2395,22 @@ def _render_dashboard(
         if ops_width >= 135:
             bottom_ops = Layout(name="bottom_ops", size=_DETAILED_MITRE_PANEL_HEIGHT)
             bottom_ops.split_row(
-                Layout(detections_panel, ratio=1),
-                Layout(Text(" "), size=1),
-                Layout(outbound_panel, ratio=1),
-                Layout(Text(" "), size=1),
                 Layout(integrations_grid_panel, ratio=1),
                 Layout(Text(" "), size=1),
-                Layout(mitre_panel, ratio=2),
+                Layout(mitre_panel, ratio=1),
             )
             layout["operations"].split_column(Layout(main_panel, ratio=1), bottom_ops)
         elif ops_width >= 85:
             bottom_ops = Layout(name="bottom_ops", size=_BOTTOM_DETAIL_PANELS_HEIGHT)
             bottom_ops.split_row(
-                Layout(detections_panel, ratio=1),
-                Layout(Text(" "), size=1),
-                Layout(outbound_panel, ratio=1),
-                Layout(Text(" "), size=1),
                 Layout(integrations_grid_panel, ratio=1),
+                Layout(Text(" "), size=1),
+                Layout(mitre_panel, ratio=1),
             )
             layout["operations"].split_column(Layout(main_panel, ratio=1), bottom_ops)
         else:
             layout["operations"].split_column(
-                Layout(main_panel, ratio=1), Layout(detections_panel, size=_PURPLE_PANEL_HEIGHT)
+                Layout(main_panel, ratio=1), Layout(mitre_panel, size=_BOTTOM_ROW_HEIGHT)
             )
     else:
         layout["operations"].update(main_panel)
