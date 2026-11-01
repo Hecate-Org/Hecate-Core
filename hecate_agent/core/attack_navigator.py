@@ -11,7 +11,7 @@ import logging
 import re
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
 import yaml
 
@@ -21,7 +21,6 @@ from hecate_agent.core.attack_matrix import (
     get_sorted_tactics,
     get_technique,
     get_techniques_for_tactic,
-    is_using_stix,
 )
 from hecate_agent.core.hunt_manager import HuntManager
 
@@ -182,8 +181,6 @@ class NavigatorExporter:
                     score = len(tech_queries) if tech_queries else len(hunt_ids)
                 elif metric == LayerScoringMetric.BINARY:
                     score = 1 if hunt_ids else 0
-                else:
-                    score = len(hunt_ids)
 
                 if min_score is not None and score < min_score:
                     continue
@@ -216,8 +213,9 @@ class NavigatorExporter:
                 covered_pairs.add((tech_id, tactic))
 
                 # Track parent technique expansion
-                if tech_info.get("is_subtechnique") and tech_info.get("parent_id"):
-                    parent_techniques_to_expand.add((tech_info["parent_id"], tactic))
+                parent_id = tech_info.get("parent_id")
+                if tech_info.get("is_subtechnique") and parent_id:
+                    parent_techniques_to_expand.add((parent_id, tactic))
                 elif "." in tech_id:
                     parent_id = tech_id.split(".")[0]
                     parent_techniques_to_expand.add((parent_id, tactic))
@@ -303,9 +301,7 @@ class NavigatorExporter:
             },
             "domain": domain,
             "description": desc,
-            "filters": {
-                "platforms": [platform_filter] if platform_filter else ["Linux", "macOS", "Windows"]
-            },
+            "filters": {"platforms": [platform_filter] if platform_filter else ["Linux", "macOS", "Windows"]},
             "sorting": 0,
             "layout": {
                 "layout": "side",
@@ -334,8 +330,8 @@ class NavigatorExporter:
             from mitreattack.navlayers import Layer
 
             validated = Layer(layer_dict).to_dict()
-            if validated is not None:
-                return validated
+            if isinstance(validated, dict):
+                return cast(Dict[str, Any], validated)
             logger.debug("mitreattack.navlayers returned None; using compliant raw layer dict")
             return layer_dict
         except Exception as exc:

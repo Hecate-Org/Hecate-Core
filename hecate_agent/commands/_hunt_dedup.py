@@ -21,9 +21,7 @@ from hecate_agent.core.sigma_subsumption import (
 console = Console()
 
 
-def _resolve_query_paths(
-    target_path: Optional[str], hunt_id: Optional[str]
-) -> List[Path]:
+def _resolve_query_paths(target_path: Optional[str], hunt_id: Optional[str]) -> List[Path]:
     """Resolve directory paths to scan for Sigma rules."""
     paths: List[Path] = []
     cwd = Path.cwd()
@@ -169,13 +167,15 @@ def dedup(
             return
 
         # Render rich check report
-        console.print(Panel(
-            f"[bold]Candidate Rule:[/bold] {candidate.title}\n"
-            f"[dim]ID:[/dim] {candidate.id or 'None'} | [dim]Category:[/dim] {candidate.category}\n"
-            f"[dim]File:[/dim] {check_file}",
-            title="🔍 [bold cyan]Sigma Rule Redundancy Check[/bold cyan]",
-            border_style="cyan",
-        ))
+        console.print(
+            Panel(
+                f"[bold]Candidate Rule:[/bold] {candidate.title}\n"
+                f"[dim]ID:[/dim] {candidate.id or 'None'} | [dim]Category:[/dim] {candidate.category}\n"
+                f"[dim]File:[/dim] {check_file}",
+                title="🔍 [bold cyan]Sigma Rule Redundancy Check[/bold cyan]",
+                border_style="cyan",
+            )
+        )
 
         if internal_issues:
             console.print("\n[bold yellow]⚠️ Internal Redundancies Found in Candidate Rule:[/bold yellow]")
@@ -183,7 +183,9 @@ def dedup(
                 console.print(f"  • [yellow]{issue}[/yellow]")
 
         if not matches:
-            console.print("\n[bold green]✅ No duplicates or subsumptions found.[/bold green] Rule provides novel detection coverage.")
+            console.print(
+                "\n[bold green]✅ No duplicates or subsumptions found.[/bold green] Rule provides novel detection coverage."
+            )
             return
 
         table = Table(title=f"Corpus Match Diagnostics ({len(matches)} matches)")
@@ -225,15 +227,17 @@ def dedup(
         return
 
     # Rich summary table
-    console.print(Panel(
-        f"[bold]Total Rules Scanned:[/bold] {report.total_rules}\n"
-        f"[bold red]Duplicates (Equivalent):[/bold red] {len(report.duplicates)}\n"
-        f"[bold yellow]Subsumptions (Broader/Narrower):[/bold yellow] {len(report.subsumptions)}\n"
-        f"[bold cyan]Overlaps (Candidates for consolidation):[/bold cyan] {len(report.overlaps)}\n"
-        f"[bold magenta]Internal Redundancies:[/bold magenta] {sum(len(v) for v in report.internal_redundancies.values())}",
-        title="📊 [bold green]Sigma Deduplication & Subsumption Summary[/bold green]",
-        border_style="green" if not report.has_issues else "yellow",
-    ))
+    console.print(
+        Panel(
+            f"[bold]Total Rules Scanned:[/bold] {report.total_rules}\n"
+            f"[bold red]Duplicates (Equivalent):[/bold red] {len(report.duplicates)}\n"
+            f"[bold yellow]Subsumptions (Broader/Narrower):[/bold yellow] {len(report.subsumptions)}\n"
+            f"[bold cyan]Overlaps (Candidates for consolidation):[/bold cyan] {len(report.overlaps)}\n"
+            f"[bold magenta]Internal Redundancies:[/bold magenta] {sum(len(v) for v in report.internal_redundancies.values())}",
+            title="📊 [bold green]Sigma Deduplication & Subsumption Summary[/bold green]",
+            border_style="green" if not report.has_issues else "yellow",
+        )
+    )
 
     # Show duplicates
     if report.duplicates:
@@ -242,12 +246,12 @@ def dedup(
         table_dup.add_column("Rule B", style="bold")
         table_dup.add_column("Category")
         table_dup.add_column("Details")
-        for d in report.duplicates:
+        for duplicate in report.duplicates:
             table_dup.add_row(
-                d.rule_a_title,
-                d.rule_b_title,
-                Path(d.rule_a_file).parent.name if d.rule_a_file else "",
-                d.explanation,
+                duplicate.rule_a_title,
+                duplicate.rule_b_title,
+                Path(duplicate.rule_a_file).parent.name if duplicate.rule_a_file else "",
+                duplicate.explanation,
             )
         console.print(table_dup)
 
@@ -292,4 +296,6 @@ def dedup(
                 console.print(f"      - {iss}")
 
     if not report.has_issues and not (include_overlapping and report.overlaps):
-        console.print("\n[bold green]✅ Clean corpus: No duplicates, redundant subsumptions, or internal dead code detected.[/bold green]")
+        console.print(
+            "\n[bold green]✅ Clean corpus: No duplicates, redundant subsumptions, or internal dead code detected.[/bold green]"
+        )

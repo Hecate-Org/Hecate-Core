@@ -14,9 +14,36 @@ from hecate_agent.core.attack_navigator import (
     NavigatorExporter,
     _clean_attack_version,
     _extract_technique_ids_from_sigma,
-    build_navigator_layer,
     export_navigator_layer_to_file,
 )
+
+
+@pytest.fixture(autouse=True)
+def fixed_attack_catalog(monkeypatch):
+    """Unit tests must not depend on an operator's installed STIX cache."""
+    from hecate_agent.core import attack_matrix
+
+    techniques = {
+        "T1059": {"id": "T1059", "platforms": ["Windows", "Linux"], "tactic_shortnames": ["execution"]},
+        "T1059.001": {
+            "id": "T1059.001",
+            "platforms": ["Windows"],
+            "tactic_shortnames": ["execution"],
+            "parent_id": "T1059",
+            "is_subtechnique": True,
+        },
+        "T1190": {"id": "T1190", "platforms": ["Windows", "Linux"], "tactic_shortnames": ["initial-access"]},
+        "T1566": {"id": "T1566", "platforms": ["Windows"], "tactic_shortnames": ["initial-access"]},
+    }
+
+    class FixtureProvider(attack_matrix.FallbackProvider):
+        def get_technique_by_id(self, technique_id):
+            return techniques.get(technique_id)
+
+        def get_techniques_for_tactic(self, tactic_key):
+            return [t for t in techniques.values() if tactic_key in t["tactic_shortnames"]]
+
+    monkeypatch.setattr(attack_matrix, "_provider", FixtureProvider())
 
 
 @pytest.fixture
@@ -249,7 +276,7 @@ def test_cli_export_layer_stdout(sample_workspace: tuple[Path, Path]) -> None:
     )
 
     assert result.exit_code == 0
-    data = json.loads(result.output)
+    data = json.loads(result.stdout)
     assert data["name"] == "Hecate Detection Coverage"
     assert len(data["techniques"]) > 0
 

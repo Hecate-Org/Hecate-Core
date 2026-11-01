@@ -548,7 +548,7 @@ def with_circuit_breaker(
             return fn(*args, **kwargs)
 
         self_obj = args[0] if args else None
-        p_name = provider_name or getattr(self_obj, "provider_name", "default")
+        p_name = str(provider_name or getattr(self_obj, "provider_name", None) or "default")
         cb = get_circuit_breaker(p_name)
         cb.before_call()
         try:

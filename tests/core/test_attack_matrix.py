@@ -568,10 +568,12 @@ class TestStixSqliteCache:
     """Tests for STIX SQLite compilation and cached loading."""
 
     def test_sqlite_cache_creation_and_loading(self, tmp_path):
+        pytest.importorskip("mitreattack.stix20")
         import json
         from hecate_agent.core.attack_matrix import StixProvider, compile_stix_to_sqlite
 
         import uuid
+
         bundle = {
             "type": "bundle",
             "id": f"bundle--{uuid.uuid4()}",
@@ -593,11 +595,13 @@ class TestStixSqliteCache:
                     "name": "Command and Scripting Interpreter",
                     "description": "Adversaries may abuse interpreters",
                     "external_references": [
-                        {"source_name": "mitre-attack", "external_id": "T1059", "url": "https://attack.mitre.org/techniques/T1059"}
+                        {
+                            "source_name": "mitre-attack",
+                            "external_id": "T1059",
+                            "url": "https://attack.mitre.org/techniques/T1059",
+                        }
                     ],
-                    "kill_chain_phases": [
-                        {"kill_chain_name": "mitre-attack", "phase_name": "execution"}
-                    ],
+                    "kill_chain_phases": [{"kill_chain_name": "mitre-attack", "phase_name": "execution"}],
                     "x_mitre_platforms": ["Windows", "Linux"],
                     "x_mitre_data_sources": ["Process: Process Creation"],
                     "x_mitre_is_subtechnique": False,
@@ -606,9 +610,7 @@ class TestStixSqliteCache:
                     "type": "attack-pattern",
                     "id": (t2_id := f"attack-pattern--{uuid.uuid4()}"),
                     "name": "Old Tech",
-                    "external_references": [
-                        {"source_name": "mitre-attack", "external_id": "T1093"}
-                    ],
+                    "external_references": [{"source_name": "mitre-attack", "external_id": "T1093"}],
                 },
                 {
                     "type": "relationship",
@@ -663,4 +665,3 @@ class TestStixSqliteCache:
         found = provider.find_group("cozy bear")
         assert found is not None
         assert found["id"] == "G0016"
-

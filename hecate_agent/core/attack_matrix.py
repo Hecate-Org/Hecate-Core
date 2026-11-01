@@ -1234,9 +1234,6 @@ class StixProvider(AttackDataProvider):
 
     def _ensure_groups_loaded(self) -> None:
         """Lazily load threat actor groups from STIX data."""
-        if self._groups_cache is not None:
-            return
-
         self._ensure_loaded()
         if self._groups_cache is not None:
             return

@@ -103,6 +103,7 @@ def update(force: bool) -> None:
         urllib.request.urlretrieve(_STIX_URL, str(stix_path))
         _sanitize_stix_bundle(stix_path)
         from hecate_agent.core.attack_matrix import compile_stix_to_sqlite
+
         try:
             compile_stix_to_sqlite(stix_path)
         except Exception as exc:
@@ -661,7 +662,7 @@ def export_layer(
     from hecate_agent.core.attack_navigator import NavigatorExporter
 
     if not is_using_stix():
-        console.print("[yellow]Warning: STIX data not available; exporting with fallback ATT&CK matrix.[/yellow]")
+        click.echo("Warning: STIX data not available; exporting with fallback ATT&CK matrix.", err=True)
 
     exporter = NavigatorExporter(
         hunts_dir=Path(hunts_dir) if hunts_dir else None,
@@ -682,11 +683,12 @@ def export_layer(
         out = exporter.export_to_file(output_path=output_path, layer_dict=layer_dict)
         console.print(f"[green]✓ Exported ATT&CK Navigator layer to:[/green] {out}")
         console.print(f"[dim]Techniques included: {len(layer_dict.get('techniques', []))}[/dim]")
-        console.print("[dim]Open in https://mitre-attack.github.io/attack-navigator/ via 'Open Existing Layer' -> 'Upload from local'[/dim]")
+        console.print(
+            "[dim]Open in https://mitre-attack.github.io/attack-navigator/ via 'Open Existing Layer' -> 'Upload from local'[/dim]"
+        )
     else:
         click.echo(json.dumps(layer_dict, indent=2))
 
 
 # Alias command 'layer'
 attack.add_command(export_layer, name="layer")
-

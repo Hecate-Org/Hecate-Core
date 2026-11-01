@@ -2,13 +2,11 @@
 
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 from hecate_agent.cli import cli
 from hecate_agent.core.sigma_subsumption import (
     ConjunctionAST,
-    CorpusDedupReport,
     FieldConstraint,
     SigmaDeduplicator,
     SigmaRuleAST,
@@ -16,7 +14,6 @@ from hecate_agent.core.sigma_subsumption import (
     SubsumptionRelation,
     _scalar_subsumes,
 )
-
 
 # -----------------------------------------------------------------------------
 # 1. Scalar Subsumption Tests
@@ -123,10 +120,12 @@ def test_conjunction_ast_subsumption() -> None:
     # Rule A: Image: powershell.exe
     conj_a = ConjunctionAST.from_dict({"Image|endswith": "\\powershell.exe"})
     # Rule B: Image: powershell.exe AND CommandLine contains: -enc
-    conj_b = ConjunctionAST.from_dict({
-        "Image|endswith": "\\powershell.exe",
-        "CommandLine|contains": "-enc",
-    })
+    conj_b = ConjunctionAST.from_dict(
+        {
+            "Image|endswith": "\\powershell.exe",
+            "CommandLine|contains": "-enc",
+        }
+    )
 
     # Rule A is broader (subsumes Rule B)
     assert conj_a.subsumes(conj_b) is True
@@ -297,27 +296,33 @@ def test_audit_internal_redundancy() -> None:
 
 
 def test_corpus_deduplication_and_check_candidate() -> None:
-    rule_broad = SigmaRuleAST.from_dict({
-        "id": "r-01",
-        "title": "Broad PowerShell Execution",
-        "logsource": {"category": "process_creation"},
-        "detection": {"selection": {"Image|endswith": "\\powershell.exe"}, "condition": "selection"},
-    })
-    rule_narrow = SigmaRuleAST.from_dict({
-        "id": "r-02",
-        "title": "Encoded PowerShell Execution",
-        "logsource": {"category": "process_creation"},
-        "detection": {
-            "selection": {"Image|endswith": "\\powershell.exe", "CommandLine|contains": "-enc"},
-            "condition": "selection",
-        },
-    })
-    rule_unrelated = SigmaRuleAST.from_dict({
-        "id": "r-03",
-        "title": "DNS Lookup of C2",
-        "logsource": {"category": "dns_query"},
-        "detection": {"selection": {"QueryName|endswith": ".evil.com"}, "condition": "selection"},
-    })
+    rule_broad = SigmaRuleAST.from_dict(
+        {
+            "id": "r-01",
+            "title": "Broad PowerShell Execution",
+            "logsource": {"category": "process_creation"},
+            "detection": {"selection": {"Image|endswith": "\\powershell.exe"}, "condition": "selection"},
+        }
+    )
+    rule_narrow = SigmaRuleAST.from_dict(
+        {
+            "id": "r-02",
+            "title": "Encoded PowerShell Execution",
+            "logsource": {"category": "process_creation"},
+            "detection": {
+                "selection": {"Image|endswith": "\\powershell.exe", "CommandLine|contains": "-enc"},
+                "condition": "selection",
+            },
+        }
+    )
+    rule_unrelated = SigmaRuleAST.from_dict(
+        {
+            "id": "r-03",
+            "title": "DNS Lookup of C2",
+            "logsource": {"category": "dns_query"},
+            "detection": {"selection": {"QueryName|endswith": ".evil.com"}, "condition": "selection"},
+        }
+    )
 
     corpus = [rule_broad, rule_unrelated]
     dedup = SigmaDeduplicator()
@@ -377,6 +382,7 @@ detection:
     res = runner.invoke(cli, ["hunt", "dedup", str(tmp_path), "--format", "json"])
     assert res.exit_code == 0
     import json
+
     data = json.loads(res.output)
     assert data["total_rules"] == 2
     assert data["subsumption_count"] == 1
@@ -414,3 +420,8 @@ detection:
     assert res.exit_code == 0
     assert "SUBSUMED_BY" in res.output
     assert "Generic Whoami Detection" in res.output
+
+
+def test_cidr_subsumption_rejects_mixed_ip_families():
+    assert not _scalar_subsumes("10.0.0.0/8", ["cidr"], "2001:db8::/32", ["cidr"])
+    assert not _scalar_subsumes("2001:db8::/32", ["cidr"], "10.0.0.0/8", ["cidr"])

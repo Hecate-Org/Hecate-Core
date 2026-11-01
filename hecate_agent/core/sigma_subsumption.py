@@ -62,9 +62,7 @@ def _canonicalize_field(name: str) -> str:
     return lowered
 
 
-def _canonicalize_value_and_modifier(
-    val: Any, modifiers: List[str]
-) -> Tuple[str, List[str]]:
+def _canonicalize_value_and_modifier(val: Any, modifiers: List[str]) -> Tuple[str, List[str]]:
     """Canonicalize a single value and implicit wildcard modifiers.
 
     Converts wildcard patterns like '*\\whoami.exe' into ('\\whoami.exe', ['endswith'])
@@ -95,9 +93,7 @@ def _canonicalize_value_and_modifier(
     return s_val.lower(), mods
 
 
-def _scalar_subsumes(
-    val_a: str, mods_a: Sequence[str], val_b: str, mods_b: Sequence[str]
-) -> bool:
+def _scalar_subsumes(val_a: str, mods_a: Sequence[str], val_b: str, mods_b: Sequence[str]) -> bool:
     """Check if atomic constraint (val_a, mods_a) subsumes (val_b, mods_b).
 
     Returns True if every string/value matching b is guaranteed to match a.
@@ -111,7 +107,11 @@ def _scalar_subsumes(
             net_a = ipaddress.ip_network(s_a, strict=False)
             if "cidr" in mods_b:
                 net_b = ipaddress.ip_network(s_b, strict=False)
-                return net_b.subnet_of(net_a)
+                if isinstance(net_a, ipaddress.IPv4Network) and isinstance(net_b, ipaddress.IPv4Network):
+                    return net_b.subnet_of(net_a)
+                if isinstance(net_a, ipaddress.IPv6Network) and isinstance(net_b, ipaddress.IPv6Network):
+                    return net_b.subnet_of(net_a)
+                return False
             else:
                 ip_b = ipaddress.ip_address(s_b)
                 return ip_b in net_a
@@ -225,10 +225,7 @@ class FieldConstraint:
         # Every value in other must be covered by at least one value in self.
         if not self.is_all and not other.is_all:
             for v_b in other.values:
-                covered = any(
-                    _scalar_subsumes(v_a, self.modifiers, v_b, other.modifiers)
-                    for v_a in self.values
-                )
+                covered = any(_scalar_subsumes(v_a, self.modifiers, v_b, other.modifiers) for v_a in self.values)
                 if not covered:
                     return False
             return True
@@ -237,10 +234,7 @@ class FieldConstraint:
         # Every value required by self must be satisfied by a value in other.
         if self.is_all and other.is_all:
             for v_a in self.values:
-                satisfied = any(
-                    _scalar_subsumes(v_a, self.modifiers, v_b, other.modifiers)
-                    for v_b in other.values
-                )
+                satisfied = any(_scalar_subsumes(v_a, self.modifiers, v_b, other.modifiers) for v_b in other.values)
                 if not satisfied:
                     return False
             return True
@@ -249,9 +243,7 @@ class FieldConstraint:
         # If any single value in self is satisfied by any value in other, self holds.
         if not self.is_all and other.is_all:
             return any(
-                _scalar_subsumes(v_a, self.modifiers, v_b, other.modifiers)
-                for v_a in self.values
-                for v_b in other.values
+                _scalar_subsumes(v_a, self.modifiers, v_b, other.modifiers) for v_a in self.values for v_b in other.values
             )
 
         # Case 4: self is AND, other is OR
@@ -272,9 +264,7 @@ class FieldConstraint:
             return 0.0
         exact_score = inter / union
         # Check partial substring overlaps
-        partial_hits = sum(
-            1 for a in set_a for b in set_b if (a and b and (a in b or b in a))
-        )
+        partial_hits = sum(1 for a in set_a for b in set_b if (a and b and (a in b or b in a)))
         partial_score = min(1.0, partial_hits / max(len(set_a), len(set_b)))
         return max(exact_score, partial_score * 0.8)
 
@@ -296,11 +286,7 @@ class ConjunctionAST:
 
     @classmethod
     def from_dict(cls, block: Dict[str, Any]) -> "ConjunctionAST":
-        constraints = [
-            FieldConstraint.from_raw(k, v)
-            for k, v in block.items()
-            if isinstance(k, str)
-        ]
+        constraints = [FieldConstraint.from_raw(k, v) for k, v in block.items() if isinstance(k, str)]
         # Sort constraints by field name for deterministic representation
         sorted_constraints = tuple(sorted(constraints, key=lambda c: (c.field, c.modifiers)))
         return cls(constraints=sorted_constraints)
@@ -343,11 +329,7 @@ class ConjunctionAST:
             if c_a and c_b:
                 constraint_overlaps.append(c_a.value_overlap(c_b))
 
-        avg_val_overlap = (
-            sum(constraint_overlaps) / len(constraint_overlaps)
-            if constraint_overlaps
-            else 0.0
-        )
+        avg_val_overlap = sum(constraint_overlaps) / len(constraint_overlaps) if constraint_overlaps else 0.0
         return (0.4 * jaccard_fields) + (0.6 * avg_val_overlap)
 
 
@@ -418,9 +400,7 @@ class SigmaRuleAST:
     file_path: Optional[str] = None
 
     @classmethod
-    def from_dict(
-        cls, data: Dict[str, Any], file_path: Optional[str] = None
-    ) -> "SigmaRuleAST":
+    def from_dict(cls, data: Dict[str, Any], file_path: Optional[str] = None) -> "SigmaRuleAST":
         rule_id = str(data.get("id") or "").strip()
         title = str(data.get("title") or "Untitled Rule").strip()
         logsource = data.get("logsource") or {}
@@ -453,9 +433,7 @@ class SigmaRuleAST:
         return cls.from_dict(data, file_path=str(p.resolve()))
 
     @classmethod
-    def _parse_detection_dnf(
-        cls, detection: Dict[str, Any]
-    ) -> Tuple[List[ConjunctionAST], List[ConjunctionAST]]:
+    def _parse_detection_dnf(cls, detection: Dict[str, Any]) -> Tuple[List[ConjunctionAST], List[ConjunctionAST]]:
         """Parse condition and detection blocks into positive and filter conjunctions."""
         condition_str = str(detection.get("condition") or "selection").strip()
         blocks: Dict[str, List[ConjunctionAST]] = {}
@@ -582,9 +560,7 @@ class SubsumptionEngine:
                 overlap_score=0.0,
                 shared_fields=[],
                 divergent_fields=[],
-                explanation=(
-                    f"Different log source categories: '{rule_a.category}' vs '{rule_b.category}'."
-                ),
+                explanation=(f"Different log source categories: '{rule_a.category}' vs '{rule_b.category}'."),
                 rule_a_file=rule_a.file_path,
                 rule_b_file=rule_b.file_path,
             )
@@ -600,9 +576,7 @@ class SubsumptionEngine:
                 overlap_score=0.0,
                 shared_fields=[],
                 divergent_fields=[],
-                explanation=(
-                    f"Incompatible products: '{rule_a.product}' vs '{rule_b.product}'."
-                ),
+                explanation=(f"Incompatible products: '{rule_a.product}' vs '{rule_b.product}'."),
                 rule_a_file=rule_a.file_path,
                 rule_b_file=rule_b.file_path,
             )
@@ -610,20 +584,16 @@ class SubsumptionEngine:
         # 3. Check positive conjunction coverage
         # a_covers_b: for every clause in b, there is a clause in a that subsumes it
         a_covers_b = bool(rule_a.positive_conjunctions and rule_b.positive_conjunctions) and all(
-            any(ca.subsumes(cb) for ca in rule_a.positive_conjunctions)
-            for cb in rule_b.positive_conjunctions
+            any(ca.subsumes(cb) for ca in rule_a.positive_conjunctions) for cb in rule_b.positive_conjunctions
         )
 
         # b_covers_a: for every clause in a, there is a clause in b that subsumes it
         b_covers_a = bool(rule_a.positive_conjunctions and rule_b.positive_conjunctions) and all(
-            any(cb.subsumes(ca) for cb in rule_b.positive_conjunctions)
-            for ca in rule_a.positive_conjunctions
+            any(cb.subsumes(ca) for cb in rule_b.positive_conjunctions) for ca in rule_a.positive_conjunctions
         )
 
         # Check filter compatibility
-        filter_identical = (
-            set(rule_a.filter_conjunctions) == set(rule_b.filter_conjunctions)
-        )
+        filter_identical = set(rule_a.filter_conjunctions) == set(rule_b.filter_conjunctions)
         has_filter_a = bool(rule_a.filter_conjunctions)
         has_filter_b = bool(rule_b.filter_conjunctions)
 
@@ -840,9 +810,7 @@ class SigmaDeduplicator:
                         )
         return issues
 
-    def check_candidate(
-        self, candidate: SigmaRuleAST, corpus: Sequence[SigmaRuleAST]
-    ) -> List[SubsumptionResult]:
+    def check_candidate(self, candidate: SigmaRuleAST, corpus: Sequence[SigmaRuleAST]) -> List[SubsumptionResult]:
         """Check a candidate rule against an existing corpus and return all non-disjoint matches."""
         results: List[SubsumptionResult] = []
         for existing in corpus:
@@ -862,9 +830,7 @@ class SigmaDeduplicator:
         results.sort(key=lambda r: (priority[r.relation], -r.overlap_score))
         return results
 
-    def analyze_corpus(
-        self, rules: Sequence[SigmaRuleAST], include_overlaps: bool = True
-    ) -> CorpusDedupReport:
+    def analyze_corpus(self, rules: Sequence[SigmaRuleAST], include_overlaps: bool = True) -> CorpusDedupReport:
         """Scan an entire corpus of Sigma rules and compute pair-wise subsumption and deduplication."""
         report = CorpusDedupReport(total_rules=len(rules))
 
