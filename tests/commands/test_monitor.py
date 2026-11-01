@@ -1459,6 +1459,7 @@ def test_host_telemetry_ribbon_gauges_drives_and_gpu() -> None:
     assert "8.0 GiB/32.0 GiB" in text1
     assert "GPU 20%" in text1
     assert "NVIDIA GeForce RTX 4090" in text1
+    assert "4.0 GiB/24.0 GiB" in text1
     assert "DRIVES 80%" in text1
     assert "/ 200.0 GiB/250.0 GiB" in text1
 

@@ -156,10 +156,10 @@ def _host_telemetry_ribbon(host: HostSample) -> Panel:
         c_disk = Text.assemble(("DRIVES ", "bold bright_cyan"), ("no local mounted drives detected", "dim"))
 
     table = Table(box=None, expand=True, show_header=False, padding=(0, 1))
-    table.add_column("CPU", ratio=1, no_wrap=True, overflow="ellipsis")
-    table.add_column("RAM", ratio=1, no_wrap=True, overflow="ellipsis")
+    table.add_column("CPU", no_wrap=True)
+    table.add_column("RAM", no_wrap=True)
     table.add_column("GPU", ratio=1, no_wrap=True, overflow="ellipsis")
-    table.add_column("STORAGE", ratio=1, no_wrap=True, overflow="ellipsis")
+    table.add_column("STORAGE", no_wrap=True)
 
     c_cpu = Text.assemble(("CPU ", "bold bright_cyan"), (f"{cpu_str} ", "bright_white"), (f"[{cpu_bar_str}] ", "dim bright_cyan"), ("host", "dim"))
     c_mem = Text.assemble(("RAM ", "bold bright_cyan"), (f"{mem_str} ", "bright_white"), (f"[{mem_bar_str}] ", "dim bright_cyan"), (f"{mem_detail}", "dim"))
