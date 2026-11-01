@@ -557,3 +557,32 @@ def test_condition_list_evaluates_every_alternative(image, expected):
 def test_string_modifiers_preserve_sigma_wildcards(modifier, pattern, event, expected):
     rule = {"detection": {"selection": {f"CommandLine|{modifier}": pattern}, "condition": "selection"}}
     assert SigmaEvaluator(rule).matches({"CommandLine": event}) is expected
+
+
+def test_non_null_needle_never_matches_none_or_missing_field():
+    rule_wildcard = {"detection": {"selection": {"CommandLine": "*"}, "condition": "selection"}}
+    rule_none_str = {"detection": {"selection": {"CommandLine|contains": "None"}, "condition": "selection"}}
+
+    ev_none = {"CommandLine": None}
+    ev_missing = {"OtherField": "value"}
+    ev_real = {"CommandLine": "whoami"}
+
+    assert SigmaEvaluator(rule_wildcard).matches(ev_none) is False
+    assert SigmaEvaluator(rule_wildcard).matches(ev_missing) is False
+    assert SigmaEvaluator(rule_wildcard).matches(ev_real) is True
+
+    assert SigmaEvaluator(rule_none_str).matches(ev_none) is False
+    assert SigmaEvaluator(rule_none_str).matches(ev_missing) is False
+
+
+def test_dict_event_value_matches_on_values_not_repr_syntax():
+    rule_user = {"detection": {"selection": {"User": "admin"}, "condition": "selection"}}
+    rule_syntax = {"detection": {"selection": {"User|contains": "TargetUserName"}, "condition": "selection"}}
+
+    ev_dict = {"User": {"TargetUserName": "admin", "Domain": "CORP"}}
+
+    # Value match should succeed
+    assert SigmaEvaluator(rule_user).matches(ev_dict) is True
+    # Key / dictionary syntax repr match should fail
+    assert SigmaEvaluator(rule_syntax).matches(ev_dict) is False
+

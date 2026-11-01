@@ -256,6 +256,14 @@ def _match_scalar_value(needle: Any, haystack: Any, modifiers: List[str]) -> boo
     if needle is None:
         return haystack is None
 
+    # A non-null needle cannot match a None or missing haystack
+    if haystack is None:
+        return False
+
+    # Prevent dicts/collections from stringifying into Python repr syntax matches
+    if isinstance(haystack, (dict, list, tuple, set)):
+        return False
+
     # CIDR evaluation for IP networks
     if "cidr" in modifiers:
         try:
@@ -289,7 +297,10 @@ def _match_scalar_value(needle: Any, haystack: Any, modifiers: List[str]) -> boo
             return False
 
     s_needle = str(needle)
-    s_haystack = str(haystack)
+    if isinstance(haystack, bool):
+        s_haystack = "true" if haystack else "false"
+    else:
+        s_haystack = str(haystack)
 
     # windash normalization: normalize Windows command line / and - switches
     if "windash" in modifiers:
@@ -331,6 +342,8 @@ def match_field_value(raw_val: Any, event_val: Any, modifiers: List[str]) -> boo
     def match_single_needle(needle: Any) -> bool:
         if isinstance(event_val, (list, tuple, set)):
             return any(_match_scalar_value(needle, item, mods_no_all) for item in event_val)
+        if isinstance(event_val, dict):
+            return any(_match_scalar_value(needle, v, mods_no_all) for v in event_val.values())
         return _match_scalar_value(needle, event_val, mods_no_all)
 
     if is_all:
