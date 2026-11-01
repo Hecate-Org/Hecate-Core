@@ -139,7 +139,10 @@ class NavigatorExporter:
         Returns:
             Dictionary conforming to the MITRE ATT&CK Navigator schema.
         """
-        metric = LayerScoringMetric(score_by) if isinstance(score_by, str) else score_by
+        try:
+            metric = LayerScoringMetric(score_by) if isinstance(score_by, str) else score_by
+        except (ValueError, KeyError):
+            metric = LayerScoringMetric.HUNTS
         resolved_attack_ver = _clean_attack_version(attack_version or get_attack_version())
         query_map = self.scan_query_rules()
         coverage_data = self.hunt_manager.calculate_attack_coverage()

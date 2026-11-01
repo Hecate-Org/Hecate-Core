@@ -98,22 +98,22 @@ def _scalar_subsumes(val_a: str, mods_a: Sequence[str], val_b: str, mods_b: Sequ
 
     Returns True if every string/value matching b is guaranteed to match a.
     """
-    s_a = str(val_a).strip().lower()
-    s_b = str(val_b).strip().lower()
+    s_a = str(val_a).lower()
+    s_b = str(val_b).lower()
 
     # CIDR evaluation
     if "cidr" in mods_a:
         try:
-            net_a = ipaddress.ip_network(s_a, strict=False)
+            net_a = ipaddress.ip_network(s_a.strip(), strict=False)
             if "cidr" in mods_b:
-                net_b = ipaddress.ip_network(s_b, strict=False)
+                net_b = ipaddress.ip_network(s_b.strip(), strict=False)
                 if isinstance(net_a, ipaddress.IPv4Network) and isinstance(net_b, ipaddress.IPv4Network):
                     return net_b.subnet_of(net_a)
                 if isinstance(net_a, ipaddress.IPv6Network) and isinstance(net_b, ipaddress.IPv6Network):
                     return net_b.subnet_of(net_a)
                 return False
             else:
-                ip_b = ipaddress.ip_address(s_b)
+                ip_b = ipaddress.ip_address(s_b.strip())
                 return ip_b in net_a
         except ValueError:
             return False
@@ -121,14 +121,20 @@ def _scalar_subsumes(val_a: str, mods_a: Sequence[str], val_b: str, mods_b: Sequ
     # Numeric comparisons
     if any(m in mods_a for m in ("gt", "gte", "lt", "lte")):
         try:
-            num_a = float(s_a)
-            num_b = float(s_b)
-            if "gt" in mods_a and "gt" in mods_b:
-                return num_a <= num_b  # x > 200 => x > 100
+            num_a = float(s_a.strip())
+            num_b = float(s_b.strip())
+            if "gt" in mods_a:
+                if "gt" in mods_b:
+                    return num_a <= num_b  # x > 200 => x > 100
+                if "gte" in mods_b:
+                    return num_a < num_b
             if "gte" in mods_a and ("gte" in mods_b or "gt" in mods_b):
                 return num_a <= num_b
-            if "lt" in mods_a and "lt" in mods_b:
-                return num_a >= num_b  # x < 200 => x < 500
+            if "lt" in mods_a:
+                if "lt" in mods_b:
+                    return num_a >= num_b  # x < 200 => x < 500
+                if "lte" in mods_b:
+                    return num_a > num_b
             if "lte" in mods_a and ("lte" in mods_b or "lt" in mods_b):
                 return num_a >= num_b
         except ValueError:
@@ -673,9 +679,25 @@ class SubsumptionEngine:
 
         # Case B: Rule A SUBSUMES Rule B (Rule A is broader)
         if a_covers_b and not b_covers_a:
+            if has_filter_a and not has_filter_b:
+                return SubsumptionResult(
+                    rule_a_id=rule_a.id,
+                    rule_a_title=rule_a.title,
+                    rule_b_id=rule_b.id,
+                    rule_b_title=rule_b.title,
+                    relation=SubsumptionRelation.OVERLAPPING,
+                    overlap_score=max_sim,
+                    shared_fields=shared_fields,
+                    divergent_fields=divergent_fields,
+                    explanation=(
+                        f"Rule A ('{rule_a.title}') positive selections cover Rule B ('{rule_b.title}'), "
+                        f"but Rule A carries exclusion filters that suppress events Rule B alerts on."
+                    ),
+                    rule_a_file=rule_a.file_path,
+                    rule_b_file=rule_b.file_path,
+                )
             extra = [f for f in divergent_fields if f in fields_b]
             extra_msg = f" while Rule B adds constraints on {extra}" if extra else ""
-            filter_note = " (Note: Rule A carries additional filters)" if has_filter_a and not has_filter_b else ""
             return SubsumptionResult(
                 rule_a_id=rule_a.id,
                 rule_a_title=rule_a.title,
@@ -687,7 +709,7 @@ class SubsumptionEngine:
                 divergent_fields=divergent_fields,
                 explanation=(
                     f"Rule A ('{rule_a.title}') is broader and SUBSUMES Rule B ('{rule_b.title}'). "
-                    f"Rule A covers all events matched by Rule B{extra_msg}.{filter_note}"
+                    f"Rule A covers all events matched by Rule B{extra_msg}."
                 ),
                 rule_a_file=rule_a.file_path,
                 rule_b_file=rule_b.file_path,
@@ -695,9 +717,25 @@ class SubsumptionEngine:
 
         # Case C: Rule A SUBSUMED_BY Rule B (Rule A is narrower)
         if b_covers_a and not a_covers_b:
+            if has_filter_b and not has_filter_a:
+                return SubsumptionResult(
+                    rule_a_id=rule_a.id,
+                    rule_a_title=rule_a.title,
+                    rule_b_id=rule_b.id,
+                    rule_b_title=rule_b.title,
+                    relation=SubsumptionRelation.OVERLAPPING,
+                    overlap_score=max_sim,
+                    shared_fields=shared_fields,
+                    divergent_fields=divergent_fields,
+                    explanation=(
+                        f"Rule B ('{rule_b.title}') positive selections cover Rule A ('{rule_a.title}'), "
+                        f"but Rule B carries exclusion filters that suppress events Rule A alerts on."
+                    ),
+                    rule_a_file=rule_a.file_path,
+                    rule_b_file=rule_b.file_path,
+                )
             extra = [f for f in divergent_fields if f in fields_a]
             extra_msg = f" while Rule A adds constraints on {extra}" if extra else ""
-            filter_note = " (Note: Rule B carries additional filters)" if has_filter_b and not has_filter_a else ""
             return SubsumptionResult(
                 rule_a_id=rule_a.id,
                 rule_a_title=rule_a.title,
@@ -709,7 +747,7 @@ class SubsumptionEngine:
                 divergent_fields=divergent_fields,
                 explanation=(
                     f"Rule A ('{rule_a.title}') is narrower and SUBSUMED BY Rule B ('{rule_b.title}'). "
-                    f"Rule B covers all events matched by Rule A{extra_msg}.{filter_note}"
+                    f"Rule B covers all events matched by Rule A{extra_msg}."
                 ),
                 rule_a_file=rule_a.file_path,
                 rule_b_file=rule_b.file_path,

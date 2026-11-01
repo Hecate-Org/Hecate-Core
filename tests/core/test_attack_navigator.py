@@ -222,6 +222,16 @@ def test_build_layer_score_by_binary(sample_workspace: tuple[Path, Path]) -> Non
     assert t1059_001["score"] == 1
 
 
+def test_build_layer_invalid_score_by_defaults_gracefully(sample_workspace: tuple[Path, Path]) -> None:
+    hunts_dir, queries_dir = sample_workspace
+    exporter = NavigatorExporter(hunts_dir=hunts_dir, queries_dir=queries_dir)
+    layer = exporter.build_layer(score_by="invalid_unknown_metric")
+
+    t1059_001 = next((t for t in layer["techniques"] if t.get("techniqueID") == "T1059.001"), None)
+    assert t1059_001 is not None
+    assert t1059_001["score"] == 2  # Defaults to HUNTS metric
+
+
 def test_build_layer_tactic_filter(sample_workspace: tuple[Path, Path]) -> None:
     hunts_dir, queries_dir = sample_workspace
     exporter = NavigatorExporter(hunts_dir=hunts_dir, queries_dir=queries_dir)

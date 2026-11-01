@@ -27,6 +27,13 @@ def test_scalar_exact_subsumption() -> None:
     assert _scalar_subsumes("whoami.exe", [], "cmd.exe", []) is False
 
 
+def test_scalar_whitespace_distinction() -> None:
+    # Leading/trailing whitespace is semantically significant for commandline switches
+    assert _scalar_subsumes("-enc", ["contains"], " -enc ", ["contains"]) is True
+    assert _scalar_subsumes(" -enc ", ["contains"], "-enc", ["contains"]) is False
+    assert _scalar_subsumes("cmd.exe", [], " cmd.exe ", []) is False
+
+
 def test_scalar_contains_subsumption() -> None:
     # contains(val_a) subsumes contains(val_b) when val_a is a substring of val_b
     assert _scalar_subsumes("mimikatz", ["contains"], "mimikatz.exe", ["contains"]) is True
@@ -261,6 +268,43 @@ def test_subsumption_engine_overlapping_rules() -> None:
     res = engine.compare(r1, r2)
     assert res.relation == SubsumptionRelation.OVERLAPPING
     assert "destinationport" in res.shared_fields
+
+
+def test_subsumption_engine_asymmetric_filters_overlap() -> None:
+    # Rule A has broader positive selection (Image only), BUT carries an exclusion filter
+    # Rule B has narrower positive selection (Image + CommandLine), but NO filter.
+    # An event with Image=powershell.exe, CommandLine=whoami, User=SYSTEM will trigger Rule B,
+    # but be suppressed by Rule A. Thus Rule A does NOT subsume Rule B; they overlap.
+    rule_a = {
+        "id": "r-filter-a",
+        "title": "Rule A With Filter",
+        "logsource": {"category": "process_creation"},
+        "detection": {
+            "selection": {"Image|endswith": "\\powershell.exe"},
+            "filter": {"User": "SYSTEM"},
+            "condition": "selection and not filter",
+        },
+    }
+    rule_b = {
+        "id": "r-no-filter-b",
+        "title": "Rule B Without Filter",
+        "logsource": {"category": "process_creation"},
+        "detection": {
+            "selection": {
+                "Image|endswith": "\\powershell.exe",
+                "CommandLine|contains": "whoami",
+            },
+            "condition": "selection",
+        },
+    }
+
+    r1 = SigmaRuleAST.from_dict(rule_a)
+    r2 = SigmaRuleAST.from_dict(rule_b)
+
+    engine = SubsumptionEngine()
+    res = engine.compare(r1, r2)
+    assert res.relation == SubsumptionRelation.OVERLAPPING
+    assert "exclusion filters that suppress events" in res.explanation
 
 
 # -----------------------------------------------------------------------------
