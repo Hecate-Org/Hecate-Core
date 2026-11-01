@@ -532,3 +532,28 @@ detection:
     assert diag.logsource_matched is True
     assert diag.block_results["selection"] is False
     assert any("Image" in r for r in diag.reasons)
+
+
+@pytest.mark.parametrize("image,expected", [("/bin/whoami", True), ("/bin/id", True), ("/bin/ls", False)])
+def test_condition_list_evaluates_every_alternative(image, expected):
+    rule = {"detection": {"first": {"Image": "/bin/whoami"}, "second": {"Image": "/bin/id"}, "condition": ["first", "second"]}}
+    assert SigmaEvaluator(rule).matches({"Image": image}) is expected
+
+
+@pytest.mark.parametrize(
+    "modifier,pattern,event,expected",
+    [
+        ("contains", "curl*example.com", "sh -c curl https://example.com/path", True),
+        ("contains", "curl*example.com", "wget https://example.com", False),
+        ("startswith", "curl?https*", "curl https://example.com", True),
+        ("startswith", "curl*", "sh curl https://example.com", False),
+        ("endswith", "*example.?om", "curl https://example.com", True),
+        ("endswith", "example.com", "curl https://example.com/path", False),
+        ("contains", r"literal\*value", "literal*value", True),
+        ("contains", r"literal\*value", "literalOTHERvalue", False),
+        ("endswith", r"\cmd.exe", r"C:\Windows\cmd.exe", True),
+    ],
+)
+def test_string_modifiers_preserve_sigma_wildcards(modifier, pattern, event, expected):
+    rule = {"detection": {"selection": {f"CommandLine|{modifier}": pattern}, "condition": "selection"}}
+    assert SigmaEvaluator(rule).matches({"CommandLine": event}) is expected

@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -651,14 +652,265 @@ def _extract_attack_id(stix_obj: Any) -> str:
     return ""
 
 
-class StixProvider(AttackDataProvider):
-    """Provider backed by STIX data via mitreattack-python.
+def compile_stix_to_sqlite(stix_path: Path, sqlite_path: Optional[Path] = None) -> Path:
+    """Compile a STIX enterprise-attack.json bundle into an indexed SQLite cache."""
+    if sqlite_path is None:
+        sqlite_path = stix_path.with_suffix(".sqlite3")
 
-    Lazily loads data on first access and caches results in memory.
+    sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = sqlite_path.with_suffix(".tmp")
+    if temp_path.exists():
+        temp_path.unlink()
+
+    from mitreattack.stix20 import MitreAttackData
+
+    attack_data = MitreAttackData(str(stix_path))
+    conn = sqlite3.connect(str(temp_path))
+    try:
+        with conn:
+            conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+            conn.execute(
+                "CREATE TABLE tactics (shortname TEXT PRIMARY KEY, name TEXT, technique_count INTEGER, sort_order INTEGER)"
+            )
+            conn.execute(
+                """CREATE TABLE techniques (
+                    id TEXT PRIMARY KEY,
+                    name TEXT,
+                    description TEXT,
+                    platforms TEXT,
+                    data_sources TEXT,
+                    tactic_shortnames TEXT,
+                    is_subtechnique INTEGER,
+                    parent_id TEXT,
+                    url TEXT
+                )"""
+            )
+            conn.execute("CREATE INDEX idx_techniques_parent ON techniques(parent_id)")
+            conn.execute(
+                "CREATE TABLE revoked_techniques (old_id TEXT PRIMARY KEY, new_id TEXT)"
+            )
+            conn.execute(
+                """CREATE TABLE groups (
+                    id TEXT PRIMARY KEY,
+                    name TEXT,
+                    aliases TEXT,
+                    description TEXT,
+                    url TEXT,
+                    techniques TEXT,
+                    software TEXT
+                )"""
+            )
+            conn.execute(
+                "CREATE TABLE group_aliases (alias_clean TEXT PRIMARY KEY, group_id TEXT)"
+            )
+            conn.execute("CREATE INDEX idx_group_aliases_group ON group_aliases(group_id)")
+
+            # Meta version
+            version = ""
+            try:
+                with open(str(stix_path), "r", encoding="utf-8") as f:
+                    bundle = json.load(f)
+                for obj in bundle.get("objects", []):
+                    if obj.get("type") == "x-mitre-collection":
+                        v = obj.get("x_mitre_version", "")
+                        if v:
+                            version = f"v{v} (STIX)"
+                            break
+            except Exception:
+                pass
+            if not version:
+                mtime = stix_path.stat().st_mtime
+                age_days = int((time.time() - mtime) / 86400)
+                version = f"STIX (downloaded {age_days}d ago)"
+            conn.execute("INSERT INTO meta (key, value) VALUES (?, ?)", ("version", version))
+
+            # Tactics
+            order_map = {k: v["order"] for k, v in _FALLBACK_TACTICS.items()}
+            stix_tactics = attack_data.get_tactics(remove_revoked_deprecated=True)
+            for st in stix_tactics:
+                sname = st.get("x_mitre_shortname", "")
+                if not sname:
+                    continue
+                techs = attack_data.get_techniques_by_tactic(
+                    sname, "enterprise-attack", remove_revoked_deprecated=True
+                )
+                conn.execute(
+                    "INSERT INTO tactics (shortname, name, technique_count, sort_order) VALUES (?, ?, ?, ?)",
+                    (sname, st.get("name", ""), len(techs), order_map.get(sname, 99)),
+                )
+
+            # Techniques
+            techniques = attack_data.get_techniques(remove_revoked_deprecated=True)
+            for tech in techniques:
+                attack_id = ""
+                url = ""
+                for ref in tech.get("external_references", []):
+                    if ref.get("source_name") == "mitre-attack":
+                        attack_id = ref.get("external_id", "")
+                        url = ref.get("url", "")
+                        break
+                if not attack_id:
+                    continue
+
+                is_sub = 1 if tech.get("x_mitre_is_subtechnique", False) else 0
+                parent_id = None
+                if is_sub and "." in attack_id:
+                    parent_id = attack_id.split(".")[0]
+
+                tactic_shortnames = [
+                    phase["phase_name"]
+                    for phase in tech.get("kill_chain_phases", [])
+                    if phase.get("kill_chain_name") == "mitre-attack"
+                ]
+                data_sources = tech.get("x_mitre_data_sources", [])
+
+                conn.execute(
+                    """INSERT INTO techniques
+                       (id, name, description, platforms, data_sources, tactic_shortnames, is_subtechnique, parent_id, url)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        attack_id,
+                        tech.get("name", ""),
+                        tech.get("description", ""),
+                        json.dumps(tech.get("x_mitre_platforms", [])),
+                        json.dumps(data_sources),
+                        json.dumps(tactic_shortnames),
+                        is_sub,
+                        parent_id,
+                        url,
+                    ),
+                )
+
+            # Revoked relationships
+            try:
+                from stix2 import Filter
+
+                relationships = attack_data.src.query(
+                    [
+                        Filter("type", "=", "relationship"),
+                        Filter("relationship_type", "=", "revoked-by"),
+                    ]
+                )
+                patterns = attack_data.get_objects_by_type(
+                    "attack-pattern", remove_revoked_deprecated=False
+                )
+                by_stix_id = {obj["id"]: obj for obj in patterns}
+                rev_index: Dict[str, str] = {}
+                for rel in relationships:
+                    revoked = by_stix_id.get(rel.get("source_ref"))
+                    successor = by_stix_id.get(rel.get("target_ref"))
+                    if revoked is None or successor is None:
+                        continue
+                    old_id = _extract_attack_id(revoked)
+                    new_id = _extract_attack_id(successor)
+                    if old_id and new_id:
+                        rev_index[old_id] = new_id
+
+                for old_id, first_hop in rev_index.items():
+                    seen = {old_id}
+                    target = first_hop
+                    while target in rev_index and target not in seen:
+                        seen.add(target)
+                        target = rev_index[target]
+                    if target in rev_index:
+                        continue
+                    conn.execute(
+                        "INSERT OR REPLACE INTO revoked_techniques (old_id, new_id) VALUES (?, ?)",
+                        (old_id, target),
+                    )
+            except Exception as e:
+                logger.warning("Could not compile revoked relationships: %s", e)
+
+            # Groups and software
+            stix_groups = attack_data.get_groups(remove_revoked_deprecated=True)
+            for sg in stix_groups:
+                gid = _extract_attack_id(sg)
+                if not gid:
+                    continue
+                gname = sg.get("name", "")
+                aliases = list(sg.get("aliases", []))
+                if gname and gname not in aliases:
+                    aliases.insert(0, gname)
+
+                gurl = ""
+                for ref in sg.get("external_references", []):
+                    if ref.get("source_name") == "mitre-attack":
+                        gurl = ref.get("url", "")
+                        break
+
+                stix_id = sg.get("id", "")
+                g_techs: List[Dict[str, str]] = []
+                seen_techs: Set[str] = set()
+                if stix_id:
+                    for entry in attack_data.get_techniques_used_by_group(stix_id):
+                        t_obj = entry.get("object") if isinstance(entry, dict) else None
+                        if t_obj:
+                            tid = _extract_attack_id(t_obj)
+                            if tid and tid not in seen_techs:
+                                seen_techs.add(tid)
+                                g_techs.append({"id": tid, "name": t_obj.get("name", "")})
+                g_techs.sort(key=lambda t: t.get("id", ""))
+
+                g_soft: List[Dict[str, str]] = []
+                seen_soft: Set[str] = set()
+                if stix_id:
+                    for entry in attack_data.get_software_used_by_group(stix_id):
+                        s_obj = entry.get("object") if isinstance(entry, dict) else None
+                        if s_obj:
+                            sid = _extract_attack_id(s_obj)
+                            sname = s_obj.get("name", "")
+                            if sid and sid not in seen_soft:
+                                seen_soft.add(sid)
+                                stype = s_obj.get("type", "software")
+                                kind = "malware" if stype == "malware" else ("tool" if stype == "tool" else "software")
+                                g_soft.append(
+                                    {
+                                        "id": sid,
+                                        "name": sname,
+                                        "type": kind,
+                                        "description": s_obj.get("description", ""),
+                                    }
+                                )
+                g_soft.sort(key=lambda s: s.get("name", ""))
+
+                conn.execute(
+                    """INSERT INTO groups (id, name, aliases, description, url, techniques, software)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        gid,
+                        gname,
+                        json.dumps(aliases),
+                        sg.get("description", ""),
+                        gurl,
+                        json.dumps(g_techs),
+                        json.dumps(g_soft),
+                    ),
+                )
+
+                for alias in aliases:
+                    clean = alias.strip().lower()
+                    if clean:
+                        conn.execute(
+                            "INSERT OR REPLACE INTO group_aliases (alias_clean, group_id) VALUES (?, ?)",
+                            (clean, gid),
+                        )
+    finally:
+        conn.close()
+
+    temp_path.replace(sqlite_path)
+    return sqlite_path
+
+
+class StixProvider(AttackDataProvider):
+    """Provider backed by STIX data with SQLite indexing.
+
+    Prefers compiled SQLite cache for sub-millisecond execution,
+    falling back to mitreattack-python lazy loading if unavailable.
     """
 
     def __init__(self, stix_path: Optional[Path] = None):
         self._stix_path = stix_path or _get_stix_file_path()
+        self._sqlite_path = self._stix_path.with_suffix(".sqlite3")
         self._attack_data: Any = None  # MitreAttackData instance
         self._tactics_cache: Optional[Dict[str, TacticInfo]] = None
         self._technique_cache: Optional[Dict[str, TechniqueInfo]] = None
@@ -667,18 +919,93 @@ class StixProvider(AttackDataProvider):
         self._groups_cache: Optional[Dict[str, GroupInfo]] = None
         self._alias_to_group_id: Optional[Dict[str, str]] = None
         self._stix_groups_by_id: Optional[Dict[str, Any]] = None
+        self._sqlite_loaded: bool = False
+        self._version_str: Optional[str] = None
+
+    def _load_from_sqlite(self, db_path: Path) -> None:
+        """Hydrate provider caches instantly from compiled SQLite file."""
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT value FROM meta WHERE key = 'version'")
+            row = cur.fetchone()
+            self._version_str = row[0] if row else "STIX"
+
+            cur.execute("SELECT shortname, name, technique_count, sort_order FROM tactics")
+            tactics: Dict[str, TacticInfo] = {}
+            for sname, name, count, order in cur.fetchall():
+                tactics[sname] = TacticInfo(name=name, technique_count=count, order=order)
+            self._tactics_cache = tactics
+
+            cur.execute(
+                "SELECT id, name, description, platforms, data_sources, tactic_shortnames, is_subtechnique, parent_id, url FROM techniques"
+            )
+            tech_index: Dict[str, TechniqueInfo] = {}
+            for tid, tname, desc, plats, ds, tnames, is_sub, parent, url in cur.fetchall():
+                tech_index[tid] = TechniqueInfo(
+                    id=tid,
+                    name=tname,
+                    description=desc,
+                    platforms=json.loads(plats) if plats else [],
+                    data_sources=json.loads(ds) if ds else [],
+                    tactic_shortnames=json.loads(tnames) if tnames else [],
+                    is_subtechnique=bool(is_sub),
+                    parent_id=parent,
+                    url=url,
+                )
+            self._technique_cache = tech_index
+
+            cur.execute("SELECT old_id, new_id FROM revoked_techniques")
+            self._revoked_cache = dict(cur.fetchall())
+
+            cur.execute("SELECT id, name, aliases, description, url, techniques, software FROM groups")
+            groups: Dict[str, GroupInfo] = {}
+            for gid, gname, aliases, desc, url, techs, soft in cur.fetchall():
+                groups[gid] = GroupInfo(
+                    id=gid,
+                    name=gname,
+                    aliases=json.loads(aliases) if aliases else [],
+                    description=desc,
+                    url=url,
+                    techniques=json.loads(techs) if techs else [],
+                    software=json.loads(soft) if soft else [],
+                )
+            self._groups_cache = groups
+
+            cur.execute("SELECT alias_clean, group_id FROM group_aliases")
+            self._alias_to_group_id = dict(cur.fetchall())
+
+            self._sqlite_loaded = True
+        finally:
+            conn.close()
 
     def _ensure_loaded(self) -> None:
-        """Lazily load STIX data on first access."""
-        if self._attack_data is not None:
+        """Lazily load STIX data on first access, preferring fast SQLite cache."""
+        if self._attack_data is not None or self._sqlite_loaded:
             return
-
-        from mitreattack.stix20 import MitreAttackData
 
         if not self._stix_path.exists():
             raise FileNotFoundError(
                 f"STIX data not found at {self._stix_path}. Run 'hecate-agent attack update' to download it."
             )
+
+        if self._sqlite_path.exists() and self._sqlite_path.stat().st_mtime >= self._stix_path.stat().st_mtime:
+            try:
+                self._load_from_sqlite(self._sqlite_path)
+                logger.debug("Loaded STIX data from SQLite cache %s", self._sqlite_path)
+                return
+            except Exception as exc:
+                logger.warning("Failed to load STIX SQLite cache (%s); recompiling", exc)
+
+        try:
+            compile_stix_to_sqlite(self._stix_path, self._sqlite_path)
+            self._load_from_sqlite(self._sqlite_path)
+            logger.debug("Compiled and loaded STIX SQLite cache %s", self._sqlite_path)
+            return
+        except Exception as exc:
+            logger.warning("Could not build STIX SQLite cache (%s); falling back to direct JSON", exc)
+
+        from mitreattack.stix20 import MitreAttackData
 
         logger.debug("Loading STIX data from %s", self._stix_path)
         self._attack_data = MitreAttackData(str(self._stix_path))
@@ -686,6 +1013,8 @@ class StixProvider(AttackDataProvider):
     def _build_tactics(self) -> Dict[str, TacticInfo]:
         """Build tactic dictionary from STIX data."""
         self._ensure_loaded()
+        if self._tactics_cache is not None:
+            return self._tactics_cache
 
         tactics: Dict[str, TacticInfo] = {}
         stix_tactics = self._attack_data.get_tactics(remove_revoked_deprecated=True)
@@ -716,6 +1045,8 @@ class StixProvider(AttackDataProvider):
     def _build_technique_index(self) -> Dict[str, TechniqueInfo]:
         """Build technique lookup index from STIX data."""
         self._ensure_loaded()
+        if self._technique_cache is not None:
+            return self._technique_cache
 
         index: Dict[str, TechniqueInfo] = {}
         techniques = self._attack_data.get_techniques(remove_revoked_deprecated=True)
@@ -786,6 +1117,8 @@ class StixProvider(AttackDataProvider):
         into the current ID rather than discarding a correct call.
         """
         self._ensure_loaded()
+        if self._revoked_cache is not None:
+            return self._revoked_cache
 
         # Queried as one bulk relationship lookup rather than a
         # get_revoking_object() call per revoked technique: that helper
@@ -880,6 +1213,8 @@ class StixProvider(AttackDataProvider):
 
     def get_version(self) -> str:
         self._ensure_loaded()
+        if self._sqlite_loaded and self._version_str:
+            return self._version_str
         # Try to extract version from STIX bundle
         try:
             with open(str(self._stix_path), "r") as f:
@@ -903,6 +1238,9 @@ class StixProvider(AttackDataProvider):
             return
 
         self._ensure_loaded()
+        if self._groups_cache is not None:
+            return
+
         stix_groups = self._attack_data.get_groups(remove_revoked_deprecated=True)
         groups_cache: Dict[str, GroupInfo] = {}
         alias_map: Dict[str, str] = {}
@@ -949,12 +1287,13 @@ class StixProvider(AttackDataProvider):
         """Populate techniques and software used by the group."""
         self._ensure_groups_loaded()
         assert self._groups_cache is not None
-        assert self._stix_groups_by_id is not None
         group = self._groups_cache.get(attack_id)
         if group is None:
             return None
-        if group.get("techniques") or group.get("software"):
+        if group.get("techniques") or group.get("software") or self._sqlite_loaded:
             return group
+
+        assert self._stix_groups_by_id is not None
 
         sg = self._stix_groups_by_id.get(attack_id)
         if not sg:

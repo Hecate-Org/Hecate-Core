@@ -61,6 +61,7 @@ def hunt() -> None:
 
 # Register subcommands from split submodules
 from hecate_agent.commands._hunt_create import new, new_baseline, new_model_assisted  # noqa: E402
+from hecate_agent.commands._hunt_dedup import dedup  # noqa: E402
 from hecate_agent.commands._hunt_lifecycle import brief, export_hunt, operationalize, promote_hunt, update_hunt  # noqa: E402
 from hecate_agent.commands._hunt_query import coffee, coverage, list_hunts, search, stats, validate  # noqa: E402
 
@@ -78,3 +79,4 @@ hunt.add_command(operationalize)
 hunt.add_command(promote_hunt)
 hunt.add_command(export_hunt)
 hunt.add_command(brief)
+hunt.add_command(dedup)

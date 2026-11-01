@@ -143,8 +143,23 @@ CATEGORY_ALIASES: Dict[str, Tuple[str, ...]] = {
     "registry_event": ("registry_event", "registry_key_activity", "registry_value_activity", "registry"),
     "image_load": ("image_load", "module_activity", "module_load"),
     "authentication": ("authentication", "logon", "auth"),
-    "cloud_audit": ("cloud_audit", "cloud_trail", "cloud", "aws_cloudtrail", "gcp_audit", "azure_activity", "management_activity"),
-    "identity_audit": ("identity_audit", "identity_directory", "azure_signin", "entra_id", "active_directory", "directory_service"),
+    "cloud_audit": (
+        "cloud_audit",
+        "cloud_trail",
+        "cloud",
+        "aws_cloudtrail",
+        "gcp_audit",
+        "azure_activity",
+        "management_activity",
+    ),
+    "identity_audit": (
+        "identity_audit",
+        "identity_directory",
+        "azure_signin",
+        "entra_id",
+        "active_directory",
+        "directory_service",
+    ),
     "container_activity": ("container_activity", "kubernetes_audit", "k8s_audit", "container_runtime"),
 }
 
@@ -281,25 +296,26 @@ def _match_scalar_value(needle: Any, haystack: Any, modifiers: List[str]) -> boo
         s_needle = s_needle.replace("/", "-")
         s_haystack = s_haystack.replace("/", "-")
 
-    if "contains" in modifiers:
-        return s_needle.lower() in s_haystack.lower()
-
-    if "startswith" in modifiers:
-        return s_haystack.lower().startswith(s_needle.lower())
-
-    if "endswith" in modifiers:
-        return s_haystack.lower().endswith(s_needle.lower())
-
-    # Default matching: exact or wildcard glob
-    if "*" in s_needle or "?" in s_needle:
-        starts = s_needle.startswith("*")
-        ends = s_needle.endswith("*")
-        stripped = s_needle.strip("*")
-        core = re.escape(stripped).replace(r"\*", ".*").replace(r"\?", ".")
-        pattern = ("" if starts else "^") + core + ("" if ends else "$")
-        return re.search(pattern, s_haystack, re.IGNORECASE) is not None
-    else:
-        return s_haystack.lower() == s_needle.lower()
+    # Sigma wildcards remain active when string modifiers add implicit wildcards.
+    # A backslash only escapes another backslash or a wildcard; ordinary Windows
+    # path separators remain literal.
+    parts: List[str] = []
+    i = 0
+    while i < len(s_needle):
+        char = s_needle[i]
+        if char == "\\" and i + 1 < len(s_needle) and s_needle[i + 1] in "\\*?":
+            i += 1
+            parts.append(re.escape(s_needle[i]))
+        elif char == "*":
+            parts.append(".*")
+        elif char == "?":
+            parts.append(".")
+        else:
+            parts.append(re.escape(char))
+        i += 1
+    prefix = ".*" if "contains" in modifiers or "endswith" in modifiers else ""
+    suffix = ".*" if "contains" in modifiers or "startswith" in modifiers else ""
+    return re.fullmatch(prefix + "".join(parts) + suffix, s_haystack, re.IGNORECASE | re.DOTALL) is not None
 
 
 def match_field_value(raw_val: Any, event_val: Any, modifiers: List[str]) -> bool:
@@ -592,7 +608,7 @@ class SigmaEvaluator:
         self.detection: Dict[str, Any] = self.rule_dict.get("detection", {})
         raw_cond = self.detection.get("condition", "selection")
         if isinstance(raw_cond, list) and raw_cond:
-            self.condition_str: str = str(raw_cond[0])
+            self.condition_str: str = " or ".join(f"({condition})" for condition in raw_cond)
         else:
             self.condition_str = str(raw_cond)
 
