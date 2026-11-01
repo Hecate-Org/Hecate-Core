@@ -1078,6 +1078,25 @@ def _ollama_is_running(base_url: str = "http://localhost:11434") -> bool:
         return False
 
 
+def _get_default_ollama_model(base_url: str = "http://localhost:11434") -> str:
+    """Return the first installed Ollama model if reachable, else 'llama3'."""
+    import json
+    import urllib.request
+
+    try:
+        req = urllib.request.Request(f"{base_url}/api/tags")
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            models = data.get("models", [])
+            for m in models:
+                name = m.get("name")
+                if name:
+                    return str(name)
+    except Exception:
+        pass
+    return "llama3"
+
+
 def create_provider(config: Optional[Dict[str, Any]] = None) -> LLMProvider:
     """Create an LLM provider using a layered configuration strategy.
 
@@ -1123,6 +1142,12 @@ def create_provider(config: Optional[Dict[str, Any]] = None) -> LLMProvider:
 
 def _resolve_llm_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Merge the configuration layers, lowest precedence first."""
+    try:
+        from hecate_agent.core.workspace import load_workspace_env
+
+        load_workspace_env()
+    except Exception:
+        pass
     effective: Dict[str, Any] = {}
 
     # Layer 1: config file
@@ -1176,7 +1201,7 @@ def _autodetect_provider(model: Optional[str], effective: Dict[str, Any]) -> LLM
     # Ollama running locally or at OLLAMA_HOST (e.g. a Docker service)
     ollama_url: str = str(effective.get("base_url") or os.getenv("OLLAMA_HOST") or "http://localhost:11434")
     if _ollama_is_running(ollama_url):
-        detected_model = model or "llama3"
+        detected_model = model or _get_default_ollama_model(ollama_url)
         logger.info("Auto-detected local Ollama -> using Ollama provider with model %s", detected_model)
         return OllamaProvider(
             model=detected_model,
@@ -1258,7 +1283,7 @@ def _build_provider(name: str, model: Optional[str], config: Dict[str, Any]) -> 
     if name == "ollama":
         base_url: str = str(config.get("base_url") or os.getenv("OLLAMA_HOST") or "http://localhost:11434")
         return OllamaProvider(
-            model=model or "llama3",
+            model=model or _get_default_ollama_model(base_url),
             base_url=base_url,
             timeout_sec=_ollama_timeout_sec(config),
             num_ctx=_ollama_num_ctx(config),
