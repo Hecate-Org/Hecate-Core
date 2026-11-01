@@ -1736,6 +1736,32 @@ def categorize_techniques_by_matrix(technique_ids: Set[str]) -> Dict[str, Any]:
         "exfiltration": 0,
         "impact": 0,
     }
+    cloud_tactics: Dict[str, int] = {
+        "initial-access": 0,
+        "execution": 0,
+        "persistence": 0,
+        "privilege-escalation": 0,
+        "stealth": 0,
+        "defense-impairment": 0,
+        "credential-access": 0,
+        "discovery": 0,
+        "lateral-movement": 0,
+        "collection": 0,
+        "exfiltration": 0,
+        "impact": 0,
+    }
+    container_tactics: Dict[str, int] = {
+        "initial-access": 0,
+        "execution": 0,
+        "persistence": 0,
+        "privilege-escalation": 0,
+        "stealth": 0,
+        "defense-impairment": 0,
+        "credential-access": 0,
+        "discovery": 0,
+        "lateral-movement": 0,
+        "impact": 0,
+    }
     mob_tactics: Dict[str, int] = {
         "initial-access": 0,
         "execution": 0,
@@ -1787,22 +1813,39 @@ def categorize_techniques_by_matrix(technique_ids: Set[str]) -> Dict[str, Any]:
                 if tac in mob_tactics:
                     mob_tactics[tac] += 1
 
-        # Check Enterprise domain
+        # Check Enterprise, Cloud, and Container domains
         info = get_technique(clean_tid)
         if info and info.get("tactic_shortnames"):
+            platforms = {str(p).lower() for p in (info.get("platforms") or [])}
+            is_cloud = bool(platforms & {"iaas", "saas", "identity provider", "office suite"})
+            is_container = bool(platforms & {"containers", "kubernetes"})
             for tac in info["tactic_shortnames"]:
                 canon = canonical_tactic(tac)
                 if canon in ent_tactics:
                     ent_tactics[canon] += 1
                 elif tac in ent_tactics:
                     ent_tactics[tac] += 1
+                if is_cloud:
+                    if canon in cloud_tactics:
+                        cloud_tactics[canon] += 1
+                    elif tac in cloud_tactics:
+                        cloud_tactics[tac] += 1
+                if is_container:
+                    if canon in container_tactics:
+                        container_tactics[canon] += 1
+                    elif tac in container_tactics:
+                        container_tactics[tac] += 1
 
     return {
         "enterprise": ent_tactics,
+        "cloud": cloud_tactics,
+        "containers": container_tactics,
         "mobile": mob_tactics,
         "ics": ics_tactics,
         "total_unique": len(technique_ids),
         "enterprise_total": sum(ent_tactics.values()),
+        "cloud_total": sum(cloud_tactics.values()),
+        "containers_total": sum(container_tactics.values()),
         "mobile_total": sum(mob_tactics.values()),
         "ics_total": sum(ics_tactics.values()),
     }

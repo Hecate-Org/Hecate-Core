@@ -37,6 +37,8 @@ class HuntsMetrics:
     host_hashes: int = 0
     host_paths: int = 0
     enterprise_ttps: Dict[str, int] = field(default_factory=dict)
+    cloud_ttps: Dict[str, int] = field(default_factory=dict)
+    containers_ttps: Dict[str, int] = field(default_factory=dict)
     mobile_ttps: Dict[str, int] = field(default_factory=dict)
     ics_ttps: Dict[str, int] = field(default_factory=dict)
     tactic_hunts: Dict[str, Dict[str, int]] = field(default_factory=dict)
@@ -46,6 +48,8 @@ class HuntsMetrics:
     matrix_rules: Dict[str, int] = field(default_factory=dict)
     matrix_iocs: Dict[str, int] = field(default_factory=dict)
     enterprise_total: int = 0
+    cloud_total: int = 0
+    containers_total: int = 0
     mobile_total: int = 0
     ics_total: int = 0
     grounding_asserted: int = 0
@@ -214,7 +218,7 @@ def _collect_hunts_metrics(workspace: Optional[Path] = None) -> HuntsMetrics:
         classified = classifications[key]
         active = {
             domain: {tactic for tactic, count in classified.get(domain, {}).items() if count}
-            for domain in ("enterprise", "mobile", "ics")
+            for domain in ("enterprise", "cloud", "containers", "mobile", "ics")
         }
         if declared and not any(active.values()):
             active["enterprise"].update(
@@ -443,6 +447,8 @@ def _collect_hunts_metrics(workspace: Optional[Path] = None) -> HuntsMetrics:
         host_hashes=len(host_hashes),
         host_paths=len(host_paths),
         enterprise_ttps=cat_metrics.get("enterprise", {}),
+        cloud_ttps=cat_metrics.get("cloud", {}),
+        containers_ttps=cat_metrics.get("containers", {}),
         mobile_ttps=cat_metrics.get("mobile", {}),
         ics_ttps=cat_metrics.get("ics", {}),
         tactic_hunts=tactic_hunts,
@@ -452,6 +458,8 @@ def _collect_hunts_metrics(workspace: Optional[Path] = None) -> HuntsMetrics:
         matrix_rules=matrix_rules,
         matrix_iocs=matrix_iocs,
         enterprise_total=cat_metrics.get("enterprise_total", 0),
+        cloud_total=cat_metrics.get("cloud_total", 0),
+        containers_total=cat_metrics.get("containers_total", 0),
         mobile_total=cat_metrics.get("mobile_total", 0),
         ics_total=cat_metrics.get("ics_total", 0),
         grounding_asserted=grounding_asserted,

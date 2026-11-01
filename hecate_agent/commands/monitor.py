@@ -777,7 +777,7 @@ def _mitre_metrics_panel(
     metrics: Optional[HuntsMetrics] = None,
     detailed: bool = False,
 ) -> Panel:
-    """A dedicated panel displaying MITRE ATT&CK Enterprise, Mobile, and ICS coverage metrics."""
+    """A dedicated panel displaying MITRE ATT&CK Enterprise, Cloud, and Container coverage metrics."""
     h_metrics = metrics or _collect_hunts_metrics(workspace)
 
     table = Table(box=None, show_header=False, expand=True, padding=(0, 1))
@@ -785,12 +785,15 @@ def _mitre_metrics_panel(
     table.add_column("value", ratio=1, overflow="ellipsis", no_wrap=True)
 
     ent = h_metrics.enterprise_ttps or {}
-    mob = h_metrics.mobile_ttps or {}
-    ics = h_metrics.ics_ttps or {}
+    cloud = h_metrics.cloud_ttps or {}
+    containers = h_metrics.containers_ttps or {}
 
     ent_total = h_metrics.enterprise_total or sum(ent.values())
-    mob_total = h_metrics.mobile_total or sum(mob.values())
-    ics_total = h_metrics.ics_total or sum(ics.values())
+    cloud_total = h_metrics.cloud_total or sum(cloud.values())
+    container_total = h_metrics.containers_total or sum(containers.values())
+
+    cloud_tactics = sum(v > 0 for v in cloud.values())
+    container_tactics = sum(v > 0 for v in containers.values())
 
     recon = ent.get("reconnaissance", 0)
     resdev = ent.get("resource-development", 0)
@@ -849,32 +852,28 @@ def _mitre_metrics_panel(
                 Text(str(hunts), style="bright_cyan" if hunts else "dim"),
                 Text(str(rules), style="bright_green" if rules else "dim"),
             )
-        mob_tactics = sum(v > 0 for v in mob.values())
-        ics_tactics = sum(v > 0 for v in ics.values())
         table.add_row(
-            Text(f"MOBILE ({mob_tactics} / 14 tactics) ({mob_total} Unique TTPs)", style="bright_cyan"),
-            Text(str(mob_total), style="bright_cyan"),
-            Text(str(h_metrics.matrix_iocs.get("mobile", 0)), style="bright_cyan"),
-            Text(str(h_metrics.matrix_hunts.get("mobile", 0)), style="bright_cyan"),
-            Text(str(h_metrics.matrix_rules.get("mobile", 0)), style="bright_cyan"),
+            Text(f"CLOUD ({cloud_tactics} / 12 tactics) ({cloud_total} Unique TTPs)", style="bright_cyan"),
+            Text(str(cloud_total), style="bright_cyan"),
+            Text(str(h_metrics.matrix_iocs.get("cloud", 0)), style="bright_cyan"),
+            Text(str(h_metrics.matrix_hunts.get("cloud", 0)), style="bright_cyan"),
+            Text(str(h_metrics.matrix_rules.get("cloud", 0)), style="bright_cyan"),
         )
         table.add_row(
-            Text(f"ICS ({ics_tactics} / 12 tactics) ({ics_total} Unique TTPs)", style="bright_cyan"),
-            Text(str(ics_total), style="bright_cyan"),
-            Text(str(h_metrics.matrix_iocs.get("ics", 0)), style="bright_cyan"),
-            Text(str(h_metrics.matrix_hunts.get("ics", 0)), style="bright_cyan"),
-            Text(str(h_metrics.matrix_rules.get("ics", 0)), style="bright_cyan"),
+            Text(f"CONTAINERS ({container_tactics} / 10 tactics) ({container_total} Unique TTPs)", style="bright_cyan"),
+            Text(str(container_total), style="bright_cyan"),
+            Text(str(h_metrics.matrix_iocs.get("containers", 0)), style="bright_cyan"),
+            Text(str(h_metrics.matrix_hunts.get("containers", 0)), style="bright_cyan"),
+            Text(str(h_metrics.matrix_rules.get("containers", 0)), style="bright_cyan"),
         )
     elif compact:
-        mob_tactics = sum(v > 0 for v in mob.values())
-        ics_tactics = sum(v > 0 for v in ics.values())
         if ent_total == 0 and h_metrics.ttps_count == 0:
             table.add_row("ENTERPRISE", Text("(0 / 15 tactics) (0 Unique TTPs)", style="dim"))
             table.add_row(" Ingress", Text("Recon 0 · ResDev 0 · InitAcc 0", style="dim"))
             table.add_row(" Execution", Text("Exec 0 · Persist 0 · PrivEsc 0", style="dim"))
             table.add_row(" Defense", Text("Stealth 0 · DefImp 0 · CredAcc 0", style="dim"))
             table.add_row(" Actions", Text("Disc 0 · C2 0 · Impact 0", style="dim"))
-            table.add_row("MOB & ICS", Text("(0/14) (0 TTPs) · (0/12) (0 TTPs)", style="dim"))
+            table.add_row("CLOUD & K8S", Text("(0/12) (0 TTPs) · (0/10) (0 TTPs)", style="dim"))
         else:
             table.add_row(
                 "ENTERPRISE",
@@ -932,19 +931,17 @@ def _mitre_metrics_panel(
                     (str(impact), "bright_white"),
                 ),
             )
-            mob_str = f"Mob ({mob_tactics}/14) ({mob_total} Unique TTPs)"
-            ics_str = f"ICS ({ics_tactics}/12) ({ics_total} Unique TTPs)"
+            cloud_str = f"Cloud ({cloud_tactics}/12) ({cloud_total} Unique TTPs)"
+            k8s_str = f"K8s ({container_tactics}/10) ({container_total} Unique TTPs)"
             table.add_row(
-                "MOB & ICS",
+                "CLOUD & K8S",
                 Text.assemble(
-                    (mob_str, "bright_cyan" if mob_total else "dim"),
+                    (cloud_str, "bright_cyan" if cloud_total else "dim"),
                     (" · ", "dim"),
-                    (ics_str, "bright_cyan" if ics_total else "dim"),
+                    (k8s_str, "bright_cyan" if container_total else "dim"),
                 ),
             )
     else:
-        mob_tactics = sum(v > 0 for v in mob.values())
-        ics_tactics = sum(v > 0 for v in ics.values())
         if ent_total == 0 and h_metrics.ttps_count == 0:
             table.add_row("ENTERPRISE", Text("(0 / 15 tactics) (0 Unique TTPs)", style="dim"))
             table.add_row(" Pre-Attack", Text("Recon 0 · ResDev 0", style="dim"))
@@ -954,8 +951,8 @@ def _mitre_metrics_panel(
             table.add_row(" Discovery", Text("Disc 0 · CredAcc 0", style="dim"))
             table.add_row(" Movement", Text("LatMove 0 · Collect 0", style="dim"))
             table.add_row(" Actions", Text("C2 0 · Exfil 0 · Impact 0", style="dim"))
-            table.add_row("MOBILE", Text("(0 / 14 tactics) (0 Unique TTPs)", style="dim"))
-            table.add_row("ICS", Text("(0 / 12 tactics) (0 Unique TTPs)", style="dim"))
+            table.add_row("CLOUD", Text("(0 / 12 tactics) (0 Unique TTPs)", style="dim"))
+            table.add_row("CONTAINERS", Text("(0 / 10 tactics) (0 Unique TTPs)", style="dim"))
         else:
             table.add_row(
                 "ENTERPRISE",
@@ -1036,18 +1033,18 @@ def _mitre_metrics_panel(
             )
 
             table.add_row(
-                "MOBILE",
+                "CLOUD",
                 Text(
-                    f"({mob_tactics} / 14 tactics) ({mob_total} Unique TTPs)",
-                    style="bright_cyan" if mob_total else "dim",
+                    f"({cloud_tactics} / 12 tactics) ({cloud_total} Unique TTPs)",
+                    style="bright_cyan" if cloud_total else "dim",
                 ),
             )
 
             table.add_row(
-                "ICS",
+                "CONTAINERS",
                 Text(
-                    f"({ics_tactics} / 12 tactics) ({ics_total} Unique TTPs)",
-                    style="bright_cyan" if ics_total else "dim",
+                    f"({container_tactics} / 10 tactics) ({container_total} Unique TTPs)",
+                    style="bright_cyan" if container_total else "dim",
                 ),
             )
 

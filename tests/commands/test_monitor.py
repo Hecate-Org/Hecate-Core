@@ -664,9 +664,13 @@ def test_mitre_metrics_panel_rendering(tmp_path: Path) -> None:
             "exfiltration": 8,
             "impact": 11,
         },
+        cloud_ttps={"initial-access": 2, "discovery": 1},
+        containers_ttps={"execution": 1},
         mobile_ttps={"command-and-control": 1},
         ics_ttps={},
         enterprise_total=346,
+        cloud_total=3,
+        containers_total=1,
         mobile_total=1,
         ics_total=0,
     )
@@ -685,8 +689,8 @@ def test_mitre_metrics_panel_rendering(tmp_path: Path) -> None:
     assert "Disc 26" in text_wide and "CredAcc 38" in text_wide
     assert "LatMove 16" in text_wide and "Collect 18" in text_wide
     assert "C2 26" in text_wide and "Exfil 8" in text_wide and "Impact 11" in text_wide
-    assert "MOBILE" in text_wide and "(1 / 14 tactics) (1 Unique TTPs)" in text_wide
-    assert "ICS" in text_wide and "(0 / 12 tactics) (0 Unique TTPs)" in text_wide
+    assert "CLOUD" in text_wide and "(2 / 12 tactics) (3 Unique TTPs)" in text_wide
+    assert "CONTAINERS" in text_wide and "(1 / 10 tactics) (1 Unique TTPs)" in text_wide
     assert len(text_wide.splitlines()) == m._BOTTOM_ROW_HEIGHT
 
     # Narrow mode: vertically broken out with 10 data rows + 2 borders = 12 lines
@@ -695,8 +699,8 @@ def test_mitre_metrics_panel_rendering(tmp_path: Path) -> None:
     c_narrow.print(panel_narrow)
     text_narrow = c_narrow.export_text()
     assert len(text_narrow.splitlines()) == m._MITRE_PANEL_HEIGHT
-    assert "MOBILE" in text_narrow and "(1 / 14 tactics)" in text_narrow
-    assert "ICS" in text_narrow and "(0 / 12 tactics)" in text_narrow
+    assert "CLOUD" in text_narrow and "(2 / 12 tactics)" in text_narrow
+    assert "CONTAINERS" in text_narrow and "(1 / 10 tactics)" in text_narrow
     assert "Stealth 66 · DefImp 18" in text_narrow
     assert "Disc 26 · CredAcc 38" in text_narrow
     assert "LatMove 16 · Collect 18" in text_narrow
@@ -706,7 +710,7 @@ def test_mitre_metrics_panel_rendering(tmp_path: Path) -> None:
     panel_compact = m._mitre_metrics_panel(workspace=tmp_path, compact=True, metrics=mock_metrics)
     c_compact.print(panel_compact)
     text_compact = c_compact.export_text()
-    assert "MOB & ICS" in text_compact and "Mob" in text_compact
+    assert "CLOUD & K8S" in text_compact and "Cloud" in text_compact
 
 
 def test_dashboard_includes_hunts_summary_in_both_layouts() -> None:
@@ -1206,7 +1210,7 @@ def test_detailed_mitre_has_one_row_per_enterprise_tactic(width: int) -> None:
         assert "10 Unique TTPs" in text
     else:
         assert "ENTERPRISE" in text
-    assert "MOBILE" in text and "ICS" in text
+    assert "CLOUD" in text and "CONTAINERS" in text
 
 
 def test_wide_dashboard_swaps_observables_and_expands_mitre(monkeypatch: pytest.MonkeyPatch) -> None:
