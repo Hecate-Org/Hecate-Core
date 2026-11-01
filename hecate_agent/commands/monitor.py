@@ -776,6 +776,7 @@ def _mitre_metrics_panel(
     compact: bool = False,
     metrics: Optional[HuntsMetrics] = None,
     detailed: bool = False,
+    col_width: Optional[int] = None,
 ) -> Panel:
     """A dedicated panel displaying MITRE ATT&CK Enterprise, Cloud, and Container coverage metrics."""
     h_metrics = metrics or _collect_hunts_metrics(workspace)
@@ -816,9 +817,10 @@ def _mitre_metrics_panel(
 
     if detailed:
         table = Table(box=None, show_header=False, expand=True, padding=(0, 0))
-        table.add_column("tactic", ratio=1, min_width=19, no_wrap=True, overflow="ellipsis")
+        table.add_column("tactic", ratio=1, min_width=20, no_wrap=True, overflow="ellipsis")
+        metric_w = col_width if col_width is not None else 6
         for name in ("TTPs", "IOCs", "Hunts", "Rules"):
-            table.add_column(name, width=5, justify="right", no_wrap=True)
+            table.add_column(name, width=metric_w, justify="right", no_wrap=True)
         table.add_row(
             Text(f"ENTERPRISE ({active_tactics} / 15 tactics) ({ent_total} Unique TTPs)", style="bold bright_cyan"),
             *(Text(label, style="bold bright_cyan") for label in ("TTPs", "IOCs", "Hunts", "Rules")),
@@ -1097,8 +1099,6 @@ def _detections_panel(
 
     active_val = p_metrics.validated_rules > 0 or p_metrics.bas_runs > 0
     test_sub = f"{p_metrics.hunts_validated} hunts"
-    if p_metrics.validated_rules:
-        test_sub += f" · {p_metrics.precision_rate:.0%} prec"
     table.add_row(
         "RULE TESTS",
         Text.assemble(
@@ -1107,6 +1107,16 @@ def _detections_panel(
             (test_sub, "bright_cyan" if active_val else "dim"),
         ),
     )
+
+    if not compact and p_metrics.validated_rules > 0:
+        table.add_row(
+            "PRECISION",
+            Text.assemble(
+                (f"{p_metrics.precision_rate:.0%} rule precision", "bright_green"),
+                (" · ", "dim"),
+                (f"{p_metrics.false_positive_count} FP", "bright_white"),
+            ),
+        )
 
     table.add_row(
         "SELF-TUNING",
@@ -1345,8 +1355,14 @@ def _outbound_panel(
                 ("GitHub Public", "bright_white"),
                 (" · ", "dim"),
                 ("MISP Events", "bright_cyan"),
+            ),
+        )
+        table.add_row(
+            "DISTRIB",
+            Text.assemble(
+                ("Signed CTI packages", "bright_white"),
                 (" · ", "dim"),
-                ("Signed CTI", "dim"),
+                ("public repo", "dim"),
             ),
         )
 
@@ -1906,34 +1922,39 @@ def _runner_panel(status: RunnerStatus, events: List[TrailEvent]) -> Panel:
         )
     else:
         rows.append(Text.assemble(("BACKLOG  ", "dim"), ("none reported", "yellow"), no_wrap=True))
-    if status.parked_items is not None or status.total_drafts is not None or status.pending_queries:
-        details = []
-        if status.parked_items is not None:
-            if status.parked_reasons:
-                p_summary = ", ".join(f"{cnt} {k}" for k, cnt in sorted(status.parked_reasons.items())[:2])
-                details.append(f"{status.parked_items} parked ({p_summary})")
-            else:
-                details.append(f"{status.parked_items} parked")
-        if status.total_drafts is not None:
-            details.append(f"{status.total_drafts} drafts")
-        if status.pending_queries:
-            details.append(f"{status.pending_queries} pending")
-        queue_style = "bold yellow" if status.pending_queries else "bright_white"
-        rows.append(Text.assemble(("QUEUE    ", "dim"), (" · ".join(details), queue_style), no_wrap=True))
+    if status.parked_items:
+        if status.parked_reasons:
+            p_summary = ", ".join(f"{cnt} {k}" for k, cnt in sorted(status.parked_reasons.items())[:2])
+            rows.append(Text.assemble(("PARKED   ", "dim"), (f"{status.parked_items} parked ({p_summary})", "bright_white"), no_wrap=True))
+        else:
+            rows.append(Text.assemble(("PARKED   ", "dim"), (f"{status.parked_items} parked", "bright_white"), no_wrap=True))
 
-    outbox_parts = []
-    if status.github_pending_prs or status.github_confirmed_promotions:
-        if status.github_pending_prs:
-            outbox_parts.append(f"{status.github_pending_prs} PR pending")
-        if status.github_confirmed_promotions:
-            outbox_parts.append(f"{status.github_confirmed_promotions} GitHub published")
-    if status.misp_pending_exports or status.misp_confirmed_exports:
-        if status.misp_pending_exports:
-            outbox_parts.append(f"{status.misp_pending_exports} MISP pending")
-        if status.misp_confirmed_exports:
-            outbox_parts.append(f"{status.misp_confirmed_exports} MISP confirmed")
-    if outbox_parts:
-        rows.append(Text.assemble(("OUTBOX   ", "dim"), (" · ".join(outbox_parts), "bright_cyan"), no_wrap=True))
+    q_parts = []
+    if status.total_drafts is not None:
+        q_parts.append(f"{status.total_drafts} drafts")
+    if status.pending_queries:
+        q_parts.append(f"{status.pending_queries} pending")
+    elif status.total_drafts is not None:
+        q_parts.append("0 pending")
+    if q_parts:
+        queue_style = "bold yellow" if status.pending_queries else "bright_white"
+        rows.append(Text.assemble(("QUEUE    ", "dim"), (" · ".join(q_parts), queue_style), no_wrap=True))
+
+    outbox_pending = []
+    if status.github_pending_prs:
+        outbox_pending.append(f"{status.github_pending_prs} PR pending")
+    if status.misp_pending_exports:
+        outbox_pending.append(f"{status.misp_pending_exports} MISP pending")
+    if outbox_pending:
+        rows.append(Text.assemble(("OUTBOX   ", "dim"), (" · ".join(outbox_pending), "bold bright_yellow"), no_wrap=True))
+
+    synced_parts = []
+    if status.github_confirmed_promotions:
+        synced_parts.append(f"{status.github_confirmed_promotions} GitHub published")
+    if status.misp_confirmed_exports:
+        synced_parts.append(f"{status.misp_confirmed_exports} MISP confirmed")
+    if synced_parts:
+        rows.append(Text.assemble(("EXPORTS  ", "dim"), (" · ".join(synced_parts), "bright_cyan"), no_wrap=True))
 
     return Panel(
         Group(*rows),
@@ -2257,16 +2278,26 @@ def _render_dashboard(
     # Tab 1: Operations Overview (Default)
     resources_height = 3
     stages_height = len(_STAGES) + 3
-    service_height = (8 if (runner.github_confirmed_promotions or runner.misp_confirmed_exports) else 7) if runner.installed else 0
+    service_rows = 4
+    if runner.parked_items:
+        service_rows += 1
+    if runner.total_drafts is not None or runner.pending_queries:
+        service_rows += 1
+    if runner.github_pending_prs or runner.misp_pending_exports:
+        service_rows += 1
+    if runner.github_confirmed_promotions or runner.misp_confirmed_exports:
+        service_rows += 1
+    service_height = (service_rows + 2) if runner.installed else 0
     body_height = console.size.height - header_height - resources_height - 1
     llm_height = _NARROW_LLM_PANEL_HEIGHT
     hunts_height = _HUNTS_PANEL_HEIGHT
     mitre_height = _MITRE_PANEL_HEIGHT
+    detections_height = 10 if pt_metrics.validated_rules > 0 else 8
     search_count = _search_count(latest, events)
-    usage_on_left = body_height >= stages_height + service_height + llm_height + hunts_height + mitre_height + 4
+    usage_on_left = body_height >= stages_height + service_height + llm_height + hunts_height + detections_height + 5
     middle_height = body_height if usage_on_left else max(10, body_height - _BOTTOM_ROW_HEIGHT)
     service_on_left = runner.installed and middle_height >= stages_height + service_height
-    left_width = min(52, max(46, console.size.width // 4)) if console.size.width >= 120 else None
+    left_width = min(56, max(48, console.size.width // 4)) if console.size.width >= 120 else None
     ops_width = (console.size.width - left_width - 2) if left_width else (console.size.width * 2 // 3)
     swap_detail_panels = usage_on_left and ops_width >= 85
     expanded_mitre = usage_on_left and ops_width >= 135
@@ -2287,7 +2318,13 @@ def _render_dashboard(
         grid_compact_names=ops_width < 160,
     )
     hunts_panel = _hunts_panel(workspace=workspace, narrow=usage_on_left, metrics=h_metrics)
-    mitre_panel = _mitre_metrics_panel(workspace=workspace, narrow=usage_on_left, metrics=h_metrics, detailed=expanded_mitre)
+    mitre_panel = _mitre_metrics_panel(
+        workspace=workspace,
+        narrow=usage_on_left,
+        metrics=h_metrics,
+        detailed=expanded_mitre,
+        col_width=8 if ops_width >= 85 else 6,
+    )
     detections_panel = _detections_panel(
         workspace=workspace,
         metrics=h_metrics,
@@ -2376,7 +2413,7 @@ def _render_dashboard(
     if usage_on_left:
         left.append(Layout(llm_panel, size=llm_height))
         left.append(Layout(hunts_panel, size=hunts_height))
-        left.append(Layout(detections_panel, size=8))
+        left.append(Layout(detections_panel, size=detections_height))
         left.append(Layout(outbound_panel, ratio=1))
     else:
         left.append(Layout(detections_panel, ratio=1))
