@@ -831,7 +831,6 @@ def _mitre_metrics_panel(
     impact = ent.get("impact", 0)
 
     active_tactics = sum(1 for v in ent.values() if v > 0)
-    subtitle = None
 
     if detailed:
         table = Table(box=None, show_header=False, expand=True, padding=(0, 0))
@@ -843,7 +842,6 @@ def _mitre_metrics_panel(
             Text(f"ENTERPRISE ({active_tactics} / 15 tactics) ({ent_total} Unique TTPs)", style="bold bright_cyan"),
             *(Text(label, style="bold bright_cyan") for label in ("TTPs", "IOCs", "Hunts", "Rules")),
         )
-        subtitle = None
         for tactic, label in (
             ("reconnaissance", "Reconnaissance"),
             ("resource-development", "Resource Development"),
@@ -2309,7 +2307,6 @@ def _render_dashboard(
     body_height = console.size.height - header_height - resources_height - 1
     llm_height = _NARROW_LLM_PANEL_HEIGHT
     hunts_height = _HUNTS_PANEL_HEIGHT
-    mitre_height = _MITRE_PANEL_HEIGHT
     detections_height = 10 if pt_metrics.validated_rules > 0 else 8
     search_count = _search_count(latest, events)
     usage_on_left = body_height >= stages_height + service_height + llm_height + hunts_height + detections_height + 5
@@ -2317,7 +2314,6 @@ def _render_dashboard(
     service_on_left = runner.installed and middle_height >= stages_height + service_height
     left_width = min(56, max(48, console.size.width // 4)) if console.size.width >= 120 else None
     ops_width = (console.size.width - left_width - 2) if left_width else (console.size.width * 2 // 3)
-    swap_detail_panels = usage_on_left and ops_width >= 85
     expanded_mitre = usage_on_left and ops_width >= 135
     llm_panel = _usage_panel(
         metrics, latest, active, events, workspace=workspace, live=live, now=refreshed, narrow=usage_on_left
@@ -2352,7 +2348,6 @@ def _render_dashboard(
         narrow=usage_on_left,
     )
     outbound_panel = _outbound_panel(workspace=workspace, runner=runner, narrow=usage_on_left)
-    purple_team_panel = _purple_team_panel(workspace=workspace, events=events, narrow=False, metrics=pt_metrics)
 
     if usage_on_left:
         layout.split_column(
