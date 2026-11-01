@@ -118,19 +118,12 @@ def _collect_hunts_metrics(workspace: Optional[Path] = None) -> HuntsMetrics:
         return HuntsMetrics()
 
     hunts_dir = workspace / "hunts"
-    hunt_files: List[Path] = []
-    if hunts_dir.exists() and hunts_dir.is_dir():
-        try:
-            hunt_files = sorted(f for f in hunts_dir.rglob("*.md") if f.name not in _EXCLUDED_HUNT_DOCS)
-        except OSError:
-            hunt_files = []
-
     is_eval_or_special = (
         "/tmp/eval_runs" in str(workspace.resolve())
         or "eval" in workspace.name.lower()
         or workspace == Path("/home/chemch/betas")
     )
-    if not hunt_files and is_eval_or_special:
+    if not (hunts_dir.exists() and hunts_dir.is_dir()) and is_eval_or_special:
         alt_candidates = [
             Path("/home/chemch/betas/Hecate-Workspace/hunts"),
             Path.home() / "betas" / "Hecate-Workspace" / "hunts",
@@ -138,16 +131,10 @@ def _collect_hunts_metrics(workspace: Optional[Path] = None) -> HuntsMetrics:
         ]
         for alt in alt_candidates:
             if alt.exists() and alt.is_dir():
-                try:
-                    alt_files = sorted(f for f in alt.rglob("*.md") if f.name not in _EXCLUDED_HUNT_DOCS)
-                    if alt_files:
-                        hunts_dir = alt
-                        hunt_files = alt_files
-                        break
-                except OSError:
-                    continue
+                hunts_dir = alt
+                break
 
-    if not hunts_dir or not hunts_dir.exists() or not hunt_files:
+    if not hunts_dir or not hunts_dir.exists() or not hunts_dir.is_dir():
         return HuntsMetrics()
 
     resolved_path = hunts_dir.resolve()
@@ -156,6 +143,14 @@ def _collect_hunts_metrics(workspace: Optional[Path] = None) -> HuntsMetrics:
 
     if cached is not None and (now - cached[0] < 10.0):
         return cached[3]
+
+    try:
+        hunt_files = sorted(f for f in hunts_dir.rglob("*.md") if f.name not in _EXCLUDED_HUNT_DOCS)
+    except OSError:
+        hunt_files = []
+
+    if not hunt_files:
+        return HuntsMetrics()
 
     file_count = len(hunt_files)
     queries_dir = workspace / "queries"
@@ -540,20 +535,18 @@ def _collect_purple_team_metrics(
     resolved_path = str(workspace.resolve())
     hunts_dir = workspace / "hunts"
     queries_dir = workspace / "queries"
-
-    hunt_files: List[Path] = []
-    if hunts_dir.exists():
-        hunt_files = [f for f in hunts_dir.glob("**/*.md") if f.name not in _EXCLUDED_HUNT_DOCS]
-
     bas_root = workspace / ".hecate" / "bas"
-    bas_files = list((bas_root / "runs").glob("*.json"))
+    bas_runs_dir = bas_root / "runs"
     state_file = bas_root / "state.json"
-    metric_files = hunt_files + bas_files + ([state_file] if state_file.exists() else [])
-    file_count = len(metric_files)
-    max_mtime = max((f.stat().st_mtime for f in metric_files), default=0.0)
+
+    bas_files: List[Path] = list(bas_runs_dir.glob("*.json")) if bas_runs_dir.is_dir() else []
+    bas_mtime = max((f.stat().st_mtime for f in bas_files), default=0.0)
+    state_mtime = state_file.stat().st_mtime if state_file.exists() else 0.0
+    hunts_mtime = hunts_dir.stat().st_mtime if hunts_dir.exists() else 0.0
+    bas_fingerprint = (len(bas_files), bas_mtime, state_mtime, hunts_mtime)
 
     cached = _PURPLE_METRICS_CACHE.get(resolved_path)
-    if cached and (now - cached[0] < 5.0) and cached[1] == file_count and cached[2] == max_mtime:
+    if cached and (now - cached[0] < 5.0) and cached[1] == bas_fingerprint[0] and cached[2] == bas_fingerprint[1]:
         cached_m = cached[3]
         if metrics.last_validated_count > 0:
             cached_m.last_validated_count = metrics.last_validated_count
@@ -561,6 +554,10 @@ def _collect_purple_team_metrics(
             cached_m.last_duration_sec = metrics.last_duration_sec
             cached_m.last_status = metrics.last_status
         return cached_m
+
+    hunt_files: List[Path] = []
+    if hunts_dir.exists():
+        hunt_files = [f for f in hunts_dir.glob("**/*.md") if f.name not in _EXCLUDED_HUNT_DOCS]
 
     val_rules = 0
     tuned_rules = 0
@@ -682,5 +679,5 @@ def _collect_purple_team_metrics(
     metrics.hunts_validated = hunts_val
     metrics.total_telemetry_events = telemetry
     metrics.bas_techniques = len(bas_techniques)
-    _PURPLE_METRICS_CACHE[resolved_path] = (now, file_count, max_mtime, metrics)
+    _PURPLE_METRICS_CACHE[resolved_path] = (now, bas_fingerprint[0], bas_fingerprint[1], metrics)
     return metrics
