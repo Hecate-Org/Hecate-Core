@@ -157,7 +157,8 @@ class QueryDeployer:
         token = os.getenv("SENTINEL_BEARER_TOKEN") or os.getenv("AZURE_ACCESS_TOKEN")
 
         slug = "".join(c if c.isalnum() else "_" for c in payload.rule_title.lower())[:40]
-        search_id = f"hecate_{payload.hunt_id.lower()}_{slug}"
+        clean_hunt = payload.hunt_id.lower().replace("-", "_")
+        search_id = f"hecate_{clean_hunt}_{slug}".strip("_")
         display_name = f"[{payload.hunt_id}] {payload.rule_title}"
 
         endpoint = (
@@ -178,7 +179,12 @@ class QueryDeployer:
             }
         }
 
-        req_summary = {"method": "PUT", "url": endpoint, "body": body}
+        req_summary = {
+            "method": "PUT",
+            "url": endpoint,
+            "headers": {"Authorization": "Bearer ***", "Content-Type": "application/json"},
+            "body": body,
+        }
 
         if dry_run or not (workspace_id and sub_id and rg and token):
             reason = "dry_run mode" if dry_run else "missing Sentinel credentials (WORKSPACE_ID/SUB_ID/RG/TOKEN)"
@@ -216,7 +222,12 @@ class QueryDeployer:
             "queryString": payload.query.strip(),
             "description": f"Hecate threat hunt {payload.hunt_id} query ({', '.join(payload.techniques)})",
         }
-        req_summary = {"method": "POST", "url": endpoint, "body": body}
+        req_summary = {
+            "method": "POST",
+            "url": endpoint,
+            "headers": {"Authorization": "Bearer ***", "Content-Type": "application/json"},
+            "body": body,
+        }
 
         if dry_run or not token:
             reason = "dry_run mode" if dry_run else "missing FALCON_API_TOKEN credentials"
@@ -256,7 +267,12 @@ class QueryDeployer:
                 "leql": {"statement": payload.query.strip()},
             }
         }
-        req_summary = {"method": "POST", "url": endpoint, "body": body}
+        req_summary = {
+            "method": "POST",
+            "url": endpoint,
+            "headers": {"x-api-key": "***", "Content-Type": "application/json"},
+            "body": body,
+        }
 
         if dry_run or not api_key:
             reason = "dry_run mode" if dry_run else "missing RAPID7_API_KEY credentials"
@@ -297,7 +313,12 @@ class QueryDeployer:
                 "description": f"Hecate hunt {payload.hunt_id} for {', '.join(payload.techniques)}",
             }
         }
-        req_summary = {"method": "POST", "url": endpoint, "body": body}
+        req_summary = {
+            "method": "POST",
+            "url": endpoint,
+            "headers": {"Authorization": "ApiToken ***", "Content-Type": "application/json"},
+            "body": body,
+        }
 
         if dry_run or not api_token:
             reason = "dry_run mode" if dry_run else "missing SENTINELONE_API_TOKEN credentials"
@@ -348,7 +369,12 @@ class QueryDeployer:
             "is_scheduled": "0",
             "output_mode": "json",
         }
-        req_summary = {"method": "POST", "url": endpoint, "form_data": data}
+        req_summary = {
+            "method": "POST",
+            "url": endpoint,
+            "headers": {"Authorization": "Bearer ***", "Content-Type": "application/x-www-form-urlencoded"},
+            "form_data": data,
+        }
 
         if dry_run or not token:
             reason = "dry_run mode" if dry_run else "missing SPLUNK_TOKEN credentials"
@@ -398,7 +424,12 @@ class QueryDeployer:
             "tags": ["hecate", payload.hunt_id] + payload.techniques,
             "enabled": False,
         }
-        req_summary = {"method": "POST", "url": endpoint, "body": body}
+        req_summary = {
+            "method": "POST",
+            "url": endpoint,
+            "headers": {"Authorization": "ApiKey ***", "kbn-xsrf": "true", "Content-Type": "application/json"},
+            "body": body,
+        }
 
         if dry_run or not api_key:
             reason = "dry_run mode" if dry_run else "missing ELASTIC_API_KEY credentials"
