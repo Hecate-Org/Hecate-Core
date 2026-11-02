@@ -337,3 +337,69 @@ class TestQueryDeployer:
             assert call_args[0] == "https://euce1.sentinelone.net/web/api/v2.1/dv/saved-queries"
             assert call_kwargs["headers"]["Authorization"] == "ApiToken s1-token-secret"
             assert call_kwargs["json"]["data"]["query"] == payload.query
+
+    def test_contract_splunk_deployment(self):
+        deployer = QueryDeployer()
+        payload = DeploymentPayload(
+            hunt_id="H-0868",
+            rule_title="Splunk Discovery Query",
+            target=QueryDeployer.TARGET_SPLUNK,
+            dialect="spl",
+            query='Image="*/whoami.exe"',
+            techniques=["T1033"],
+        )
+
+        fake_resp = mock.MagicMock()
+        fake_resp.status_code = 201
+
+        with (
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "SPLUNK_URL": "https://splunk.corp.local:8089",
+                    "SPLUNK_TOKEN": "splunk-token-xyz",
+                },
+            ),
+            mock.patch("httpx.Client.post", return_value=fake_resp) as mock_post,
+        ):
+            res = deployer.deploy(payload, dry_run=False)
+            assert res.status == "deployed"
+            assert res.remote_id.startswith("Hecate_H-0868_")
+            call_args, call_kwargs = mock_post.call_args
+            assert call_args[0] == "https://splunk.corp.local:8089/servicesNS/nobody/search/saved/searches"
+            assert call_kwargs["headers"]["Authorization"] == "Bearer splunk-token-xyz"
+            assert call_kwargs["data"]["search"] == 'search Image="*/whoami.exe"'
+
+    def test_contract_splunk_deployment_idempotent_409(self):
+        deployer = QueryDeployer()
+        payload = DeploymentPayload(
+            hunt_id="H-0868",
+            rule_title="Existing Splunk Query",
+            target=QueryDeployer.TARGET_SPLUNK,
+            dialect="spl",
+            query='Image="*/net.exe"',
+            techniques=["T1087"],
+        )
+
+        resp_409 = mock.MagicMock()
+        resp_409.status_code = 409
+
+        resp_200 = mock.MagicMock()
+        resp_200.status_code = 200
+
+        with (
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "SPLUNK_URL": "https://splunk.corp.local:8089",
+                    "SPLUNK_PASSWORD": "SecretPassword!",
+                },
+            ),
+            mock.patch("httpx.Client.post", side_effect=[resp_409, resp_200]) as mock_post,
+        ):
+            res = deployer.deploy(payload, dry_run=False)
+            assert res.status == "deployed"
+            assert res.remote_id.startswith("Hecate_H-0868_")
+            assert mock_post.call_count == 2
+            second_call_url = mock_post.call_args_list[1][0][0]
+            assert "saved/searches/Hecate_H-0868_" in second_call_url

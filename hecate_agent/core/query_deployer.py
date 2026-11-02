@@ -15,8 +15,10 @@ discovery, and fault-isolated error handling.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any, ClassVar, Dict, List, Optional
@@ -86,6 +88,15 @@ class QueryDeployer:
 
     def __init__(self, timeout_sec: float = 30.0) -> None:
         self.timeout_sec = timeout_sec
+        try:
+            from dotenv import load_dotenv
+
+            load_dotenv(override=False)
+            ws = os.getenv("HECATE_WORKSPACE")
+            if ws and os.path.isdir(ws):
+                load_dotenv(os.path.join(ws, ".env"), override=False)
+        except ImportError:
+            pass
 
     def deploy(
         self,
@@ -355,7 +366,10 @@ class QueryDeployer:
         app = os.getenv("SPLUNK_APP") or "search"
         user = os.getenv("SPLUNK_USER") or "nobody"
 
-        search_name = f"Hecate_{payload.hunt_id}_{quote_plus(payload.rule_title[:30])}"
+        # Construct unique, URL-safe search name using slug + query hash to prevent collisions
+        title_slug = re.sub(r"[^a-zA-Z0-9_-]", "_", payload.rule_title).strip("_")
+        q_hash = hashlib.sha256(f"{payload.rule_title}:{payload.query}".encode()).hexdigest()[:6]
+        search_name = f"Hecate_{payload.hunt_id}_{title_slug[:30]}_{q_hash}"
         endpoint = f"{splunk_url}/servicesNS/{user}/{app}/saved/searches"
 
         # Format search string if not already starting with search
@@ -405,6 +419,15 @@ class QueryDeployer:
         verify_ssl = os.getenv("SPLUNK_VERIFY_SSL", "true").lower() in ("true", "1", "yes")
         with httpx.Client(timeout=self.timeout_sec, verify=verify_ssl) as client:
             resp = client.post(endpoint, data=data, headers={"Authorization": auth_header})
+            if resp.status_code == 409:
+                # Saved search already exists — update it idempotently
+                update_url = f"{endpoint}/{quote_plus(search_name)}"
+                update_data = {
+                    "search": search_query,
+                    "description": f"Hecate Hunt {payload.hunt_id}: {payload.rule_title}",
+                    "output_mode": "json",
+                }
+                resp = client.post(update_url, data=update_data, headers={"Authorization": auth_header})
             resp.raise_for_status()
             return DeploymentResult(
                 target=payload.target,
