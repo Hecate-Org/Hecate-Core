@@ -586,6 +586,51 @@ def deploy_transpiled_query(
     return result.to_dict()
 
 
+def undeploy_transpiled_query(
+    target: str,
+    hunt_id: str,
+    title: str,
+    query: str = "",
+    remote_id: Optional[str] = None,
+    dry_run: bool = True,
+) -> Dict[str, Any]:
+    """Undeploy/delete a transpiled search query from its target SIEM or EDR platform via REST API."""
+    from hecate_agent.core.query_deployer import QueryDeployer, UndeploymentPayload
+
+    payload = UndeploymentPayload(
+        hunt_id=hunt_id,
+        rule_title=title,
+        target=target,
+        remote_id=remote_id,
+        query=query,
+    )
+    deployer = QueryDeployer()
+    result = deployer.undeploy(payload, dry_run=dry_run)
+    return result.to_dict()
+
+
+def sync_transpiled_query(
+    target: str,
+    query: str,
+    hunt_id: str,
+    title: str,
+    dry_run: bool = True,
+) -> Dict[str, Any]:
+    """Verify synchronization and drift of a transpiled search query against target SIEM/EDR."""
+    from hecate_agent.core.query_deployer import DeploymentPayload, QueryDeployer
+
+    payload = DeploymentPayload(
+        hunt_id=hunt_id,
+        rule_title=title,
+        target=target,
+        dialect=target.split("_")[-1] if "_" in target else "txt",
+        query=query,
+    )
+    deployer = QueryDeployer()
+    result = deployer.sync(payload, dry_run=dry_run)
+    return result.to_dict()
+
+
 def tune_sigma_rule(
     rule_yaml: str,
     critique: str,

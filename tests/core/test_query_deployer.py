@@ -2,8 +2,18 @@
 
 import unittest.mock as mock
 
-from hecate_agent.api import deploy_transpiled_query
-from hecate_agent.core.query_deployer import DeploymentPayload, QueryDeployer
+from hecate_agent.api import (
+    deploy_transpiled_query,
+    sync_transpiled_query,
+    undeploy_transpiled_query,
+)
+from hecate_agent.core.query_deployer import (
+    DeploymentPayload,
+    QueryDeployer,
+    SyncResult,
+    UndeploymentPayload,
+    UndeploymentResult,
+)
 
 
 class TestQueryDeployer:
@@ -403,3 +413,211 @@ class TestQueryDeployer:
             assert mock_post.call_count == 2
             second_call_url = mock_post.call_args_list[1][0][0]
             assert "saved/searches/Hecate_H-0868_" in second_call_url
+
+    def test_compute_remote_id_determinism(self):
+        title = "Privilege Escalation via Sudo"
+        query = 'CommandLine="*sudo -i*"'
+        id_splunk = QueryDeployer.compute_remote_id("splunk_spl", "H-0042", title, query)
+        assert id_splunk.startswith("Hecate_H-0042_Privilege_Escalation_via_Sudo_")
+        # Assert same inputs generate same remote_id
+        assert id_splunk == QueryDeployer.compute_remote_id("splunk_spl", "H-0042", title, query)
+
+        id_sentinel = QueryDeployer.compute_remote_id("sentinel_kql", "H-0042", title, query)
+        assert id_sentinel.startswith("hecate_h_0042_privilege_escalation_via_sudo")
+
+        id_elastic = QueryDeployer.compute_remote_id("elastic_eql", "H-0042", title, query)
+        assert id_elastic.startswith("hecate-h-0042-privilege-escalation-via-sudo")
+
+    def test_undeploy_dry_run_all_six_targets(self):
+        deployer = QueryDeployer()
+        for target in QueryDeployer.SUPPORTED_TARGETS:
+            payload = UndeploymentPayload(
+                hunt_id="H-0868",
+                rule_title="Admin Endpoint Access",
+                target=target,
+                query="index=* cs-uri-stem=/admin",
+            )
+            res = deployer.undeploy(payload, dry_run=True)
+            assert res.ok is True
+            assert res.target == target
+            assert res.status == "dry_run"
+            assert res.dry_run is True
+            assert res.remote_id is not None
+            assert res.request_summary.get("method") == "DELETE"
+
+    def test_undeploy_unsupported_target_skipped(self):
+        deployer = QueryDeployer()
+        payload = UndeploymentPayload(
+            hunt_id="H-0868",
+            rule_title="Test",
+            target="unsupported_siem",
+        )
+        res = deployer.undeploy(payload, dry_run=True)
+        assert res.status == "skipped"
+        assert "Unsupported deployment target" in res.detail
+
+    def test_undeploy_splunk_live_200_and_404(self):
+        deployer = QueryDeployer()
+        payload = UndeploymentPayload(
+            hunt_id="H-0868",
+            rule_title="Live Splunk Query",
+            target=QueryDeployer.TARGET_SPLUNK,
+            query='Image="*/whoami.exe"',
+        )
+
+        resp_200 = mock.MagicMock()
+        resp_200.status_code = 200
+
+        with (
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "SPLUNK_URL": "https://splunk.corp.local:8089",
+                    "SPLUNK_TOKEN": "valid-token",
+                },
+            ),
+            mock.patch("httpx.Client.delete", return_value=resp_200) as mock_delete,
+        ):
+            res = deployer.undeploy(payload, dry_run=False)
+            assert res.ok is True
+            assert res.status == "undeployed"
+            assert "Successfully deleted" in res.detail
+            call_url = mock_delete.call_args[0][0]
+            assert "saved/searches/Hecate_H-0868_" in call_url
+
+        # Test 404 idempotent teardown
+        resp_404 = mock.MagicMock()
+        resp_404.status_code = 404
+
+        with (
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "SPLUNK_URL": "https://splunk.corp.local:8089",
+                    "SPLUNK_TOKEN": "valid-token",
+                },
+            ),
+            mock.patch("httpx.Client.delete", return_value=resp_404),
+        ):
+            res_404 = deployer.undeploy(payload, dry_run=False)
+            assert res_404.ok is True
+            assert res_404.status == "not_found"
+            assert "was not found" in res_404.detail
+
+    def test_sync_dry_run_all_six_targets(self):
+        deployer = QueryDeployer()
+        for target in QueryDeployer.SUPPORTED_TARGETS:
+            payload = DeploymentPayload(
+                hunt_id="H-0868",
+                rule_title="Sync Check Query",
+                target=target,
+                dialect=target.split("_")[-1],
+                query="index=* admin_access",
+            )
+            res = deployer.sync(payload, dry_run=True)
+            assert res.ok is True
+            assert res.target == target
+            assert res.status == "dry_run"
+            assert res.dry_run is True
+            assert res.remote_id is not None
+            assert res.request_summary.get("method") == "GET"
+
+    def test_sync_splunk_in_sync_and_drift_and_missing(self):
+        deployer = QueryDeployer()
+        payload = DeploymentPayload(
+            hunt_id="H-0868",
+            rule_title="Sync Splunk Query",
+            target=QueryDeployer.TARGET_SPLUNK,
+            dialect="spl",
+            query='Image="*/whoami.exe"',
+        )
+
+        # 1. Test In-Sync
+        resp_in_sync = mock.MagicMock()
+        resp_in_sync.status_code = 200
+        resp_in_sync.json.return_value = {
+            "entry": [{"content": {"search": 'search Image="*/whoami.exe"'}}]
+        }
+
+        with (
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "SPLUNK_URL": "https://splunk.corp.local:8089",
+                    "SPLUNK_TOKEN": "valid-token",
+                },
+            ),
+            mock.patch("httpx.Client.get", return_value=resp_in_sync),
+        ):
+            res = deployer.sync(payload, dry_run=False)
+            assert res.ok is True
+            assert res.status == "in_sync"
+            assert res.drift_diff is None
+            assert "is in sync" in res.detail
+
+        # 2. Test Drift Detected
+        resp_drift = mock.MagicMock()
+        resp_drift.status_code = 200
+        resp_drift.json.return_value = {
+            "entry": [{"content": {"search": 'search Image="*/whoami.exe" | head 10'}}]
+        }
+
+        with (
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "SPLUNK_URL": "https://splunk.corp.local:8089",
+                    "SPLUNK_TOKEN": "valid-token",
+                },
+            ),
+            mock.patch("httpx.Client.get", return_value=resp_drift),
+        ):
+            res_drift = deployer.sync(payload, dry_run=False)
+            assert res_drift.ok is False
+            assert res_drift.status == "drift_detected"
+            assert res_drift.drift_diff is not None
+            assert "- Local:" in res_drift.drift_diff
+            assert "+ Remote:" in res_drift.drift_diff
+            assert "has drifted" in res_drift.detail
+
+        # 3. Test Missing Remote
+        resp_missing = mock.MagicMock()
+        resp_missing.status_code = 404
+
+        with (
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "SPLUNK_URL": "https://splunk.corp.local:8089",
+                    "SPLUNK_TOKEN": "valid-token",
+                },
+            ),
+            mock.patch("httpx.Client.get", return_value=resp_missing),
+        ):
+            res_missing = deployer.sync(payload, dry_run=False)
+            assert res_missing.ok is False
+            assert res_missing.status == "missing_remote"
+            assert "does not exist in Splunk" in res_missing.detail
+
+    def test_api_undeploy_and_sync_transpiled_query(self):
+        res_undeploy = undeploy_transpiled_query(
+            target="splunk_spl",
+            hunt_id="H-0868",
+            title="API Teardown Test",
+            query='Image="*/id.exe"',
+            dry_run=True,
+        )
+        assert res_undeploy["ok"] is True
+        assert res_undeploy["status"] == "dry_run"
+        assert res_undeploy["remote_id"].startswith("Hecate_H-0868_")
+
+        res_sync = sync_transpiled_query(
+            target="splunk_spl",
+            query='Image="*/id.exe"',
+            hunt_id="H-0868",
+            title="API Sync Test",
+            dry_run=True,
+        )
+        assert res_sync["ok"] is True
+        assert res_sync["status"] == "dry_run"
+        assert res_sync["remote_id"].startswith("Hecate_H-0868_")
