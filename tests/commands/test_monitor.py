@@ -1476,3 +1476,134 @@ def test_host_telemetry_ribbon_gauges_drives_and_gpu() -> None:
     text2 = c.export_text()
     assert "GPU (0%)" in text2
     assert "no local mounted drives detected" in text2
+
+
+def test_render_dashboard_tab5_siem_and_drift(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    c = Console(width=160, height=50, record=True, force_terminal=False)
+    monkeypatch.setattr(m, "console", c)
+
+    siem_dir = tmp_path / ".hecate" / "siem"
+    siem_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "total_queries": 2,
+        "in_sync_count": 2,
+        "drifted_count": 0,
+        "missing_count": 0,
+        "error_count": 0,
+        "hunts": {
+            "H-0001": [
+                {
+                    "file": "test.spl",
+                    "target": "splunk_spl",
+                    "status": "in_sync",
+                }
+            ]
+        },
+    }
+    (siem_dir / "drift_state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    import sqlite3
+
+    conn = sqlite3.connect(siem_dir / "drift_history.db")
+    conn.execute(
+        """CREATE TABLE audit_sweeps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            total_hunts INTEGER NOT NULL,
+            total_queries INTEGER NOT NULL,
+            in_sync_count INTEGER NOT NULL,
+            drifted_count INTEGER NOT NULL,
+            missing_count INTEGER NOT NULL,
+            error_count INTEGER NOT NULL,
+            dry_run INTEGER NOT NULL,
+            target TEXT,
+            trigger TEXT NOT NULL DEFAULT 'cli'
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE drift_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sweep_id INTEGER,
+            timestamp TEXT NOT NULL,
+            hunt_id TEXT NOT NULL,
+            target TEXT NOT NULL,
+            file_name TEXT NOT NULL,
+            remote_id TEXT,
+            event_type TEXT NOT NULL,
+            previous_status TEXT,
+            new_status TEXT,
+            local_query TEXT,
+            remote_query TEXT,
+            drift_diff TEXT,
+            detail TEXT,
+            actor TEXT NOT NULL DEFAULT 'system'
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE query_versions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            hunt_id TEXT NOT NULL,
+            target TEXT NOT NULL,
+            file_name TEXT NOT NULL,
+            remote_id TEXT NOT NULL,
+            version INTEGER NOT NULL DEFAULT 1,
+            query_hash TEXT NOT NULL,
+            query_content TEXT NOT NULL,
+            deployed_at TEXT NOT NULL,
+            deployed_by TEXT NOT NULL DEFAULT 'system',
+            status TEXT NOT NULL DEFAULT 'active'
+        )"""
+    )
+    conn.execute(
+        "INSERT INTO audit_sweeps (timestamp, total_hunts, total_queries, in_sync_count, drifted_count, missing_count, error_count, dry_run, target) "
+        "VALUES ('2026-11-02T03:00:00Z', 1, 2, 2, 0, 0, 0, 0, 'splunk_spl')"
+    )
+    conn.execute(
+        "INSERT INTO drift_events (timestamp, hunt_id, target, file_name, remote_id, event_type, previous_status, new_status, detail, actor) "
+        "VALUES ('2026-11-02T03:00:00Z', 'H-0001', 'splunk_spl', 'test.spl', 'Hecate_Test', 'reconciled', 'drift_detected', 'in_sync', 'Reconciled successfully', 'analyst1')"
+    )
+    conn.execute(
+        "INSERT INTO query_versions (hunt_id, target, file_name, remote_id, version, query_hash, query_content, deployed_at, deployed_by, status) "
+        "VALUES ('H-0001', 'splunk_spl', 'test.spl', 'Hecate_Test', 1, 'abcdef1234567890', 'search index=main', '2026-11-02T03:00:00Z', 'analyst1', 'active')"
+    )
+    conn.commit()
+    conn.close()
+
+    events = _events("source: reading report", "done: draft_created")
+    layout = m._render_dashboard(tmp_path, events, {}, _host(), START, active_tab=5)
+    c.print(layout)
+    text = c.export_text()
+
+    assert "SIEM DETECTION-AS-CODE" in text
+    assert "DRIFT INSPECTION & DIFF" in text
+    assert "SIEM AUDIT & DRIFT EVENT LOG" in text
+    assert "QUERY VERSION CATALOG" in text
+    assert "5: SIEM & Drift" in text
+    assert "H-0001" in text
+    assert "splunk_spl" in text
+
+
+def test_detections_panel_shows_siem_sync_status() -> None:
+    c = Console(width=100, record=True, force_terminal=False)
+    metrics = m.SiemDriftMetrics(
+        total_queries=10,
+        in_sync_count=9,
+        drifted_count=1,
+        missing_count=0,
+        error_count=0,
+        sync_pct=90.0,
+    )
+    panel = m._detections_panel(siem_metrics=metrics)
+    c.print(panel)
+    text = c.export_text()
+    assert "SIEM SYNC" in text
+    assert "9/10 queries" in text
+    assert "1 drifted" in text
+
+
+def test_tab_nav_bar_supports_tab_5() -> None:
+    bar = m._tab_nav_bar(active_tab=5)
+    text = bar.plain
+    assert "5: SIEM & Drift" in text
+    assert "1: Overview" in text
+

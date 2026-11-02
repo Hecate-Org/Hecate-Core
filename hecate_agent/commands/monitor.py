@@ -47,10 +47,13 @@ from hecate_agent.core.workspace import workspace_root
 from hecate_agent.commands.monitor_metrics import (
     HuntsMetrics,
     PurpleTeamMetrics,
+    SiemDriftMetrics,
     _collect_hunts_metrics,
     _collect_purple_team_metrics,
+    _collect_siem_drift_metrics,
     _HUNTS_METRICS_CACHE as _HUNTS_METRICS_CACHE,
     _PURPLE_METRICS_CACHE as _PURPLE_METRICS_CACHE,
+    _SIEM_METRICS_CACHE as _SIEM_METRICS_CACHE,
     _EXCLUDED_HUNT_DOCS as _EXCLUDED_HUNT_DOCS,
 )
 from hecate_agent.commands.monitor_samplers import (
@@ -1081,12 +1084,14 @@ def _detections_panel(
     runner: Optional[RunnerStatus] = None,
     events: Optional[List[TrailEvent]] = None,
     purple_metrics: Optional[PurpleTeamMetrics] = None,
+    siem_metrics: Optional[SiemDriftMetrics] = None,
     narrow: bool = False,
     compact: bool = False,
 ) -> Panel:
     """A combined panel displaying Sigma detection rules, SIEM query targets, rule tests, self-tuning, and BAS simulation."""
     h_metrics = metrics or _collect_hunts_metrics(workspace)
     p_metrics = purple_metrics or _collect_purple_team_metrics(workspace, events)
+    siem_m = siem_metrics or _collect_siem_drift_metrics(workspace)
     q_prov = runner.query_provider if runner and runner.query_provider else "mock"
     pending = runner.pending_queries if runner else None
 
@@ -1112,6 +1117,25 @@ def _detections_panel(
             (pending_str, pending_style),
         ),
     )
+
+    if siem_m.total_queries > 0:
+        if siem_m.drifted_count > 0:
+            sync_style = "bold bright_red"
+            sync_sub = f"{siem_m.drifted_count} drifted"
+        elif siem_m.missing_count > 0 or siem_m.error_count > 0:
+            sync_style = "bold bright_yellow"
+            sync_sub = f"{siem_m.missing_count} missing"
+        else:
+            sync_style = "bright_green"
+            sync_sub = "100% in sync"
+        table.add_row(
+            "SIEM SYNC",
+            Text.assemble(
+                (f"{siem_m.in_sync_count}/{siem_m.total_queries} queries", "bright_white"),
+                (" · ", "dim"),
+                (sync_sub, sync_style),
+            ),
+        )
 
     active_val = p_metrics.validated_rules > 0 or p_metrics.bas_runs > 0
     test_sub = f"{p_metrics.hunts_validated} hunts"
@@ -1235,8 +1259,9 @@ def _detection_rules_panel(
     metrics: Optional[HuntsMetrics] = None,
     runner: Optional[RunnerStatus] = None,
     narrow: bool = False,
+    siem_metrics: Optional[SiemDriftMetrics] = None,
 ) -> Panel:
-    return _detections_panel(workspace=workspace, metrics=metrics, runner=runner, narrow=narrow)
+    return _detections_panel(workspace=workspace, metrics=metrics, runner=runner, narrow=narrow, siem_metrics=siem_metrics)
 
 
 def _threat_observables_panel(
@@ -1559,6 +1584,7 @@ def _tab_nav_bar(active_tab: int = 1, errors_only: bool = False, paused: bool = 
         (2, "2: Hunts & Rules"),
         (3, "3: Feeds & Outbox"),
         (4, "4: BAS & Validation"),
+        (5, "5: SIEM & Drift"),
     ]
     bar = Text()
     bar.append(" VIEWS: ", style="bold bright_white")
@@ -2041,6 +2067,236 @@ def _format_cycle_outcome(msg: str) -> str:
     return clean
 
 
+def _siem_sync_panel(
+    workspace: Optional[Path] = None,
+    metrics: Optional[SiemDriftMetrics] = None,
+) -> Panel:
+    """SIEM Detection-as-Code sync health, audit sweeps, and platform targets."""
+    measured = metrics or _collect_siem_drift_metrics(workspace)
+    table = Table(box=None, show_header=False, expand=True, padding=(0, 1))
+    table.add_column("label", style="dim", width=14, min_width=14, no_wrap=True)
+    table.add_column("value", ratio=1, overflow="ellipsis", no_wrap=True)
+
+    if measured.drifted_count > 0:
+        st_text = Text(f"DRIFT DETECTED ({measured.drifted_count})", style="bold bright_red")
+    elif measured.missing_count > 0 or measured.error_count > 0:
+        st_text = Text("ATTENTION REQUIRED", style="bold bright_yellow")
+    elif measured.total_queries > 0:
+        st_text = Text("IN SYNC (100%)", style="bold bright_green")
+    else:
+        st_text = Text("STANDBY", style="dim")
+    table.add_row("STATUS", st_text)
+
+    sync_val = (
+        f"{measured.in_sync_count} / {measured.total_queries} queries in sync ({measured.sync_pct:.1f}%)"
+        if measured.total_queries > 0
+        else "0 queries tracked"
+    )
+    table.add_row("SYNC RATIO", Text(sync_val, style="bright_white" if measured.total_queries else "dim"))
+
+    drift_style = "bold bright_red" if measured.drifted_count > 0 else "dim"
+    table.add_row(
+        "DRIFT METRICS",
+        Text.assemble(
+            (f"{measured.drifted_count} drifted", drift_style),
+            (" · ", "dim"),
+            (f"{measured.missing_count} missing", "bold bright_yellow" if measured.missing_count else "dim"),
+            (" · ", "dim"),
+            (f"{measured.error_count} errors", "bold bright_red" if measured.error_count else "dim"),
+        ),
+    )
+
+    table.add_row(
+        "AUDIT SWEEPS",
+        Text(
+            f"{measured.sweeps_conducted} sweeps executed · {measured.reconciled_count} reconciled",
+            style="bright_white" if measured.sweeps_conducted else "dim",
+        ),
+    )
+
+    table.add_row(
+        "VERSIONS",
+        Text(f"{measured.tracked_versions} query version snapshots tracked", style="bright_cyan" if measured.tracked_versions else "dim"),
+    )
+
+    last_sweep = measured.last_audited[:19].replace("T", " ") + " UTC" if measured.last_audited else "never"
+    table.add_row("LAST AUDIT", Text(last_sweep, style="dim"))
+
+    if measured.active_targets:
+        targets_str = " · ".join(
+            f"{t.upper()} ({measured.target_breakdown.get(t, {}).get('in_sync', 0)}/{measured.target_breakdown.get(t, {}).get('total', 0)} in sync)"
+            for t in measured.active_targets
+        )
+        table.add_row("TARGETS", Text(targets_str, style="bright_cyan"))
+    else:
+        table.add_row("TARGETS", Text("Splunk REST API (Saved Searches) · Elastic Fleet / Rules API", style="dim"))
+
+    table.add_row("AUTHORITATIVE", Text("queries/H-*/ (Git HEAD repository authoritative source)", style="dim"))
+
+    return Panel(
+        table,
+        title="[bold bright_cyan]SIEM DETECTION-AS-CODE[/]",
+        border_style="bright_magenta",
+        box=box.ROUNDED,
+    )
+
+
+def _siem_drift_diff_panel(
+    events: Optional[List[Dict[str, Any]]] = None,
+) -> Panel:
+    """Inspect AST and syntax differences between local git and live SIEM queries."""
+    ev_list = events or []
+    diff_event: Optional[Dict[str, Any]] = None
+    for ev in ev_list:
+        if ev.get("drift_diff"):
+            diff_event = ev
+            break
+        if ev.get("event_type") == "drift_detected":
+            diff_event = ev
+            break
+
+    if not diff_event or not diff_event.get("drift_diff"):
+        text = Text()
+        text.append("\n  ✔  All deployed SIEM queries match git-authoritative AST\n\n", style="bold bright_green")
+        text.append("  • No active query drift detected across monitoring targets.\n", style="bright_white")
+        text.append("  • Live SIEM Saved Searches verify 1:1 against transpiled SPL/KQL.\n", style="dim")
+        text.append("  • Any remote console edits will trigger automated drift detection.\n", style="dim")
+        if ev_list:
+            latest = ev_list[0]
+            text.append(
+                f"\n  Last audit event: {latest.get('event_type', '')} on {latest.get('hunt_id', '')} ({latest.get('target', '')})",
+                style="bright_cyan",
+            )
+        return Panel(
+            text,
+            title="[bold bright_cyan]DRIFT INSPECTION & DIFF[/]",
+            border_style="bright_magenta",
+            box=box.ROUNDED,
+        )
+
+    diff_text = Text()
+    diff_text.append(
+        f"HUNT: {diff_event.get('hunt_id', '')}  TARGET: {diff_event.get('target', '')}  EVENT: {diff_event.get('event_type', '')}\n",
+        style="bold bright_cyan",
+    )
+    diff_text.append(f"FILE: {diff_event.get('file_name', '')}\n", style="dim")
+    diff_text.append(
+        f"TIMESTAMP: {diff_event.get('timestamp', '')[:19].replace('T', ' ')}  ACTOR: {diff_event.get('actor', '')}\n\n",
+        style="dim",
+    )
+
+    raw_diff = str(diff_event.get("drift_diff", ""))
+    lines = raw_diff.splitlines()
+    for line in lines[:10]:
+        if line.startswith("-"):
+            diff_text.append(line + "\n", style="bright_red")
+        elif line.startswith("+"):
+            diff_text.append(line + "\n", style="bright_green")
+        elif line.startswith("@") or line.startswith("---") or line.startswith("+++"):
+            diff_text.append(line + "\n", style="bold bright_cyan")
+        else:
+            diff_text.append(line + "\n", style="dim")
+    if len(lines) > 10:
+        diff_text.append(f"... ({len(lines) - 10} additional diff lines)\n", style="dim")
+
+    return Panel(
+        diff_text,
+        title="[bold bright_cyan]DRIFT INSPECTION & DIFF[/]",
+        border_style="bright_magenta",
+        box=box.ROUNDED,
+    )
+
+
+def _siem_drift_events_table(
+    events: Optional[List[Dict[str, Any]]] = None,
+) -> Panel:
+    """Historical audit sweep and reconciliation event log table."""
+    table = Table(box=box.SIMPLE, expand=True, show_header=True, header_style="bold bright_cyan", padding=(0, 1))
+    table.add_column("TIME", width=8, style="dim")
+    table.add_column("EVENT", width=15)
+    table.add_column("HUNT", width=8, style="bright_cyan")
+    table.add_column("TARGET", width=11, style="dim")
+    table.add_column("ACTOR", width=8, style="dim")
+    table.add_column("DETAIL", ratio=1, overflow="ellipsis", no_wrap=True)
+
+    ev_list = events or []
+    if not ev_list:
+        table.add_row("--:--:--", "[dim]standby[/]", "--", "--", "--", "[dim]No drift or reconciliation events logged yet.[/]")
+    else:
+        for ev in ev_list[:12]:
+            ts = str(ev.get("timestamp") or "")
+            time_part = ts[11:19] if len(ts) >= 19 else ts
+            event_type = str(ev.get("event_type") or "unknown")
+            if event_type == "reconciled":
+                event_style = "[bold bright_green]reconciled[/]"
+            elif event_type == "drift_detected":
+                event_style = "[bold bright_red]drift_detected[/]"
+            elif event_type == "missing_remote":
+                event_style = "[bold bright_yellow]missing_remote[/]"
+            else:
+                event_style = f"[bright_white]{event_type}[/]"
+
+            table.add_row(
+                time_part,
+                event_style,
+                str(ev.get("hunt_id") or "--"),
+                str(ev.get("target") or "--"),
+                str(ev.get("actor") or "system"),
+                str(ev.get("detail") or ""),
+            )
+
+    return Panel(
+        table,
+        title="[bold bright_cyan]SIEM AUDIT & DRIFT EVENT LOG[/]",
+        border_style="bright_magenta",
+        box=box.ROUNDED,
+    )
+
+
+def _siem_query_versions_table(
+    versions: Optional[List[Dict[str, Any]]] = None,
+) -> Panel:
+    """Immutable deployed query versions recorded in SQLite history."""
+    table = Table(box=box.SIMPLE, expand=True, show_header=True, header_style="bold bright_cyan", padding=(0, 1))
+    table.add_column("HUNT", width=8, style="bright_cyan")
+    table.add_column("VER", width=5, style="bold bright_white")
+    table.add_column("TARGET", width=11, style="dim")
+    table.add_column("QUERY HASH", width=12, style="dim")
+    table.add_column("DEPLOYED", width=16, style="dim")
+    table.add_column("BY", width=8, style="dim")
+    table.add_column("STATUS", width=8)
+
+    v_list = versions or []
+    if not v_list:
+        table.add_row("--", "--", "--", "--", "--", "--", "[dim]none[/]")
+    else:
+        for ver in v_list[:12]:
+            q_hash = str(ver.get("query_hash") or "")
+            hash_display = f"{q_hash[:8]}…" if len(q_hash) > 8 else q_hash
+            dep_at = str(ver.get("deployed_at") or "")
+            dep_display = dep_at[:16].replace("T", " ") if len(dep_at) >= 16 else dep_at
+            status = str(ver.get("status") or "active")
+            st_display = "[bright_green]active[/]" if status == "active" else f"[dim]{status}[/]"
+
+            table.add_row(
+                str(ver.get("hunt_id") or "--"),
+                f"v{ver.get('version', 1)}",
+                str(ver.get("target") or "--"),
+                hash_display,
+                dep_display,
+                str(ver.get("deployed_by") or "system"),
+                st_display,
+            )
+
+    return Panel(
+        table,
+        title="[bold bright_cyan]QUERY VERSION CATALOG[/]",
+        border_style="bright_magenta",
+        box=box.ROUNDED,
+    )
+
+
+
 def _render_dashboard(
     workspace: Path,
     events: List[TrailEvent],
@@ -2153,6 +2409,7 @@ def _render_dashboard(
         )
         h_metrics = _collect_hunts_metrics(workspace)
         pt_metrics = _collect_purple_team_metrics(workspace, events)
+        siem_metrics = _collect_siem_drift_metrics(workspace)
         layout["usage"].split_row(
             Layout(
                 _usage_panel(metrics, latest, active, events, compact=True, workspace=workspace, live=live, now=refreshed),
@@ -2169,6 +2426,7 @@ def _render_dashboard(
                     runner=runner,
                     events=events,
                     purple_metrics=pt_metrics,
+                    siem_metrics=siem_metrics,
                 ),
                 ratio=1,
             ),
@@ -2195,7 +2453,7 @@ def _render_dashboard(
 
     footer = Layout(
         Text(
-            f"Updated {refreshed:%H:%M:%S}   ·   [1] Overview   [2] Hunts & Rules   [3] Feeds & Outbox   [4] BAS & Validation   ·   [e] Errors   [p] Pause   [q] Quit",
+            f"Updated {refreshed:%H:%M:%S}   ·   [1] Overview   [2] Hunts & Rules   [3] Feeds & Outbox   [4] BAS & Validation   [5] SIEM & Drift   ·   [e] Errors   [p] Pause   [q] Quit",
             style="dim",
             justify="center",
         ),
@@ -2205,6 +2463,7 @@ def _render_dashboard(
 
     h_metrics = _collect_hunts_metrics(workspace)
     pt_metrics = _collect_purple_team_metrics(workspace, events)
+    siem_metrics = _collect_siem_drift_metrics(workspace)
 
     # Tab 2: Hunts & Rules View
     if not compact and active_tab == 2:
@@ -2222,7 +2481,7 @@ def _render_dashboard(
         )
         tab2_layout["hunts_left"].split_column(
             Layout(_hunts_table(workspace, h_metrics), ratio=2),
-            Layout(_detections_panel(workspace, h_metrics, runner, events, pt_metrics), size=8),
+            Layout(_detections_panel(workspace, h_metrics, runner, events, pt_metrics, siem_metrics=siem_metrics), size=9),
         )
         tab2_layout["hunts_right"].split_column(
             Layout(_mitre_metrics_panel(workspace, metrics=h_metrics, detailed=True), ratio=2),
@@ -2291,6 +2550,31 @@ def _render_dashboard(
         )
         return tab4_layout
 
+    # Tab 5: SIEM & Drift View
+    if not compact and active_tab == 5:
+        tab5_layout = Layout()
+        tab5_layout.split_column(
+            Layout(header_panel, name="header", size=header_height),
+            Layout(_host_telemetry_ribbon(host), name="resources", size=3),
+            Layout(name="middle", ratio=1),
+            footer,
+        )
+        tab5_layout["middle"].split_column(
+            Layout(name="siem_top", ratio=1),
+            Layout(name="siem_bottom", ratio=1),
+        )
+        tab5_layout["siem_top"].split_row(
+            Layout(_siem_sync_panel(workspace, siem_metrics), ratio=1),
+            Layout(Text(" "), size=1),
+            Layout(_siem_drift_diff_panel(siem_metrics.recent_events), ratio=1),
+        )
+        tab5_layout["siem_bottom"].split_row(
+            Layout(_siem_drift_events_table(siem_metrics.recent_events), ratio=1),
+            Layout(Text(" "), size=1),
+            Layout(_siem_query_versions_table(siem_metrics.recent_versions), ratio=1),
+        )
+        return tab5_layout
+
     # Tab 1: Operations Overview (Default)
     resources_height = 3
     stages_height = len(_STAGES) + 3
@@ -2307,7 +2591,7 @@ def _render_dashboard(
     body_height = console.size.height - header_height - resources_height - 1
     llm_height = _NARROW_LLM_PANEL_HEIGHT
     hunts_height = _HUNTS_PANEL_HEIGHT
-    detections_height = 10 if pt_metrics.validated_rules > 0 else 8
+    detections_height = 10 if (pt_metrics.validated_rules > 0 or siem_metrics.total_queries > 0) else 8
     search_count = _search_count(latest, events)
     usage_on_left = body_height >= stages_height + service_height + llm_height + hunts_height + detections_height + 5
     middle_height = body_height if usage_on_left else max(10, body_height - _BOTTOM_ROW_HEIGHT)
@@ -2345,6 +2629,7 @@ def _render_dashboard(
         runner=runner,
         events=events,
         purple_metrics=pt_metrics,
+        siem_metrics=siem_metrics,
         narrow=usage_on_left,
     )
     outbound_panel = _outbound_panel(workspace=workspace, runner=runner, narrow=usage_on_left)
@@ -2598,14 +2883,14 @@ def monitor(workspace: Optional[Path], eval_mode: bool = False, interval: float 
                     if key is not None:
                         if key in ("q", "Q", "\x03", "\x04"):
                             raise KeyboardInterrupt
-                        elif key in ("1", "2", "3", "4"):
+                        elif key in ("1", "2", "3", "4", "5"):
                             active_tab = int(key)
                             break
                         elif key in ("\t", "\x1b[C"):
-                            active_tab = (active_tab % 4) + 1
+                            active_tab = (active_tab % 5) + 1
                             break
                         elif key == "\x1b[D":
-                            active_tab = 4 if active_tab == 1 else (active_tab - 1)
+                            active_tab = 5 if active_tab == 1 else (active_tab - 1)
                             break
                         elif key in ("e", "E"):
                             errors_only = not errors_only

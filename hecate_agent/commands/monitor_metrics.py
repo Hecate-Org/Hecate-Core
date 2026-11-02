@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sqlite3
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -681,3 +682,175 @@ def _collect_purple_team_metrics(
     metrics.bas_techniques = len(bas_techniques)
     _PURPLE_METRICS_CACHE[resolved_path] = (now, bas_fingerprint[0], bas_fingerprint[1], metrics)
     return metrics
+
+
+@dataclass
+class SiemDriftMetrics:
+    total_queries: int = 0
+    in_sync_count: int = 0
+    drifted_count: int = 0
+    missing_count: int = 0
+    error_count: int = 0
+    sync_pct: float = 100.0
+    last_audited: str = ""
+    sweeps_conducted: int = 0
+    tracked_versions: int = 0
+    reconciled_count: int = 0
+    target_breakdown: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    recent_events: List[Dict[str, Any]] = field(default_factory=list)
+    recent_versions: List[Dict[str, Any]] = field(default_factory=list)
+    active_targets: List[str] = field(default_factory=list)
+    status_summary: str = "STANDBY"
+    raw_state: Dict[str, Any] = field(default_factory=dict)
+
+
+_SIEM_METRICS_CACHE: Dict[str, Tuple[float, float, float, SiemDriftMetrics]] = {}
+
+
+def _find_siem_dir(workspace: Optional[Path] = None) -> Optional[Path]:
+    """Locate the .hecate/siem directory containing drift state and history."""
+    candidates: List[Path] = []
+    if workspace:
+        resolved = workspace.resolve()
+        candidates.extend([
+            resolved / ".hecate" / "siem",
+            resolved / "Hecate-Public" / ".hecate" / "siem",
+            resolved / "Hecate-Workspace" / ".hecate" / "siem",
+            resolved.parent / "Hecate-Public" / ".hecate" / "siem",
+            resolved.parent / "Hecate-Workspace" / ".hecate" / "siem",
+            resolved.parent / "Hecate-Runner" / ".hecate" / "siem",
+        ])
+    cwd = Path.cwd().resolve()
+    candidates.extend([
+        cwd / ".hecate" / "siem",
+        cwd / "Hecate-Public" / ".hecate" / "siem",
+        cwd.parent / "Hecate-Public" / ".hecate" / "siem",
+        Path("/home/chemch/betas/Hecate-Public/.hecate/siem"),
+        Path("/home/chemch/betas/Hecate-Workspace/.hecate/siem"),
+    ])
+    for candidate in candidates:
+        if candidate.is_dir() and ((candidate / "drift_state.json").exists() or (candidate / "drift_history.db").exists()):
+            return candidate
+    return None
+
+
+def _collect_siem_drift_metrics(workspace: Optional[Path] = None) -> SiemDriftMetrics:
+    """Collect SIEM sync health, drift metrics, and query version history."""
+    metrics = SiemDriftMetrics()
+    siem_dir = _find_siem_dir(workspace)
+    if not siem_dir or not siem_dir.exists():
+        return metrics
+
+    state_file = siem_dir / "drift_state.json"
+    db_file = siem_dir / "drift_history.db"
+
+    state_mtime = state_file.stat().st_mtime if state_file.exists() else 0.0
+    db_mtime = db_file.stat().st_mtime if db_file.exists() else 0.0
+
+    now = time.time()
+    cache_key = str(siem_dir.resolve())
+    cached = _SIEM_METRICS_CACHE.get(cache_key)
+    if cached and (now - cached[0] < 3.0) and cached[1] == state_mtime and cached[2] == db_mtime:
+        return cached[3]
+
+    if state_file.exists():
+        try:
+            raw = json.loads(state_file.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                metrics.total_queries = int(raw.get("total_queries", 0))
+                metrics.in_sync_count = int(raw.get("in_sync_count", 0))
+                metrics.drifted_count = int(raw.get("drifted_count", 0))
+                metrics.missing_count = int(raw.get("missing_count", 0))
+                metrics.error_count = int(raw.get("error_count", 0))
+                metrics.raw_state = raw
+
+                target_counts: Dict[str, Dict[str, int]] = {}
+                active_targets: Set[str] = set()
+                hunts_dict = raw.get("hunts", {})
+                if isinstance(hunts_dict, dict):
+                    for hunt_id, queries in hunts_dict.items():
+                        if isinstance(queries, list):
+                            for q in queries:
+                                if isinstance(q, dict):
+                                    tgt = str(q.get("target") or "unknown")
+                                    active_targets.add(tgt)
+                                    st = str(q.get("status") or "unknown")
+                                    if tgt not in target_counts:
+                                        target_counts[tgt] = {
+                                            "total": 0,
+                                            "in_sync": 0,
+                                            "drifted": 0,
+                                            "missing": 0,
+                                            "error": 0,
+                                        }
+                                    target_counts[tgt]["total"] += 1
+                                    if st == "in_sync":
+                                        target_counts[tgt]["in_sync"] += 1
+                                    elif st in ("drift_detected", "drifted"):
+                                        target_counts[tgt]["drifted"] += 1
+                                    elif st in ("missing_remote", "missing"):
+                                        target_counts[tgt]["missing"] += 1
+                                    elif st == "error":
+                                        target_counts[tgt]["error"] += 1
+                metrics.target_breakdown = target_counts
+                metrics.active_targets = sorted(active_targets)
+        except (OSError, ValueError, TypeError) as exc:
+            logger.debug("Failed reading SIEM drift state: %s", exc)
+
+    if db_file.exists():
+        conn = None
+        try:
+            conn = sqlite3.connect(f"file:{db_file.resolve()}?mode=ro", uri=True, timeout=2.0)
+            conn.row_factory = sqlite3.Row
+
+            row = conn.execute("SELECT COUNT(*), MAX(timestamp) FROM audit_sweeps").fetchone()
+            if row and row[0] is not None:
+                metrics.sweeps_conducted = int(row[0])
+                if row[1]:
+                    metrics.last_audited = str(row[1])
+
+            v_row = conn.execute("SELECT COUNT(*) FROM query_versions").fetchone()
+            if v_row and v_row[0] is not None:
+                metrics.tracked_versions = int(v_row[0])
+
+            r_row = conn.execute("SELECT COUNT(*) FROM drift_events WHERE event_type = 'reconciled'").fetchone()
+            if r_row and r_row[0] is not None:
+                metrics.reconciled_count = int(r_row[0])
+
+            cur = conn.execute(
+                "SELECT id, timestamp, hunt_id, target, file_name, remote_id, event_type, previous_status, new_status, drift_diff, detail, actor "
+                "FROM drift_events ORDER BY id DESC LIMIT 15"
+            )
+            metrics.recent_events = [dict(r) for r in cur.fetchall()]
+
+            cur_v = conn.execute(
+                "SELECT id, hunt_id, target, file_name, remote_id, version, query_hash, deployed_at, deployed_by, status "
+                "FROM query_versions ORDER BY id DESC LIMIT 15"
+            )
+            metrics.recent_versions = [dict(r) for r in cur_v.fetchall()]
+        except (sqlite3.Error, OSError) as exc:
+            logger.debug("Failed reading SIEM drift history DB: %s", exc)
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    if metrics.total_queries > 0:
+        metrics.sync_pct = round((metrics.in_sync_count / metrics.total_queries) * 100, 1)
+    else:
+        metrics.sync_pct = 100.0
+
+    if metrics.drifted_count > 0:
+        metrics.status_summary = "DRIFT DETECTED"
+    elif metrics.missing_count > 0 or metrics.error_count > 0:
+        metrics.status_summary = "ATTENTION REQUIRED"
+    elif metrics.total_queries > 0:
+        metrics.status_summary = "IN SYNC"
+    else:
+        metrics.status_summary = "STANDBY"
+
+    _SIEM_METRICS_CACHE[cache_key] = (now, state_mtime, db_mtime, metrics)
+    return metrics
+
