@@ -1231,6 +1231,11 @@ def _purple_team_panel(
         "BAS RESULTS",
         Text(f"{measured.bas_verified} verified · {measured.bas_detection_misses} missed", style="bright_white" if measured.bas_runs else "dim"),
     )
+    if measured.bas_last_detection_latency_sec > 0.0 or measured.bas_siem_verified > 0:
+        table.add_row(
+            "SIEM ALERTS",
+            Text(f"{measured.bas_siem_verified} live fired · {measured.bas_last_detection_latency_sec:.3f}s latency", style="bright_green"),
+        )
     if not compact:
         gap_style = "bright_red" if measured.bas_telemetry_missing or measured.bas_failures else "dim"
         table.add_row("BAS GAPS", Text(f"{measured.bas_telemetry_missing} sensor gaps · {measured.bas_failures} failed", style=gap_style))
@@ -1881,6 +1886,19 @@ def _bas_status_panel(workspace: Path, events: List[TrailEvent], metrics: Any) -
     events_count = getattr(metrics, "bas_matched_events", 0)
     table.add_row("SENSOR TELEMETRY", f"{events_count} events captured & correlated")
 
+    siem_latency = getattr(metrics, "bas_last_detection_latency_sec", 0.0)
+    siem_backend = getattr(metrics, "bas_last_siem_backend", "") or "SPLUNK"
+    if siem_latency > 0.0:
+        latency_str = f"{siem_latency:.3f}s ({siem_latency*1000:.0f} ms)"
+        avg_latency = getattr(metrics, "bas_avg_detection_latency_sec", 0.0)
+        if avg_latency > 0.0 and avg_latency != siem_latency:
+            latency_str += f" · avg {avg_latency:.3f}s"
+        table.add_row("LIVE SIEM ALERT", Text(f"{siem_backend.upper()} ALERT FIRED · VERIFIED", style="bold bright_green"))
+        table.add_row("DETECTION LATENCY", Text(f"{latency_str} (True Positive)", style="bold bright_cyan"))
+    else:
+        table.add_row("LIVE SIEM ALERT", Text("STANDBY · awaiting adversary detonation", style="dim"))
+        table.add_row("DETECTION LATENCY", Text("--", style="dim"))
+
     return Panel(
         table,
         title="[bold bright_cyan]BAS CONTROLLER & SENSOR STATUS[/]",
@@ -2135,6 +2153,16 @@ def _siem_sync_panel(
 
     last_sweep = measured.last_audited[:19].replace("T", " ") + " UTC" if measured.last_audited else "never"
     table.add_row("LAST AUDIT", Text(last_sweep, style="dim"))
+
+    if measured.last_detection_latency_sec > 0.0 or measured.bas_verified_alerts_count > 0:
+        hunt_txt = f" ({measured.last_verified_hunt} · {measured.last_verified_technique})" if measured.last_verified_hunt else ""
+        lat_txt = f"{measured.last_detection_latency_sec:.3f}s latency{hunt_txt}"
+        table.add_row(
+            "CLOSED-LOOP BAS",
+            Text(f"{measured.bas_verified_alerts_count} live alerts verified · {lat_txt}", style="bold bright_green"),
+        )
+    else:
+        table.add_row("CLOSED-LOOP BAS", Text("Standby · 0 live validations recorded", style="dim"))
 
     if measured.active_targets:
         targets_str = " · ".join(
