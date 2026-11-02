@@ -351,6 +351,7 @@ class QueryDeployer:
         if not splunk_url.startswith(("http://", "https://")):
             splunk_url = f"https://{splunk_url}"
         token = os.getenv("SPLUNK_TOKEN") or os.getenv("SPLUNK_API_TOKEN")
+        password = os.getenv("SPLUNK_PASSWORD")
         app = os.getenv("SPLUNK_APP") or "search"
         user = os.getenv("SPLUNK_USER") or "nobody"
 
@@ -369,15 +370,29 @@ class QueryDeployer:
             "is_scheduled": "0",
             "output_mode": "json",
         }
+
+        auth_header = None
+        if token:
+            auth_header = token if token.startswith(("Bearer ", "Basic ", "Splunk ")) else f"Bearer {token}"
+        elif password:
+            import base64
+
+            auth_user = os.getenv("SPLUNK_AUTH_USER") or os.getenv("SPLUNK_USERNAME") or "admin"
+            b64_creds = base64.b64encode(f"{auth_user}:{password}".encode()).decode()
+            auth_header = f"Basic {b64_creds}"
+
         req_summary = {
             "method": "POST",
             "url": endpoint,
-            "headers": {"Authorization": "Bearer ***", "Content-Type": "application/x-www-form-urlencoded"},
+            "headers": {
+                "Authorization": "Basic ***" if (password and not token) else "Bearer ***",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
             "form_data": data,
         }
 
-        if dry_run or not token:
-            reason = "dry_run mode" if dry_run else "missing SPLUNK_TOKEN credentials"
+        if dry_run or not auth_header:
+            reason = "dry_run mode" if dry_run else "missing SPLUNK_TOKEN or SPLUNK_PASSWORD credentials"
             return DeploymentResult(
                 target=payload.target,
                 status="dry_run",
@@ -389,7 +404,7 @@ class QueryDeployer:
 
         verify_ssl = os.getenv("SPLUNK_VERIFY_SSL", "true").lower() in ("true", "1", "yes")
         with httpx.Client(timeout=self.timeout_sec, verify=verify_ssl) as client:
-            resp = client.post(endpoint, data=data, headers={"Authorization": f"Bearer {token}"})
+            resp = client.post(endpoint, data=data, headers={"Authorization": auth_header})
             resp.raise_for_status()
             return DeploymentResult(
                 target=payload.target,
