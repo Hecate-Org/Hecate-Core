@@ -29,7 +29,15 @@ class SplunkClient:
         ...     print(event)
     """
 
-    def __init__(self, host: str, token: str, verify_ssl: bool = True, timeout: int = 30):
+    def __init__(
+        self,
+        host: str,
+        token: Optional[str] = None,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        verify_ssl: bool = True,
+        timeout: int = 30,
+    ):
         # Normalize host URL
         if not host.startswith(("http://", "https://")):
             host = f"https://{host}"
@@ -39,6 +47,8 @@ class SplunkClient:
 
         self.base_url = host.rstrip("/")
         self.token = token
+        self.username = username
+        self.password = password
         self.verify_ssl = verify_ssl
         self.timeout = timeout
 
@@ -54,12 +64,23 @@ class SplunkClient:
         self.session.mount("https://", adapter)
 
         # Set default headers
-        self.session.headers.update(
-            {
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/x-www-form-urlencoded",
-            }
-        )
+        auth_header = None
+        if token:
+            if token.startswith(("Bearer ", "Basic ", "Splunk ")):
+                auth_header = token
+            else:
+                auth_header = f"Bearer {token}"
+        elif password:
+            import base64
+
+            auth_user = username or "admin"
+            b64_creds = base64.b64encode(f"{auth_user}:{password}".encode()).decode()
+            auth_header = f"Basic {b64_creds}"
+
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        if auth_header:
+            headers["Authorization"] = auth_header
+        self.session.headers.update(headers)
 
     def _request(
         self,
@@ -89,6 +110,17 @@ class SplunkClient:
         response = self.session.request(
             method=method, url=url, params=params, data=data, verify=self.verify_ssl, timeout=self.timeout
         )
+
+        if response.status_code == 401 and self.password and not self.session.headers.get("Authorization", "").startswith("Basic "):
+            # Fall back to basic auth if token expired or rejected
+            import base64
+
+            auth_user = self.username or "admin"
+            b64_creds = base64.b64encode(f"{auth_user}:{self.password}".encode()).decode()
+            self.session.headers["Authorization"] = f"Basic {b64_creds}"
+            response = self.session.request(
+                method=method, url=url, params=params, data=data, verify=self.verify_ssl, timeout=self.timeout
+            )
 
         response.raise_for_status()
 

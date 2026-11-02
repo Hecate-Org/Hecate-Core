@@ -30,26 +30,45 @@ def get_client(host: Optional[str], token: Optional[str], verify_ssl: Optional[b
     Raises:
         click.UsageError: If credentials are not provided
     """
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(override=False)
+        ws = os.getenv("HECATE_WORKSPACE")
+        if ws and os.path.isdir(ws):
+            load_dotenv(os.path.join(ws, ".env"), override=False)
+    except ImportError:
+        pass
+
     # Try CLI args first, fall back to environment
     if not host:
         host = os.getenv("SPLUNK_HOST")
     if not token:
         token = os.getenv("SPLUNK_TOKEN")
 
+    username = os.getenv("SPLUNK_USERNAME") or os.getenv("SPLUNK_AUTH_USER")
+    password = os.getenv("SPLUNK_PASSWORD")
+
     # Read verify_ssl from environment if not provided via CLI
     if verify_ssl is None:
         env_verify = os.getenv("SPLUNK_VERIFY_SSL", "true")
         verify_ssl = env_verify.lower() in ("true", "1", "yes")
 
-    if not host or not token:
+    if not host or (not token and not password):
         raise click.UsageError(
             "Splunk credentials required. Provide via:\n"
             "  • CLI: --host and --token flags\n"
-            "  • Environment: SPLUNK_HOST and SPLUNK_TOKEN variables\n"
+            "  • Environment: SPLUNK_HOST and SPLUNK_TOKEN (or SPLUNK_PASSWORD) variables\n"
             "  • Config file: Create .env with credentials"
         )
 
-    return SplunkClient(host=host, token=token, verify_ssl=verify_ssl)
+    return SplunkClient(
+        host=host,
+        token=token,
+        username=username,
+        password=password,
+        verify_ssl=verify_ssl,
+    )
 
 
 @click.group()
