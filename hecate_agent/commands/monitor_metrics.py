@@ -688,6 +688,8 @@ def _collect_purple_team_metrics(
 class SiemDriftMetrics:
     total_queries: int = 0
     in_sync_count: int = 0
+    decommissioned_count: int = 0
+    pending_decommission_count: int = 0
     drifted_count: int = 0
     missing_count: int = 0
     error_count: int = 0
@@ -759,6 +761,8 @@ def _collect_siem_drift_metrics(workspace: Optional[Path] = None) -> SiemDriftMe
             if isinstance(raw, dict):
                 metrics.total_queries = int(raw.get("total_queries", 0))
                 metrics.in_sync_count = int(raw.get("in_sync_count", 0))
+                metrics.decommissioned_count = int(raw.get("decommissioned_count", 0))
+                metrics.pending_decommission_count = int(raw.get("pending_decommission_count", 0))
                 metrics.drifted_count = int(raw.get("drifted_count", 0))
                 metrics.missing_count = int(raw.get("missing_count", 0))
                 metrics.error_count = int(raw.get("error_count", 0))
@@ -779,6 +783,7 @@ def _collect_siem_drift_metrics(workspace: Optional[Path] = None) -> SiemDriftMe
                                         target_counts[tgt] = {
                                             "total": 0,
                                             "in_sync": 0,
+                                            "decommissioned": 0,
                                             "drifted": 0,
                                             "missing": 0,
                                             "error": 0,
@@ -786,6 +791,8 @@ def _collect_siem_drift_metrics(workspace: Optional[Path] = None) -> SiemDriftMe
                                     target_counts[tgt]["total"] += 1
                                     if st == "in_sync":
                                         target_counts[tgt]["in_sync"] += 1
+                                    elif st == "decommissioned":
+                                        target_counts[tgt]["decommissioned"] += 1
                                     elif st in ("drift_detected", "drifted"):
                                         target_counts[tgt]["drifted"] += 1
                                     elif st in ("missing_remote", "missing"):
@@ -838,12 +845,17 @@ def _collect_siem_drift_metrics(workspace: Optional[Path] = None) -> SiemDriftMe
                     pass
 
     if metrics.total_queries > 0:
-        metrics.sync_pct = round((metrics.in_sync_count / metrics.total_queries) * 100, 1)
+        active_q = max(1, metrics.total_queries - metrics.decommissioned_count)
+        metrics.sync_pct = round((metrics.in_sync_count / active_q) * 100, 1)
+        if metrics.sync_pct > 100.0:
+            metrics.sync_pct = 100.0
     else:
         metrics.sync_pct = 100.0
 
     if metrics.drifted_count > 0:
         metrics.status_summary = "DRIFT DETECTED"
+    elif metrics.pending_decommission_count > 0:
+        metrics.status_summary = "DECOMMISSION PENDING"
     elif metrics.missing_count > 0 or metrics.error_count > 0:
         metrics.status_summary = "ATTENTION REQUIRED"
     elif metrics.total_queries > 0:

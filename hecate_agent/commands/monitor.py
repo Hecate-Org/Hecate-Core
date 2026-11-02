@@ -2079,6 +2079,8 @@ def _siem_sync_panel(
 
     if measured.drifted_count > 0:
         st_text = Text(f"DRIFT DETECTED ({measured.drifted_count})", style="bold bright_red")
+    elif measured.pending_decommission_count > 0:
+        st_text = Text(f"DECOMMISSION PENDING ({measured.pending_decommission_count})", style="bold bright_yellow")
     elif measured.missing_count > 0 or measured.error_count > 0:
         st_text = Text("ATTENTION REQUIRED", style="bold bright_yellow")
     elif measured.total_queries > 0:
@@ -2087,24 +2089,36 @@ def _siem_sync_panel(
         st_text = Text("STANDBY", style="dim")
     table.add_row("STATUS", st_text)
 
+    active_queries = max(1, measured.total_queries - measured.decommissioned_count)
     sync_val = (
-        f"{measured.in_sync_count} / {measured.total_queries} queries in sync ({measured.sync_pct:.1f}%)"
+        f"{measured.in_sync_count} / {active_queries} active queries in sync ({measured.sync_pct:.1f}%)"
+        + (f" · {measured.decommissioned_count} decommissioned" if measured.decommissioned_count > 0 else "")
         if measured.total_queries > 0
         else "0 queries tracked"
     )
     table.add_row("SYNC RATIO", Text(sync_val, style="bright_white" if measured.total_queries else "dim"))
 
     drift_style = "bold bright_red" if measured.drifted_count > 0 else "dim"
-    table.add_row(
-        "DRIFT METRICS",
-        Text.assemble(
-            (f"{measured.drifted_count} drifted", drift_style),
+    drift_elements: List[Tuple[str, str]] = [
+        (f"{measured.drifted_count} drifted", drift_style),
+        (" · ", "dim"),
+        (f"{measured.missing_count} missing", "bold bright_yellow" if measured.missing_count else "dim"),
+    ]
+    if measured.decommissioned_count > 0:
+        drift_elements.extend([
             (" · ", "dim"),
-            (f"{measured.missing_count} missing", "bold bright_yellow" if measured.missing_count else "dim"),
+            (f"{measured.decommissioned_count} decommissioned", "bright_cyan"),
+        ])
+    if measured.pending_decommission_count > 0:
+        drift_elements.extend([
             (" · ", "dim"),
-            (f"{measured.error_count} errors", "bold bright_red" if measured.error_count else "dim"),
-        ),
-    )
+            (f"{measured.pending_decommission_count} pending decom", "bold bright_yellow"),
+        ])
+    drift_elements.extend([
+        (" · ", "dim"),
+        (f"{measured.error_count} errors", "bold bright_red" if measured.error_count else "dim"),
+    ])
+    table.add_row("DRIFT METRICS", Text.assemble(*drift_elements))
 
     table.add_row(
         "AUDIT SWEEPS",
@@ -2229,6 +2243,10 @@ def _siem_drift_events_table(
             event_type = str(ev.get("event_type") or "unknown")
             if event_type == "reconciled":
                 event_style = "[bold bright_green]reconciled[/]"
+            elif event_type == "decommissioned":
+                event_style = "[bold bright_cyan]decommissioned[/]"
+            elif event_type == "pending_decommission":
+                event_style = "[bold bright_yellow]pending_decom[/]"
             elif event_type == "drift_detected":
                 event_style = "[bold bright_red]drift_detected[/]"
             elif event_type == "missing_remote":
@@ -2276,7 +2294,14 @@ def _siem_query_versions_table(
             dep_at = str(ver.get("deployed_at") or "")
             dep_display = dep_at[:16].replace("T", " ") if len(dep_at) >= 16 else dep_at
             status = str(ver.get("status") or "active")
-            st_display = "[bright_green]active[/]" if status == "active" else f"[dim]{status}[/]"
+            if status == "active":
+                st_display = "[bright_green]active[/]"
+            elif status in ("decommissioned", "retired"):
+                st_display = "[bright_cyan]decommissioned[/]"
+            elif status == "deprecated":
+                st_display = "[bright_yellow]deprecated[/]"
+            else:
+                st_display = f"[dim]{status}[/]"
 
             table.add_row(
                 str(ver.get("hunt_id") or "--"),
