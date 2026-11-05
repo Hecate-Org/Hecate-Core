@@ -452,3 +452,34 @@ def test_cloud_audit_and_identity_audit_categories_accepted() -> None:
         "condition": "selection",
     }
     assert semantic_problem(identity_detection, "identity_audit") is None
+
+
+def test_a_shell_spawned_by_a_runtime_is_read_as_its_child() -> None:
+    """H-0018 put Node-RED's /node in Image beside the /bin/sh -c it spawns."""
+    from hecate_agent.core.sigma_semantics import repair_sigma_semantics
+
+    detection = {
+        "selection": {"Image|endswith": "/node", "CommandLine|contains": "/bin/sh -c"},
+        "condition": "selection",
+    }
+    repaired, repairs = repair_sigma_semantics(detection)
+    assert repaired["selection"] == {
+        "ParentImage|endswith": "/node",
+        "CommandLine|contains": "/bin/sh -c",
+    }
+    assert repairs
+
+
+def test_a_runtime_rule_without_a_shell_child_is_left_alone() -> None:
+    from hecate_agent.core.sigma_semantics import repair_sigma_semantics
+
+    for detection in (
+        {"selection": {"Image|endswith": "/node", "CommandLine|contains": "server.js"}, "condition": "selection"},
+        {
+            "a": {"Image|endswith": "/node"},
+            "b": {"CommandLine|contains": "/bin/sh -c"},
+            "condition": "a or b",
+        },
+    ):
+        repaired, _ = repair_sigma_semantics(detection)
+        assert "ParentImage|endswith" not in str(repaired)

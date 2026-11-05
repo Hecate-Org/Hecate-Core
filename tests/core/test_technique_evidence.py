@@ -179,3 +179,58 @@ def test_the_macos_feed_text_alone_maps_its_behaviour_without_forbidden_techniqu
     observed = {e.technique_id for e in map_behaviours([("cti", gold["source"]["cti"])]) if e.status == "observed"}
     forbidden = {t["id"] for t in gold["techniques"]["forbidden"]}
     assert {"T1204.004", "T1553.001", "T1555.001"} <= observed and not observed & forbidden
+
+
+@pytest.mark.parametrize(
+    ("sentence", "technique"),
+    [
+        # H-0016, a Node-RED exploit PoC README: none of these happened on a victim.
+        ("The layer ships no settings.js and the string adminAuth does not appear anywhere in the repository.", "T1059.007"),
+        (
+            "PCAP Live capture of a check.py + poc.py run under capture/ : 70 packets, 7 HTTP requests "
+            "over 7 connections, 172.17.0.1 → 172.17.0.4:1880, no TLS.",
+            "T1071.001",
+        ),
+        ("The exploit is delivered over HTTP to the vulnerable server.", "T1071.001"),
+    ],
+)
+def test_a_file_name_or_plain_web_traffic_is_not_the_technique(sentence: str, technique: str) -> None:
+    assert technique not in _observed(sentence)
+
+
+@pytest.mark.parametrize(
+    ("sentence", "technique"),
+    [
+        ("The dropper ran wscript.exe C:\\Users\\Public\\update.js on logon.", "T1059.007"),
+        ("node loader.js fetched the second stage.", "T1059.007"),
+        ("The implant sends HTTP requests to its C2 every 60 seconds.", "T1071.001"),
+        ("The backdoor communicates with the operator over HTTPS.", "T1071.001"),
+    ],
+)
+def test_script_execution_and_http_c2_still_map(sentence: str, technique: str) -> None:
+    assert technique in _observed(sentence)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "# 2. Or stop the service if it is not needed systemctl disable --now node-red",
+        "# 1. Enable authentication (adminAuth) following the Node-RED securing guide.",
+        "We recommend that administrators disable PowerShell v2 on every host.",
+    ],
+)
+def test_advice_to_defenders_is_not_observed_use(sentence: str) -> None:
+    assert sentence_status(sentence) == "negated"
+
+
+def test_a_technique_named_only_in_remediation_advice_has_no_observed_support() -> None:
+    support = technique_support(
+        "T1569.003", ["Systemctl"], "# 2. Or stop the service if it is not needed systemctl disable --now node-red"
+    )
+    assert support is not None and support.status == "capability"
+
+
+def test_a_candidate_from_report_wording_has_a_passage() -> None:
+    """H-0018 matched T1190 on "RCE" but showed no passage for it."""
+    found = technique_support("T1190", [], "Siemens IoT2050 Node-RED unauthenticated root RCE.")
+    assert found is not None and found.status == "observed"

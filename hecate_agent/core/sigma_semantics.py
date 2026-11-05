@@ -163,7 +163,48 @@ def repair_sigma_semantics(detection: Any) -> Tuple[Dict[str, Any], List[str]]:
         else:
             new_detection[name] = item
 
+    repairs += _shell_child_of_runtime(new_detection)
     return new_detection, repairs
+
+
+#: Runtimes that spawn a shell for the code they run: Node-RED's exec node, a Java web app, a Python service.
+_RUNTIME_IMAGE_RE = re.compile(r"(^|[\\/])(node|nodejs|java|python[\d.]*|ruby|perl|php[\d.-]*|php-fpm)(\.exe)?$", re.IGNORECASE)
+#: A command line that begins with a shell: the shell's own, never its parent's.
+_SHELL_COMMAND_RE = re.compile(r"^\s*((/usr)?/bin/)?(ba|da|z)?sh\s+-c\b|^\s*cmd(\.exe)?\s+/c\b", re.IGNORECASE)
+
+
+def _shell_child_of_runtime(detection: Dict[str, Any]) -> List[str]:
+    """Move a runtime from ``Image`` to ``ParentImage`` when the rule ANDs it with a shell's command line.
+
+    H-0018's host rule for Node-RED's exec node read ``Image|endswith: /node``
+    and ``CommandLine|contains: /bin/sh -c``: one process that is both node and
+    a shell, which never occurs. The shell is node's child, so node is the
+    parent image. Applied only when nothing names a parent already and the
+    condition joins the selections with ``and`` alone.
+    """
+    condition = str(detection.get("condition", ""))
+    tokens = set(_condition_tokens(condition))
+    if not condition or tokens & {"or", "not"} or ("of" in tokens and "all" not in tokens):
+        return []
+    named = [(n, b) for n, b in blocks(detection)]
+    if any(base_field(k).lower() == "parentimage" for _, b in named for k in b):
+        return []
+    shell = any(
+        base_field(k).lower() == "commandline" and any(_SHELL_COMMAND_RE.search(v) for v in _values(val))
+        for _, b in named
+        for k, val in b.items()
+    )
+    if not shell:
+        return []
+    repairs: List[str] = []
+    for name, block in named:
+        for key in [k for k in block if base_field(k).lower() == "image"]:
+            values = _values(block[key])
+            if values and all(_RUNTIME_IMAGE_RE.search(v.strip("*")) for v in values):
+                new_key = "ParentImage" + key[len(key.split("|")[0]) :]
+                block[new_key] = block.pop(key)
+                repairs.append(f"Moved runtime {values} from '{key}' to '{new_key}' in {name}: the shell is its child")
+    return repairs
 
 
 repair_scalar_all_modifiers = repair_sigma_semantics

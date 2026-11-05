@@ -176,6 +176,23 @@ def test_tool_transfer_and_explicit_visual_basic_are_proposed() -> None:
     assert "T1059.005" in _ids("The loader executes VBScript from the temporary folder.")
 
 
+def test_named_techniques_leave_out_similarity_leads(monkeypatch: pytest.MonkeyPatch) -> None:
+    """H-0016: TF-IDF similarity on a Node-RED exploit README proposed RC
+    Scripts and Password Managers, and the Runner kept both as "matched in the
+    source's wording", shielded from the unevidenced-technique check."""
+    from hecate_agent.core import technique_candidates
+
+    monkeypatch.setattr(
+        technique_candidates,
+        "_semantic_matches",
+        lambda text: [("T1037.004", "RC Scripts", 38), ("T1555.005", "Password Managers", 14)],
+    )
+    text = "A remote code execution flaw in the internet-facing appliance."
+    assert "T1037.004" in _ids(text)
+    named = [tid for tid, _ in technique_candidates.named_techniques(text)]
+    assert named == ["T1190"]
+
+
 def test_semantic_candidate_matching_with_stix() -> None:
     attack_matrix.reset_provider(None)
     try:

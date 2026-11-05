@@ -123,3 +123,27 @@ def test_private_ips_classified_as_target_with_no_outbound_placements():
     assert merged[0].role == "target"
     assert placements(merged[0]) == []
 
+
+
+def test_the_sources_own_page_and_links_beneath_it_get_no_rule() -> None:
+    """H-0020 swept proxy logs for the PoC repository, taken from its README's stars badge."""
+    from hecate_agent.core.provenance import IndicatorRecord, mark_source_pages, placements
+
+    repo = "https://github.com/al4n4n/CVE-2026-58115"
+    records = [
+        IndicatorRecord(value=repo, type="url"),
+        IndicatorRecord(value=repo + "/stargazers", type="url"),
+        IndicatorRecord(value="github.com", type="hostname"),
+        IndicatorRecord(value="https://github.com/al4n4n/other-tool/raw/main/x.sh", type="url"),
+        IndicatorRecord(value="https://github.com/al4n4n/CVE-2026-58115-fork", type="url"),
+    ]
+    marked = mark_source_pages(records, [repo + "/", ""])
+    assert marked == [repo, repo + "/stargazers", "github.com"]
+    assert [bool(placements(r)) for r in records] == [False, False, False, True, True]
+
+
+def test_a_source_url_without_a_path_marks_nothing() -> None:
+    from hecate_agent.core.provenance import IndicatorRecord, mark_source_pages
+
+    records = [IndicatorRecord(value="evil.example.com", type="domain")]
+    assert mark_source_pages(records, ["https://evil.example.com"]) == []

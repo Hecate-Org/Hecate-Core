@@ -269,11 +269,47 @@ def report_urls(threat_intel: str, source_url: str = "", limit: int = 1) -> List
     return urls
 
 
+_GITHUB_REPO_URL = re.compile(r"^https://github\.com/(?P<owner>[\w.-]+)/(?P<repo>[\w.-]+?)(?:\.git)?/?$")
+
+
+def github_readme_text(url: str, timeout: float = 20.0) -> str:
+    """A GitHub repository's README as markdown, or "" when ``url`` is not a repository root or it cannot be read.
+
+    The rendered page mixes GitHub's own interface into the text and loses heading
+    levels: a PoC repository's "detection" folder in the file listing, then its
+    nav bar, were each read as the start of the author's detection guidance.
+    """
+    import os
+
+    match = _GITHUB_REPO_URL.match(url or "")
+    if not match:
+        return ""
+    headers = {"Accept": "application/vnd.github.raw+json", "User-Agent": "hecate-agent"}
+    token = os.getenv("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        response = httpx.get(
+            f"https://api.github.com/repos/{match['owner']}/{match['repo']}/readme",
+            headers=headers,
+            timeout=timeout,
+            follow_redirects=True,
+        )
+    except httpx.HTTPError:
+        return ""
+    text = response.text.strip() if response.status_code == 200 else ""
+    return text if len(text) >= 100 else ""
+
+
 def fetch_page_text(url: str, timeout: float = 20.0) -> str:
     """Visible text of a report page, or raise on any failure."""
     import os
     import subprocess
     from bs4 import BeautifulSoup
+
+    readme = github_readme_text(url, timeout)
+    if readme:
+        return readme[:MAX_PAGE_CHARS]
 
     tavily_key = os.getenv("TAVILY_API_KEY")
     if tavily_key:
@@ -599,6 +635,9 @@ _NON_FILE_NAME = (
 )
 #: The text right before a hash-shaped value assigns it to such a name: "C2_TOKEN=", "--tls-fingerprint=", "AES key: ".
 _NON_FILE_ASSIGNED = re.compile(rf"[\w-]*{_NON_FILE_NAME}[\w-]*\s*[=:]\s*[\"']?$", re.IGNORECASE)
+#: A version identifier named just before it, as a whole word ("reverse_shell_sha256:" is a file):
+#: a Node-RED PoC's "GET /flows -> 200 (0 nodes, rev 4f53...)" and '{"rev":"781d..."}'.
+_NON_FILE_VERSION_ID = re.compile(r"(?<![\w-])(rev|revision|etag|commit)[\"']?(\s*[=:]\s*|\s+)[\"']?$", re.IGNORECASE)
 #: The table cell after it says so: "TLS fingerprint", "Bearer token".
 _NON_FILE_LABEL = re.compile(
     rf"^\W*((tls|ssl|ssh|x\.?509|certificate|cert|public|private|bearer|auth\w*|api|access|c2|session)\s+){{0,3}}"
@@ -615,7 +654,7 @@ def non_file_passage(text: str, value: str) -> str:
         at = line.lower().find(needle)
         if at < 0:
             continue
-        assigned = _NON_FILE_ASSIGNED.search(line[:at])
+        assigned = _NON_FILE_ASSIGNED.search(line[:at]) or _NON_FILE_VERSION_ID.search(line[:at])
         if assigned:
             return line[assigned.start() : at + len(value)].strip()
         following = next((x.strip() for x in lines[index + 1 : index + 3] if x.strip()), "")
@@ -1170,7 +1209,13 @@ def build_indicator_records(
     Without usable source evidence the feed indicators come back with unknown
     roles, which route exactly as untyped indicators always have.
     """
-    from hecate_agent.core.provenance import attach_text_ports, attach_url_ports, merge_records, records_from_cti
+    from hecate_agent.core.provenance import (
+        attach_text_ports,
+        attach_url_ports,
+        mark_source_pages,
+        merge_records,
+        records_from_cti,
+    )
 
     cti = records_from_cti(cti_indicators)
     if evidence is None or not evidence.text:
@@ -1185,6 +1230,7 @@ def build_indicator_records(
             record.source = evidence.url
         if record.role in ("target", "historical"):
             record.ports = []
+    mark_source_pages(records, [evidence.url])
     attach_url_ports(records)
     attach_text_ports(records, evidence.text)
     return records

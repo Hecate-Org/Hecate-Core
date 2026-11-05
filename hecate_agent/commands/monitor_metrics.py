@@ -669,11 +669,18 @@ def _collect_purple_team_metrics(
     for hf in hunt_files:
         try:
             content = hf.read_text(encoding="utf-8", errors="ignore")
-            if "purple_team_validated: true" in content or "Purple-Team Validated" in content:
+            flagged = "purple_team_validated: true" in content or "Purple-Team Validated" in content
+            m_va = re.search(r"purple_team_rules_validated:\s*(\d+)", content)
+            if flagged:
                 hunts_val += 1
-                m_ev = re.search(r"purple_team_rules_evaluated:\s*(\d+)", content)
-                if m_ev:
-                    val_rules += int(m_ev.group(1))
+            if flagged or m_va:
+                if m_va:
+                    val_rules += int(m_va.group(1))
+                else:
+                    # Older hunts record only how many rules were evaluated.
+                    m_ev = re.search(r"purple_team_rules_evaluated:\s*(\d+)", content)
+                    if m_ev:
+                        val_rules += int(m_ev.group(1))
                 m_tu = re.search(r"purple_team_rules_tuned:\s*(\d+)", content)
                 if m_tu:
                     tuned_rules += int(m_tu.group(1))

@@ -66,6 +66,17 @@ _SUBCOMMANDS = frozenset(
      "wevtutil", "crontab", "spctl", "codesign", "hdiutil", "openssl", "bpftool", "kubectl", "crictl", "docker",
      "podman", "nerdctl", "nsenter", "rclone", "svchost_sync"}
 )  # fmt: skip
+#: The subcommands of the container CLIs. Any lowercase word after "docker" read
+#: as one: a README's keyword list ("... industrial os docker lab 6ES7647 ...")
+#: became the rule "docker lab 6ES7647-0BA00-1YA2".
+_CONTAINER_SUBCOMMANDS = frozenset(
+    {"run", "exec", "cp", "create", "start", "stop", "kill", "restart", "rm", "rmi", "pull", "push", "build", "load",
+     "import", "export", "save", "commit", "attach", "logs", "inspect", "ps", "images", "container", "image", "volume",
+     "network", "compose", "login", "update", "pause", "unpause", "top", "port", "events", "info", "version",
+     "apply", "get", "describe", "delete", "edit", "patch", "scale", "expose", "rollout", "debug", "label",
+     "annotate", "set", "auth", "config", "proxy", "port-forward", "runp", "pods"}
+)  # fmt: skip
+_CONTAINER_CLIS = frozenset({"docker", "podman", "nerdctl", "kubectl", "crictl"})
 #: Words that follow a program name in prose ("cmd.exe and then Word", "Bash script that").
 _PROSE_WORDS = frozenset(
     {"and", "then", "the", "to", "a", "an", "that", "which", "is", "was", "from", "with", "for", "or", "in", "on", "as",
@@ -168,6 +179,8 @@ def _command_shaped(program: str, written: str, tokens: List[str], platform: str
         return False  # on Unix, commands are quoted as typed; "Bash script" is prose
     first = tokens[0].strip("\"'`,").rstrip(".;:!?)")
     if first.lower() in _PROSE_WORDS:
+        return False
+    if program in _CONTAINER_CLIS and first.isalpha() and first.lower() not in _CONTAINER_SUBCOMMANDS:
         return False
     return bool(_ARGUMENT_SHAPE_RE.search(first)) or (program in _SUBCOMMANDS and first.isalpha() and first.islower())
 
@@ -291,3 +304,68 @@ def command_candidates(text: str, platforms: Sequence[str] = (), primary_actor: 
                 }
             )
     return out
+
+
+#: Headings of a tool README's sections about operating the tool: building its
+#: lab, installing it, running its scanner or exploit, its file list, a capture
+#: of a test run. What they show happens on the tester's machine.
+_TOOLING_HEADINGS = (
+    r"usage|lab( setup)?|setup|install(ation|ing)?|build(ing)?|requirements|prerequisites|dependencies"
+    r"|quick ?start|getting started|how to (run|use)|running|run|demo|tests?|testing|verif(y|ication)"
+    r"|check|scan(ner|ning)?|exploit|exploitation steps|teardown|clean ?up|files|repository structure"
+    r"|disclaimer|pcap|capture"
+)
+_TOOLING_HEADING_RE = re.compile(rf"^({_TOOLING_HEADINGS})\s*:?\s*$", re.IGNORECASE)
+#: Those, and the sections for defenders: their commands patch, harden or test a rule.
+_OPERATOR_HEADING_RE = re.compile(
+    rf"^({_TOOLING_HEADINGS}|mitigations?|remediation|workarounds?|hardening|fix(es)?|patch(es|ing)?"
+    r"|detection( rules)?|detections|references)\s*:?\s*$",
+    re.IGNORECASE,
+)
+_MD_HEADING_RE = re.compile(r"^(?P<marks>#{1,6})\s+(?P<title>.+?)\s*#*\s*$")
+
+
+def _without_sections(markdown: str, headings: "re.Pattern[str]") -> str:
+    """``markdown`` without the sections whose heading matches ``headings``.
+
+    A section ends at the next heading of its level or above; ``# ...`` inside
+    a code block is a shell comment, not a heading.
+    """
+    kept: List[str] = []
+    skipping_at = 0
+    in_code = False
+    for line in (markdown or "").splitlines():
+        stripped = line.strip()
+        heading = None if in_code else _MD_HEADING_RE.match(stripped)
+        if stripped.startswith("```"):
+            in_code = not in_code
+        if heading:
+            level = len(heading["marks"])
+            if skipping_at and level > skipping_at:
+                continue
+            title = re.sub(r"[`*_]|\(.*?\)", "", heading["title"]).strip()
+            skipping_at = level if headings.match(title) else 0
+        if not skipping_at:
+            kept.append(line)
+    return "\n".join(kept)
+
+
+def without_operator_sections(markdown: str) -> str:
+    """A tool README without the sections whose commands run on the tester's or defender's machine.
+
+    A PoC repository's README is written for the person running it: "### Lab
+    setup" builds the target, "### Exploit" fires ``python3 poc.py`` at it,
+    "### Verify" repeats that. H-0018 made a process rule of each, ``python3
+    setup.py`` included. What the README says happens on the target ("The
+    Bug", "The Proof") is kept.
+    """
+    return _without_sections(markdown, _OPERATOR_HEADING_RE)
+
+
+def without_tooling_sections(markdown: str) -> str:
+    """A tool README without its usage, lab, file-list and capture sections; its detection advice stays.
+
+    H-0018 drafted rules for the PoC's own ``poc.py`` and for the
+    ``/tmp/suricata-test/fast.log`` its author's IDS test wrote.
+    """
+    return _without_sections(markdown, _TOOLING_HEADING_RE)

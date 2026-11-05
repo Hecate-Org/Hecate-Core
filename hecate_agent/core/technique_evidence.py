@@ -46,7 +46,11 @@ _CATALOG: Tuple[Tuple[str, str, str], ...] = (
     ("T1059.003", "Windows command shell", r"\bcmd\.exe\b|\bcommand prompt\b|\bwindows command shell\b"),
     ("T1059.001", "PowerShell", r"\bpowershell(\.exe)?\b"),
     ("T1059.005", "Visual Basic", r"\bvbscript\b|\.vbs\b|\bvisual basic\b"),
-    ("T1059.007", "JavaScript", r"\bjavascript\b|\bjscript\b|\.js\b"),
+    # A ".js" name alone is a file, often a config ("ships no settings.js"); it
+    # counts only when something runs it.
+    ("T1059.007", "JavaScript",
+     r"\bjavascript\b|\bjscript\b|\b(wscript|cscript|node)(\.exe)?\s+\S+\.js\b"
+     r"|\b(runs?|ran|execut\w+|launch\w*)\b[^.]{0,40}\.js\b|\.js\b[^.]{0,40}\b(runs|ran|executes|executed|launched)\b"),
     ("T1059.004", "Unix shell",
      r"\b(ba|z)?sh -c\b|/bin/(ba|z)?sh\b|\b(bash|shell) script\b|\bbash \.?[\w.-]+\b|\b(curl|wget)\b.{0,200}?\|\s*(ba|z)?sh\b"),
     ("T1059.002", "AppleScript", r"\bosascript\b|\bapplescript\b"),
@@ -76,8 +80,14 @@ _CATALOG: Tuple[Tuple[str, str, str], ...] = (
      r"|\b(virtualalloc|allocadsmem|allocat\w+ (executable|rwx) memory)\b.{0,160}\b(virtualprotect|createthread)\b"
      r"|\bexecut\w+ (it |the (payload|shellcode|stager) )?(directly )?(in|from) memory\b"
      r"|\bin[- ]memory (execution|loader|loading)\b|\bshellcode (loader|execution|runner)\b"),
+    # HTTP requests or traffic alone are any web exchange, an exploit's own
+    # included ("7 HTTP requests over 7 connections" in a PoC's lab capture);
+    # they count only beside the C2 they serve.
     ("T1071.001", "HTTP for staging or C2",
-     r"\bhttps? (staging|c2|c&c|beacon\w*|requests?|communications?|traffic)\b|\bover https?\b"
+     r"\bhttps? (staging|c2|c&c|beacon\w*)\b"
+     r"|\bhttps? (requests?|communications?|traffic)\b.{0,80}?\b(c2|c&c|command[- ]and[- ]control|beacon\w*|callback|implant|backdoor)\b"
+     r"|\b(c2|c&c|command[- ]and[- ]control|beacon\w*|callback|implant|backdoor)\b.{0,80}?\bhttps? (requests?|communications?|traffic)\b"
+     r"|\b(c2|c&c|command[- ]and[- ]control|beacon\w*|callback|implant|backdoor|payload|stager)s?\b.{0,80}?\bover https?\b"
      # The Redis botnet's heartbeat: "pings c2_persist.py (...:10000) with a plain HTTP GET".
      r"|\b(check(s|ed|ing)?[- ]in|call(s|ed|ing)? back|beacon\w*|heartbeat|pings?)\b.{0,120}?\bhttps? (get|post)s?\b"
      r"|\bhttps? (get|post)s?\b.{0,120}?\b(c2|c&c|check[- ]?in|callback|heartbeat|beacon\w*)\b"),
@@ -252,6 +262,15 @@ _NEGATED_RE = re.compile(
     r"|\b(?:did|does|was|were) not (?:use|show|perform|occur|succeed)\w*\b"
     r"|\b(?:unsuccessful|failed to|attempted but failed)\b"
 )
+#: Advice to defenders: mitigation, remediation, hardening. It names what to
+#: change, not what happened. A PoC README's "stop the service if it is not
+#: needed: systemctl disable --now node-red" was read as observed T1569.003.
+_DEFENDER_ADVICE_RE = re.compile(
+    r"\b(to mitigate|as a mitigation|mitigation steps?|remediation|workarounds?|we recommend"
+    r"|(is|are) (strongly )?recommended|(defenders|administrators|admins) should"
+    r"|if (it is|it's|they are) not (needed|required|in use)|enable authentication"
+    r"|upgrade to (version |v)?\d|apply the (vendor )?(patch|update|fix))\b"
+)
 #: Segments longer than this are judged, and quoted, by a window around the
 #: match: scraped headings carry no punctuation, so unrelated sections can
 #: run together into one "sentence".
@@ -290,7 +309,9 @@ def sentence_status(sentence: str, actor_material: bool = False, primary_actor: 
             return "context"
     if attacker_side(lowered, actor_material):
         return "context"
-    if _NEGATED_RE.search(lowered):
+    # "negated", not "context": advice mentions the technique without it
+    # happening, so it must not stand as observed use for an asserted ID either.
+    if _NEGATED_RE.search(lowered) or _DEFENDER_ADVICE_RE.search(lowered):
         return "negated"
     if _CAPABILITY_RE.search(lowered) and not _OBSERVED_RE.search(lowered):
         return "capability"
@@ -401,7 +422,14 @@ def technique_support(technique_id: str, names: Iterable[str], text: str) -> Opt
     says whether any mention is an observed use; only ``capability`` passages
     means the text describes the technique solely as something a tool can do.
     """
+    from hecate_agent.core.technique_candidates import _REPORT_WORDING
+
     catalog = [(label, pattern) for tid, label, pattern in _COMPILED if tid == technique_id]
+    # The phrases that proposed it as a candidate ("remote code execution" for
+    # T1190), so a candidate the source supports has a passage to show.
+    phrases = [re.escape(p.lower()) for p in _REPORT_WORDING.get(technique_id, ())]
+    if phrases:
+        catalog.append(("report wording", re.compile(r"\b(" + "|".join(phrases) + r")\b")))
     by_name = _name_pattern(names)
     best: Optional[TechniqueEvidence] = None
     actor_material = actor_material_report(text)

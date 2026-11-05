@@ -35,6 +35,10 @@ HASH_ROLES = (
 #: traffic, never as a destination: H-0830's report listed its exploitation
 #: "Source IPs", and an outbound-connection rule could never match them.
 NETWORK_ROLES = ("c2", "staging", "download", "dual_use", "target", "inbound", "historical", "unknown")
+#: The source's own page, a link beneath it or its host. Assigned only by
+#: ``mark_source_pages``, never offered to the model: H-0020 swept proxy logs
+#: for the PoC repository it was drafted from, from the README's stars badge.
+SOURCE_PAGE_ROLE = "source_page"
 STATUSES = ("active", "historical", "unknown")
 CONFIDENCES = ("high", "medium", "low", "unknown")
 
@@ -266,6 +270,35 @@ def _combine(into: IndicatorRecord, reading: IndicatorRecord) -> None:
         into.ports = sorted(set(into.ports) | set(reading.ports))
 
 
+def mark_source_pages(records: List[IndicatorRecord], source_urls: Iterable[str]) -> List[str]:
+    """Type the source's own page, links beneath it and its host as ``source_page``.
+
+    Only a source URL with a path counts, so a feed whose URL is a bare host
+    keeps its indicators. Returns the values marked.
+    """
+    pages = []
+    for url in source_urls:
+        host, _, path = url_parts(url or "")
+        path = path.rstrip("/").lower()
+        if host and path:
+            pages.append((host, path))
+    marked = []
+    for record in records:
+        if record.type not in NETWORK_TYPES or record.role == SOURCE_PAGE_ROLE:
+            continue
+        value = refang(record.value).lower().rstrip(".")
+        if record.type == "url":
+            host, _, path = url_parts(value)
+            path = path.rstrip("/").lower()
+            own = any(host == h and (path == p or path.startswith(p + "/")) for h, p in pages)
+        else:
+            own = any(value == h for h, _ in pages)
+        if own:
+            record.role, record.ports = SOURCE_PAGE_ROLE, []
+            marked.append(record.value)
+    return marked
+
+
 def merge_records(cti: List[IndicatorRecord], extracted: List[IndicatorRecord]) -> List[IndicatorRecord]:
     """Feed indicators enriched with what the primary source says about them.
 
@@ -435,7 +468,7 @@ def placements(record: IndicatorRecord) -> List[str]:
     that hash can be observed. Unknown network roles route only for curated
     feed indicators; a mention in a report does not establish infrastructure.
     """
-    if record.status == "historical" or record.role in ("historical", "target"):
+    if record.status == "historical" or record.role in ("historical", "target", SOURCE_PAGE_ROLE):
         return []
     if record.type in NETWORK_TYPES and record.role == "unknown" and record.source != "cti":
         return []

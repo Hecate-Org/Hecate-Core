@@ -351,9 +351,9 @@ class HypothesisGeneratorAgent(LLMAgent[HypothesisGenerationInput, HypothesisGen
         # from that text and are subsequently checked again by the Runner.
         evidenced = set(self._extract_techniques_from_text(input_data.threat_intel))
         try:
-            from hecate_agent.core.technique_candidates import candidate_techniques
+            from hecate_agent.core.technique_candidates import named_techniques
 
-            evidenced.update(tid for tid, _ in candidate_techniques(input_data.threat_intel))
+            evidenced.update(tid for tid, _ in named_techniques(input_data.threat_intel))
         except Exception:
             pass
         if evidenced:

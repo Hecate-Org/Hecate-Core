@@ -225,3 +225,56 @@ def test_reference_web_rule_transpiles_to_real_ecs_fields_and_fails_closed_witho
     assert 'cs-method' not in elastic.query
     mde = results[SigmaTranspiler.TARGET_MDE]
     assert not mde.success and "explicit deployed table and field mapping" in mde.error_message
+
+
+_POC_README = """# CVE-2026-58115: Node-RED unauthenticated root RCE
+
+## Usage
+
+```bash
+python3 poc.py --target http://device:1880 --cmd id
+```
+
+## Lab setup
+
+Downloads npm-shrinkwrap.json and builds the image.
+
+## Mitigations
+
+Enable `adminAuth` in settings.js.
+
+## Detection rules
+
+An unauthenticated `POST /flows` deploys an exec node.
+
+## verify.py output
+
+/tmp/suricata-test/fast.log
+"""
+
+
+def test_a_poc_readme_loses_its_operator_sections_for_commands() -> None:
+    """H-0018 drafted rules for the tester's own poc.py and lab build."""
+    from hecate_agent.core.command_rules import without_operator_sections
+
+    kept = without_operator_sections(_POC_README)
+    assert "poc.py" not in kept and "npm-shrinkwrap" not in kept
+    assert "adminAuth" not in kept and "POST /flows" not in kept
+    assert "Node-RED unauthenticated root RCE" in kept
+    assert "fast.log" in kept  # "verify.py output" is not a "verify" section
+
+
+def test_a_poc_readme_keeps_its_detection_advice_for_artifacts() -> None:
+    from hecate_agent.core.command_rules import without_tooling_sections
+
+    kept = without_tooling_sections(_POC_README)
+    assert "poc.py" not in kept and "npm-shrinkwrap" not in kept
+    assert "POST /flows" in kept and "adminAuth" in kept
+
+
+def test_a_docker_word_that_is_not_a_subcommand_is_not_a_command() -> None:
+    """H-0018: "docker lab 6ES7647-0BA00-1YA2" from a README's lab table."""
+    from hecate_agent.core.command_rules import _command_shaped
+
+    assert not _command_shaped("docker", "docker", ["lab", "6ES7647-0BA00-1YA2"])
+    assert _command_shaped("docker", "docker", ["run", "--privileged", "alpine"])

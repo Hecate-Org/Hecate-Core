@@ -319,8 +319,13 @@ def _semantic_matches(text: str) -> Iterable[Tuple[str, str, int]]:
         return []
 
 
-def candidate_techniques(text: str, limit: int = 16) -> List[Tuple[str, str]]:
+def candidate_techniques(text: str, limit: int = 16, semantic: bool = True) -> List[Tuple[str, str]]:
     """(ID, name) for techniques the text describes, strongest evidence first.
+
+    ``semantic`` adds TF-IDF similarity matches. Those are leads for a prompt,
+    not evidence: on a Node-RED exploit README they proposed RC Scripts,
+    Password Managers and Audio Capture (from "PCAP capture"). Anything that
+    treats a candidate as support for a technique wants :func:`named_techniques`.
 
     Returns an empty list when the ATT&CK data cannot be read: no candidates
     is the honest answer, and the caller's prompt simply omits the section.
@@ -337,13 +342,19 @@ def candidate_techniques(text: str, limit: int = 16) -> List[Tuple[str, str]]:
         return []
     scored: Dict[str, Tuple[int, str]] = {}
     try:
-        for tid, name, score in [*_wording_matches(text), *_semantic_matches(text), *_name_matches(text)]:
+        similar = _semantic_matches(text) if semantic else []
+        for tid, name, score in [*_wording_matches(text), *similar, *_name_matches(text)]:
             if tid not in scored or scored[tid][0] < score:
                 scored[tid] = (score, name)
     except Exception:
         return []
     ranked = sorted(scored.items(), key=lambda kv: (-kv[1][0], kv[0]))
     return [(tid, name) for tid, (_, name) in ranked[:limit]]
+
+
+def named_techniques(text: str, limit: int = 16) -> List[Tuple[str, str]]:
+    """(ID, name) for techniques the text names as a phrase: report wording or the ATT&CK name."""
+    return candidate_techniques(text, limit=limit, semantic=False)
 
 
 def format_candidates(candidates: List[Tuple[str, str]]) -> Optional[str]:

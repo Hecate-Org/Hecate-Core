@@ -182,3 +182,57 @@ def test_a_unix_path_in_guidance_becomes_a_file_candidate() -> None:
     (candidate,) = sigma_candidates("~/Library/LaunchAgents/com.example.update.plist")
     assert candidate["title"] == "File com.example.update.plist written"
     assert candidate["detection"]["selection"] == {"TargetFilename|endswith": "/Library/LaunchAgents/com.example.update.plist"}
+
+
+def test_a_readme_detection_section_ends_at_its_next_sibling_heading() -> None:
+    """H-0018 read 204 "guidance" items from a README, /etc/os-release among them."""
+    from hecate_agent.core.detection_guidance import guidance_lines
+
+    readme = """# PoC
+
+## Detection Rules
+
+Alert on an unauthenticated POST /flows.
+
+```bash
+# not a heading
+curl http://device:1880/flows
+```
+
+### Sigma
+
+Node-RED spawning /bin/sh -c.
+
+## PCAP
+
+cat /etc/os-release
+"""
+    lines = guidance_lines(readme)
+    assert "Alert on an unauthenticated POST /flows." in lines
+    assert "Node-RED spawning /bin/sh -c." in lines
+    assert not any("os-release" in line for line in lines)
+    assert not any(line.startswith("```") for line in lines)
+
+
+def test_a_file_listing_or_nav_bar_is_not_the_start_of_guidance() -> None:
+    from hecate_agent.core.detection_guidance import guidance_lines
+
+    page = "detection\ndetection\nInitial commit\nPCAP\n·\nDetection\n·\nImpact\nchmod +x /tmp/x"
+    assert guidance_lines(page) == []
+
+
+def test_a_linux_runtime_spawning_a_shell_becomes_a_process_rule() -> None:
+    """H-0020's README asked for exactly this rule and the guidance reader left it for review."""
+    text = (
+        "Host-side: the Node-RED process (`node` running `node-red`) spawning `/bin/sh -c`. "
+        "The `exec` node is the only stock node that does that."
+    )
+    assert classify(text)["route"] == "sigma"
+    (candidate,) = sigma_candidates(text)
+    assert candidate["detection"]["selection"] == {
+        "ParentImage|endswith": "/node",
+        "ParentCommandLine|contains": "node-red",
+        "Image|endswith": "/sh",
+        "CommandLine|contains": " -c ",
+    }
+    assert semantic_problem(candidate["detection"], "process_creation", candidate["title"]) is None

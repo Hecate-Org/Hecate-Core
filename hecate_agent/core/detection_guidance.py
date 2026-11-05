@@ -30,9 +30,14 @@ ROUTES = ("sigma", "edr", "network-content", "indicator", "review")
 
 _START_RE = re.compile(
     r"^(detection|detections|detection and hunting|hunting|hunting and detection|detection opportunities|"
-    r"detection guidance|hunting guidance|how to detect|detection and response|detection recommendations)\s*[:⌗#]*\s*$",
+    r"detection guidance|hunting guidance|how to detect|detection and response|detection recommendations|"
+    r"detection rules)\s*[:⌗#]*\s*$",
     re.IGNORECASE,
 )
+#: A markdown heading: its level and its words.
+_HEADING_RE = re.compile(r"^(?P<marks>#{1,6})\s+(?P<title>.+?)\s*#*\s*$")
+#: Separators between the entries of a scraped nav bar ("Check · Exploit · Detection · PCAP").
+_NAV_SEPARATORS = frozenset({"·", "|", "•", "/"})
 _END_RE = re.compile(
     r"^(iocs?|indicators( of compromise)?|references|final thoughts|conclusions?|appendix|about( the author)?|"
     r"mitre att&ck|att&ck mapping|acknowledg\w+|timeline|summary)\s*[:⌗#]*\s*$",
@@ -75,10 +80,19 @@ _PATH_RE = re.compile(
 )
 _REGISTRY_RE = re.compile(r"\bHK(LM|CU|EY_[A-Z_]+)\\", re.IGNORECASE)
 _CHAIN_RE = re.compile(
-    r"^(?P<subject>.+?)\s+(?:launching|spawning|starting|running|executing)\s+(?P<a>[\w.-]+)"
-    r"(?:\s*,?\s*(?:and\s+)?(?:then|which (?:opens|launches|starts))\s+(?P<b>[\w.-]+))?\s*\.?$",
+    r"^(?P<subject>.+?)\s+(?:launching|spawning|starting|running|executing)\s+(?P<a>[\w./-]+)"
+    r"(?P<args>(?:\s+-{1,2}\w+)*)"
+    r"(?:\s*,?\s*(?:and\s+)?(?:then|which (?:opens|launches|starts))\s+(?P<b>[\w./-]+))?\s*\.?$",
     re.IGNORECASE,
 )
+#: "the Node-RED process (`node` running `node-red`)": the runtime and the script it runs.
+_RUNS_SCRIPT_RE = re.compile(r"\b(?P<runtime>[\w./-]+)\s+running\s+(?P<script>[\w./-]+)\)", re.IGNORECASE)
+#: A sentence end inside an item: "... spawning `/bin/sh -c`. The `exec` node is ...".
+_SENTENCE_END_RE = re.compile(r"(?<=[\w)`])\.\s+(?=[A-Z])")
+_UNIX_PROCESSES = frozenset(
+    {"node", "nodejs", "python", "python3", "java", "php", "ruby", "perl", "sh", "bash", "dash", "zsh", "busybox"}
+)
+_UNIX_SHELLS = frozenset({"sh", "bash", "dash", "zsh", "busybox"})
 _THEME_RE = re.compile(r"\b(?P<theme>[a-z][\w]{2,})-(?:themed|named|looking|lured?)\b", re.IGNORECASE)
 _PROCESS_ALIASES = {
     "word": "winword.exe", "winword": "winword.exe", "excel": "excel.exe", "powerpoint": "powerpnt.exe",
@@ -106,17 +120,51 @@ class GuidanceItem:
         return asdict(self)
 
 
+def _furniture(lines: List[str], index: int) -> bool:
+    """Whether a lone "Detection" line is page furniture, not a heading.
+
+    A GitHub page lists each folder name twice ("detection" / "detection") and
+    renders the README's nav bar one entry per line between "·" separators.
+    """
+    line = lines[index].lower()
+    neighbours = [lines[j] for j in (index - 1, index + 1) if 0 <= j < len(lines)]
+    return any(n.lower() == line or n in _NAV_SEPARATORS for n in neighbours)
+
+
 def guidance_lines(text: str) -> List[str]:
-    """The lines of the report's detection section, or [] when it has none."""
+    """The lines of the report's detection section, or [] when it has none.
+
+    A markdown section ends at the next heading of its level or above, so a
+    README's "## PCAP" after "## Detection Rules" is not read as guidance.
+    """
     lines = [line.strip() for line in refang(text or "").splitlines()]
-    start = next((i for i, line in enumerate(lines) if _START_RE.match(line)), None)
+    # A "# ..." line inside a code block is a shell comment, not a heading.
+    in_code, headings = False, []
+    for line in lines:
+        if line.startswith("```"):
+            in_code = not in_code
+        headings.append(None if in_code else _HEADING_RE.match(line))
+    start, level = None, 0
+    for i, line in enumerate(lines):
+        heading = headings[i]
+        if heading and _START_RE.match(heading["title"]):
+            start, level = i, len(heading["marks"])
+            break
+        if not heading and _START_RE.match(line) and not _furniture(lines, i):
+            start = i
+            break
     if start is None:
         return []
     out: List[str] = []
-    for line in lines[start + 1 :]:
+    for i in range(start + 1, len(lines)):
+        line, heading = lines[i], headings[i]
+        if heading and level and len(heading["marks"]) <= level:
+            break
+        if heading:
+            line = heading["title"]
         if _END_RE.match(line):
             break
-        if line and not _DECORATION_RE.match(line):
+        if line and not _DECORATION_RE.match(line) and not line.startswith("```"):
             out.append(line)
     return out
 
@@ -179,38 +227,60 @@ def classify(text: str, has_hex: bool = False) -> Dict[str, str]:
     if apis or _EDR_RE.search(text):
         what = f"the API sequence {', '.join(apis)}" if apis else "memory, code-signing or thread activity"
         return {"route": "edr", "reason": f"{what} is visible to EDR telemetry, not Sigma's generic log sources"}
-    if _PATH_RE.search(text) or _REGISTRY_RE.search(text) or _CHAIN_RE.match(text):
+    if _PATH_RE.search(text) or _REGISTRY_RE.search(text) or _chain(text):
         return {"route": "sigma", "reason": "a file, registry key or process launch that endpoint logs record"}
     return {"route": "review", "reason": "no telemetry route recognised; review by hand"}
 
 
+def _chain(text: str) -> Optional["re.Match[str]"]:
+    """A process chain in the item's first sentence, read without markdown code marks."""
+    first = _SENTENCE_END_RE.split(text.replace("`", ""), maxsplit=1)[0]
+    return _CHAIN_RE.match(first.strip())
+
+
 def _process(token: str) -> Optional[str]:
-    lowered = token.lower().rstrip(".,")
+    """The ``Image|endswith`` value for a process the text names, with its platform's separator."""
+    lowered = token.lower().strip("().,")
     if lowered.endswith(".exe"):
-        return lowered
-    return _PROCESS_ALIASES.get(lowered)
+        return "\\" + lowered
+    if lowered in _PROCESS_ALIASES:
+        return "\\" + _PROCESS_ALIASES[lowered]
+    name = lowered.rsplit("/", 1)[-1]
+    if name in _UNIX_PROCESSES and (lowered == name or lowered.startswith("/")):
+        return "/" + name
+    return None
+
+
+def _bare(endswith: str) -> str:
+    return endswith.lstrip("\\/")
 
 
 def sigma_candidates(text: str) -> List[Dict[str, Any]]:
     """Deterministic Sigma candidates for one ``sigma`` guidance item; [] when no template fits."""
     out: List[Dict[str, Any]] = []
-    chain = _CHAIN_RE.match(text)
+    chain = _chain(text)
     if chain:
         first, second = _process(chain.group("a")), _process(chain.group("b") or "")
-        theme = _THEME_RE.search(chain.group("subject"))
-        parent = _process(chain.group("subject").split()[-1])
+        subject = chain.group("subject")
+        theme = _THEME_RE.search(subject)
+        parent = next((p for p in map(_process, reversed(subject.split())) if p), None)
         if first and (theme or parent):
             selection: Dict[str, Any] = (
                 {"ParentImage|contains": theme.group("theme").lower()}
                 if theme
-                else {"ParentImage|endswith": "\\" + str(parent)}
+                else {"ParentImage|endswith": str(parent)}
             )
-            selection["Image|endswith"] = "\\" + first
-            launcher = f"a {theme.group('theme').lower()}-themed executable" if theme else str(parent)
+            runs = _RUNS_SCRIPT_RE.search(subject)
+            if runs and not theme and _process(runs.group("runtime")) == parent:
+                selection["ParentCommandLine|contains"] = runs.group("script")
+            selection["Image|endswith"] = first
+            if first.lstrip("/") in _UNIX_SHELLS and re.search(r"(?<!\w)-c\b", chain.group("args")):
+                selection["CommandLine|contains"] = " -c "
+            launcher = f"a {theme.group('theme').lower()}-themed executable" if theme else _bare(str(parent))
             out.append(
                 {
                     "category": "process_creation",
-                    "title": f"{launcher.capitalize()} launching {first}",
+                    "title": f"{launcher.capitalize()} launching {_bare(first)}",
                     "detection": {"selection": selection, "condition": "selection"},
                     "note": "one event of the chain the source describes",
                 }
@@ -219,9 +289,9 @@ def sigma_candidates(text: str) -> List[Dict[str, Any]]:
             out.append(
                 {
                     "category": "process_creation",
-                    "title": f"{first} launching {second}",
+                    "title": f"{_bare(first)} launching {_bare(second)}",
                     "detection": {
-                        "selection": {"ParentImage|endswith": "\\" + first, "Image|endswith": "\\" + second},
+                        "selection": {"ParentImage|endswith": first, "Image|endswith": second},
                         "condition": "selection",
                     },
                     "note": "the next event of the chain; joining the two events needs backend correlation",

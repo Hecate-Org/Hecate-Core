@@ -816,6 +816,21 @@ def test_purple_team_metrics_do_not_import_other_evaluation_workspaces(
     assert metrics.hunts_validated == (1 if own_rules else 0)
 
 
+def test_purple_team_metrics_count_validated_rules_not_evaluated_ones(tmp_path: Path) -> None:
+    """H-0016: 2 of 12 rules validated was counted as 12 validated rules."""
+    hunts = tmp_path / "hunts"
+    hunts.mkdir()
+    (hunts / "H-0016.md").write_text(
+        "---\npurple_team_validated: false\npurple_team_rules_evaluated: 12\npurple_team_rules_validated: 2\n---\n"
+    )
+    (hunts / "H-0017.md").write_text(
+        "---\npurple_team_validated: true\npurple_team_rules_evaluated: 3\npurple_team_rules_validated: 3\n---\n"
+    )
+    metrics = m._collect_purple_team_metrics(tmp_path)
+    assert metrics.validated_rules == 5
+    assert metrics.hunts_validated == 1
+
+
 def test_collect_purple_team_metrics_from_trail_events() -> None:
     events = [
         m.TrailEvent(

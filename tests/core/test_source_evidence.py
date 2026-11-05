@@ -434,3 +434,29 @@ def test_fetch_page_text_uses_tavily_extract(monkeypatch: pytest.MonkeyPatch) ->
     text = fetch_page_text("https://example.com/advisory")
     assert "Extracted threat intelligence content" in text
     assert mock_post.called
+
+
+@pytest.mark.parametrize("line", ['rev 4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945', '{"rev":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"}'])
+def test_a_revision_id_is_not_a_file_hash(line: str) -> None:
+    """H-0018's hash rule came from Node-RED flow revision IDs."""
+    value = "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    assert se.non_file_passage(line, value)
+
+
+def test_a_named_hash_is_still_a_file_hash() -> None:
+    value = "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    assert not se.non_file_passage(f"reverse_shell_sha256: {value}", value)
+
+
+def test_a_github_repository_is_read_as_its_readme(monkeypatch: pytest.MonkeyPatch) -> None:
+    readme = "# PoC\n\n## Detection Rules\n\n" + "Alert on POST /flows. " * 10
+    calls: List[str] = []
+
+    def fake_get(url: str, **_: Any) -> httpx.Response:
+        calls.append(url)
+        return httpx.Response(200, text=readme)
+
+    monkeypatch.setattr(se.httpx, "get", fake_get)
+    assert se.fetch_page_text("https://github.com/al4n4n/CVE-2026-58115") == readme.strip()
+    assert calls == ["https://api.github.com/repos/al4n4n/CVE-2026-58115/readme"]
+    assert se.github_readme_text("https://github.com/al4n4n/CVE-2026-58115/blob/main/x.py") == ""
