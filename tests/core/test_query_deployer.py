@@ -10,9 +10,7 @@ from hecate_agent.api import (
 from hecate_agent.core.query_deployer import (
     DeploymentPayload,
     QueryDeployer,
-    SyncResult,
     UndeploymentPayload,
-    UndeploymentResult,
 )
 
 
