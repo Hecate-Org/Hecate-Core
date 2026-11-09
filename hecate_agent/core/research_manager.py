@@ -105,7 +105,7 @@ class ResearchParser:
         self.sections = self._parse_sections(self.content)
 
         return {
-            "file_path": str(self.file_path),
+            "file_path": Path(self.file_path).as_posix(),
             "research_id": self.frontmatter.get("research_id"),
             "frontmatter": self.frontmatter,
             "content": self.content,
@@ -492,7 +492,7 @@ class ResearchManager:
                         "linked_hunts": frontmatter.get("linked_hunts", []),
                         "duration_minutes": frontmatter.get("duration_minutes"),
                         "total_cost_usd": frontmatter.get("total_cost_usd"),
-                        "file_path": str(research_file),
+                        "file_path": Path(research_file).as_posix(),
                     }
                 )
 
@@ -547,7 +547,7 @@ class ResearchManager:
         if not entries:
             return parse_research_file(path)  # Preserve selected-document parse errors.
         result = entries[0].data
-        result["file_path"] = str(path)
+        result["file_path"] = Path(path).as_posix()
         return result
 
     def extract_research_context(self, research_doc: Dict[str, Any]) -> "ResearchContext":
@@ -819,7 +819,7 @@ class ResearchManager:
                             "research_id": frontmatter.get("research_id"),
                             "topic": frontmatter.get("topic"),
                             "status": frontmatter.get("status"),
-                            "file_path": str(research_file),
+                            "file_path": Path(research_file).as_posix(),
                         }
                     )
 

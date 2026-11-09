@@ -1,11 +1,15 @@
 """Research and similarity readers reuse unchanged indexed source documents."""
 
+import importlib.util
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
+import pytest
 from hecate_agent.commands.similar import _clear_tfidf_cache, _find_similar_hunts
 from hecate_agent.core.research_manager import ResearchManager
+
+_HAS_SKLEARN = importlib.util.find_spec("sklearn") is not None
 
 
 def write_hunt(root, number, *, title="Kerberos ticket theft", status="completed"):
@@ -43,6 +47,7 @@ def watch_fits(monkeypatch):
     return fits
 
 
+@pytest.mark.skipif(not _HAS_SKLEARN, reason="scikit-learn required for similarity")
 def test_metadata_only_changes_reuse_matrix_and_read_only_the_changed_hunt(tmp_path, monkeypatch):
     root = tmp_path / "hunts"
     first = write_hunt(root, 1)
@@ -61,6 +66,7 @@ def test_metadata_only_changes_reuse_matrix_and_read_only_the_changed_hunt(tmp_p
     assert reads == []
 
 
+@pytest.mark.skipif(not _HAS_SKLEARN, reason="scikit-learn required for similarity")
 def test_search_text_edits_refit_and_match_a_fresh_search(tmp_path, monkeypatch):
     root = tmp_path / "hunts"
     first = write_hunt(root, 1)
@@ -78,6 +84,7 @@ def test_search_text_edits_refit_and_match_a_fresh_search(tmp_path, monkeypatch)
     assert reads == []  # Parsed documents survive a new in-memory search cache.
 
 
+@pytest.mark.skipif(not _HAS_SKLEARN, reason="scikit-learn required for similarity")
 def test_session_components_refresh_independently(tmp_path, monkeypatch):
     hunt = write_hunt(tmp_path / "hunts", 1)
     session = tmp_path / "sessions/H-0001-2026-01-01"
@@ -103,6 +110,7 @@ def test_session_components_refresh_independently(tmp_path, monkeypatch):
     assert all(row["source"] != "session" for row in results)
 
 
+@pytest.mark.skipif(not _HAS_SKLEARN, reason="scikit-learn required for similarity")
 def test_adding_and_deleting_hunts_does_not_reread_survivors(tmp_path, monkeypatch):
     root = tmp_path / "hunts"
     first = write_hunt(root, 1)
@@ -115,6 +123,7 @@ def test_adding_and_deleting_hunts_does_not_reread_survivors(tmp_path, monkeypat
     assert [row["hunt_id"] for row in results] == ["H-0002"]
 
 
+@pytest.mark.skipif(not _HAS_SKLEARN, reason="scikit-learn required for similarity")
 def test_concurrent_searches_build_one_matrix_per_workspace(tmp_path, monkeypatch):
     write_hunt(tmp_path / "hunts", 1)
     fits = watch_fits(monkeypatch)
@@ -158,6 +167,7 @@ def test_research_relative_file_path_contract_is_preserved(tmp_path, monkeypatch
     assert manager.get_research("R-0001")["file_path"] == "research/R-0001.md"
 
 
+@pytest.mark.skipif(not _HAS_SKLEARN, reason="scikit-learn required for similarity")
 def test_workspace_indexes_cannot_cross_contaminate(tmp_path):
     workspaces = [tmp_path / "one", tmp_path / "two"]
     for workspace, title in zip(workspaces, ["Kerberos ticket theft", "Cloud credential abuse"]):

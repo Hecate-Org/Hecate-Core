@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -37,6 +38,7 @@ def test_run_process_group_timeout_raises_timeout_expired() -> None:
     assert exc_info.value.cmd == ["sleep", "10"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Process group killpg and POSIX sh are unix-only")
 def test_run_process_group_kills_orphaned_grandchildren_on_timeout() -> None:
     """Ensure background grandchild processes are killed with os.killpg when timeout expires."""
     with tempfile.NamedTemporaryFile(mode="w+", delete=False) as f:

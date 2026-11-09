@@ -1,6 +1,7 @@
 """Conversion reuse must not share mutable results or bypass validation."""
 
 from concurrent.futures import ThreadPoolExecutor
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -125,7 +126,8 @@ def test_unchanged_native_files_keep_identity_and_permissions(tmp_path):
     assert (path.stat().st_ino, path.stat().st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
     assert st.write_query_if_changed(path, "index=updated")
     assert path.read_text() == "index=updated\n"
-    assert path.stat().st_mode & 0o777 == 0o600
+    if sys.platform != "win32":
+        assert path.stat().st_mode & 0o777 == 0o600
     path.unlink()
     assert st.write_query_if_changed(path, "index=updated")
 

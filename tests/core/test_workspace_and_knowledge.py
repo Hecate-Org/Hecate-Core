@@ -96,7 +96,7 @@ class TestWorkspaceResolution:
         monkeypatch.setenv("HECATE_WORKSPACE", "/no/such/dir")
         from pathlib import Path
 
-        assert workspace_root() == Path("/no/such/dir")
+        assert workspace_root() == Path("/no/such/dir").resolve()
 
 
 class TestHuntingKnowledge:
