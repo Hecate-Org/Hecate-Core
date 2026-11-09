@@ -30,6 +30,7 @@ except ImportError:  # pragma: no cover - fcntl is POSIX-only
 #: research ID allocation already is there.
 _fcntl: Optional[Any] = _fcntl_module
 
+from hecate_agent.core.atomic_write import atomic_write_text
 from hecate_agent.core.research_manager import _DEFAULT_FILE_MODE  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -100,21 +101,8 @@ def _read_counter(path: Path) -> int:
 
 
 def _atomic_write(path: Path, text: str) -> None:
-    """Write via temp file and rename, with the mode a plain write would get.
-
-    mkstemp creates 0o600 and os.replace carries it over, which made the
-    counter owner-only unlike every other workspace file (a regression the
-    Runner's own test caught when this replaced its allocator).
-    """
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(text)
-        os.chmod(tmp, _DEFAULT_FILE_MODE)
-        os.replace(tmp, path)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
+    """Write via temp file and rename, with the mode a plain write would get."""
+    atomic_write_text(path, text, mode=_DEFAULT_FILE_MODE)
 
 
 def next_hunt_id(hunts_root: Path) -> str:
