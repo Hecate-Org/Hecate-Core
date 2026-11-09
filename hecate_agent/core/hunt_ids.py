@@ -13,13 +13,14 @@ exists yet). Keep the two in step: both writers read and advance one counter.
 """
 
 import logging
-import os
 import re
 import subprocess  # nosec B404 - fixed argv, no shell
-import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Optional
+
+from hecate_agent.core.atomic_write import atomic_write_text
+from hecate_agent.core.research_manager import _DEFAULT_FILE_MODE
 
 try:
     import fcntl as _fcntl_module
@@ -29,9 +30,6 @@ except ImportError:  # pragma: no cover - fcntl is POSIX-only
 #: None where flock is unavailable (Windows): allocation is then unlocked, as
 #: research ID allocation already is there.
 _fcntl: Optional[Any] = _fcntl_module
-
-from hecate_agent.core.atomic_write import atomic_write_text
-from hecate_agent.core.research_manager import _DEFAULT_FILE_MODE  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
