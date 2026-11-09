@@ -2,6 +2,7 @@
 
 import os
 import sqlite3
+import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest.mock import Mock
@@ -76,6 +77,8 @@ def test_touch_reuses_parsed_data_but_updates_recency(catalog):
 
 @pytest.mark.parametrize("replace", [False, True])
 def test_same_size_restored_mtime_edits_are_detected(catalog, replace):
+    if not replace and sys.platform == "win32":
+        pytest.skip("Windows NTFS st_ctime is creation time, not inode metadata change time")
     parser = word_data
     index_files(catalog, parser)
     path = catalog / "H-0000.md"
