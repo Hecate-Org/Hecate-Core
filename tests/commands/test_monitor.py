@@ -994,7 +994,6 @@ def test_detection_rules_panel_rendering() -> None:
     text = c.export_text()
     assert "DETECTIONS" in text
     assert "1,382 rules" in text
-    assert "pySigma compliant" in text
     assert "SPLUNK backend" in text
     assert "3 pending" in text
 

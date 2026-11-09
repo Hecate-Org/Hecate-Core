@@ -1101,12 +1101,7 @@ def _detections_panel(
 
     rules_cnt = h_metrics.sigma_rules_count
     rules_str = f"{rules_cnt:,} rules" if rules_cnt else "0 rules drafted"
-    rules_val = (
-        Text.assemble((rules_str, "bright_white"), (" · ", "dim"), ("pySigma compliant", "bright_cyan"))
-        if rules_cnt
-        else Text(rules_str, style="bright_white")
-    )
-    table.add_row("RULES", rules_val)
+    table.add_row("RULES", Text(rules_str, style="bright_white"))
 
     pending_str = f"{pending} pending" if pending else "0 pending"
     pending_style = "bold bright_yellow" if pending else "bright_white"
