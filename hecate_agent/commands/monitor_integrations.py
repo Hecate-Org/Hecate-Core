@@ -364,10 +364,12 @@ def _active_integration_lines(
             usage.append(f"avg {int(live['duration_ms']) / calls / 1000:.1f}s/call")
         if live.get("cost_usd"):
             usage.append(f"${float(live['cost_usd']):.2f}")
-        by_tier = live.get("by_tier") if isinstance(live.get("by_tier"), dict) else {}
+        raw_tier = live.get("by_tier")
+        by_tier: Dict[str, Any] = raw_tier if isinstance(raw_tier, dict) else {}
         tier_bits = []
         for name in ("simple", "complex"):
-            bucket = by_tier.get(name) or {}
+            raw_bucket = by_tier.get(name)
+            bucket: Dict[str, Any] = raw_bucket if isinstance(raw_bucket, dict) else {}
             tier_calls = int(bucket.get("llm_calls") or 0)
             if tier_calls:
                 tier_bits.append(f"{name} {tier_calls}")
