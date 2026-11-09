@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from hecate_agent.core.sigma_evaluator import EvaluationReport, SigmaEvaluator
+from hecate_agent.core.subprocess_utils import run_process_group
 from hecate_agent.core.telemetry_harvester import TelemetryHarvester
 
 logger = logging.getLogger(__name__)
@@ -131,9 +132,8 @@ class BwrapBackend(BaseSandboxBackend):
         ]
 
         try:
-            proc = subprocess.run(
+            proc = run_process_group(
                 cmd,
-                capture_output=True,
                 text=True,
                 timeout=timeout,
                 cwd=workdir,
@@ -248,9 +248,8 @@ class SubprocessBackend(BaseSandboxBackend):
                 cmd = ["sh", "-c", command]
 
             try:
-                proc = subprocess.run(
+                proc = run_process_group(
                     cmd,
-                    capture_output=True,
                     text=True,
                     timeout=timeout,
                     cwd=exec_dir,
@@ -259,9 +258,8 @@ class SubprocessBackend(BaseSandboxBackend):
                     # Some CI/container hosts ship strace but prohibit ptrace.
                     # Preserve subprocess execution there; telemetry is empty
                     # because the host cannot provide syscall traces.
-                    proc = subprocess.run(
+                    proc = run_process_group(
                         ["sh", "-c", command],
-                        capture_output=True,
                         text=True,
                         timeout=timeout,
                         cwd=exec_dir,
