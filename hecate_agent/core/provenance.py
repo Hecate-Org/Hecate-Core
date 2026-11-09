@@ -39,10 +39,17 @@ NETWORK_ROLES = ("c2", "staging", "download", "dual_use", "target", "inbound", "
 #: ``mark_source_pages``, never offered to the model: H-0020 swept proxy logs
 #: for the PoC repository it was drafted from, from the README's stars badge.
 SOURCE_PAGE_ROLE = "source_page"
+#: A documentation placeholder: a host under example.com, example.net or
+#: example.org (RFC 2606). Assigned only by ``mark_placeholders``: H-0023's only
+#: rules matched the README's "--target https://artifactory.client.example.com".
+PLACEHOLDER_ROLE = "placeholder"
+_PLACEHOLDER_DOMAINS = ("example.com", "example.net", "example.org")
 STATUSES = ("active", "historical", "unknown")
 CONFIDENCES = ("high", "medium", "low", "unknown")
 
 HASH_TYPES = ("md5", "sha1", "sha256", "imphash")
+_HASH_LENGTHS = {"md5": 32, "sha1": 40, "sha256": 64, "imphash": 32}
+_HEX_RE = re.compile(r"^[0-9a-f]+$", re.IGNORECASE)
 NETWORK_TYPES = ("ipv4", "ipv6", "domain", "hostname", "url")
 
 #: CTI provider type names (OTX, MISP) -> record type.
@@ -87,6 +94,18 @@ class IndicatorRecord:
         record = cls(**known)
         record.ports = sorted({int(p) for p in record.ports or [] if str(p).isdigit() and 0 < int(p) < 65536})
         return record
+
+
+def well_formed(value: str, rtype: str) -> bool:
+    """False for a hash of the wrong length or alphabet for its type.
+
+    H-0022's hash rule carried a 39-character "SHA1" and a 63-character
+    "SHA256": the hypothesis model's copies of real hashes, one digit short.
+    """
+    if rtype not in _HASH_LENGTHS:
+        return True
+    text = str(value).strip()
+    return len(text) == _HASH_LENGTHS[rtype] and bool(_HEX_RE.match(text))
 
 
 def refang(value: str) -> str:
@@ -228,6 +247,8 @@ def records_from_cti(indicators: Mapping[str, Iterable[str]], source: str = "cti
             value = _normalise_value(raw, rtype)
             if rtype == "ipv4" and not is_valid_ipv4(value):
                 continue
+            if not well_formed(value, rtype):
+                continue
             if value and not any(r.value == value and r.type == rtype for r in records):
                 try:
                     is_priv = rtype in ("ipv4", "ipv6") and ipaddress.ip_address(value).is_private
@@ -295,6 +316,23 @@ def mark_source_pages(records: List[IndicatorRecord], source_urls: Iterable[str]
             own = any(value == h for h, _ in pages)
         if own:
             record.role, record.ports = SOURCE_PAGE_ROLE, []
+            marked.append(record.value)
+    return marked
+
+
+def mark_placeholders(records: List[IndicatorRecord]) -> List[str]:
+    """Type documentation hosts (``*.example.com`` and its .net/.org twins) as ``placeholder``.
+
+    Returns the values marked.
+    """
+    marked = []
+    for record in records:
+        if record.type not in NETWORK_TYPES or record.role == PLACEHOLDER_ROLE:
+            continue
+        value = refang(record.value).lower().rstrip(".")
+        host = url_parts(value)[0] if record.type == "url" else split_host_port(value)[0]
+        if any(host == d or host.endswith("." + d) for d in _PLACEHOLDER_DOMAINS):
+            record.role, record.ports = PLACEHOLDER_ROLE, []
             marked.append(record.value)
     return marked
 
@@ -468,7 +506,7 @@ def placements(record: IndicatorRecord) -> List[str]:
     that hash can be observed. Unknown network roles route only for curated
     feed indicators; a mention in a report does not establish infrastructure.
     """
-    if record.status == "historical" or record.role in ("historical", "target", SOURCE_PAGE_ROLE):
+    if record.status == "historical" or record.role in ("historical", "target", SOURCE_PAGE_ROLE, PLACEHOLDER_ROLE):
         return []
     if record.type in NETWORK_TYPES and record.role == "unknown" and record.source != "cti":
         return []

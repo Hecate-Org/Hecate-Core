@@ -147,3 +147,34 @@ def test_a_source_url_without_a_path_marks_nothing() -> None:
 
     records = [IndicatorRecord(value="evil.example.com", type="domain")]
     assert mark_source_pages(records, ["https://evil.example.com"]) == []
+
+
+def test_documentation_placeholder_hosts_get_no_rule() -> None:
+    """H-0023's only rules matched the README's "--target https://artifactory.client.example.com:8082"."""
+    from hecate_agent.core.provenance import IndicatorRecord, mark_placeholders, placements
+
+    records = [
+        IndicatorRecord(value="artifactory.client.example.com", type="domain", source="cti"),
+        IndicatorRecord(value="hxxps://artifactory[.]client[.]example[.]com:8082/api", type="url", source="cti"),
+        IndicatorRecord(value="example.org", type="hostname", source="cti"),
+        IndicatorRecord(value="example.com.evil.site", type="domain", source="cti"),
+        IndicatorRecord(value="notexample.com", type="domain", source="cti"),
+    ]
+    marked = mark_placeholders(records)
+    assert marked == [r.value for r in records[:3]]
+    assert [bool(placements(r)) for r in records] == [False, False, False, True, True]
+
+
+def test_feed_hashes_of_the_wrong_length_are_dropped() -> None:
+    """H-0022's rule carried a 39-character SHA1 and a 63-character SHA256."""
+    from hecate_agent.core.provenance import records_from_cti
+
+    good_sha1 = "212f3cdc038d100232cef73ebc26f6e903b91498"
+    records = records_from_cti(
+        {
+            "FileHash-SHA1": [good_sha1, good_sha1.replace("e9", "9")],
+            "FileHash-SHA256": ["3f2f48525cf082672e38808480e214775e03dd943ff2df8617265aad96a5eaa"],
+            "FileHash-MD5": ["0e00adb0a5ca285b838af623c753b6ff", "zz00adb0a5ca285b838af623c753b6ff"],
+        }
+    )
+    assert [r.value for r in records] == [good_sha1, "0e00adb0a5ca285b838af623c753b6ff"]

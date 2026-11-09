@@ -1212,6 +1212,7 @@ def build_indicator_records(
     from hecate_agent.core.provenance import (
         attach_text_ports,
         attach_url_ports,
+        mark_placeholders,
         mark_source_pages,
         merge_records,
         records_from_cti,
@@ -1219,6 +1220,7 @@ def build_indicator_records(
 
     cti = records_from_cti(cti_indicators)
     if evidence is None or not evidence.text:
+        mark_placeholders(cti)
         return cti
     extra = classify_feed_indicators(cti, evidence, complete)
     records = merge_records(cti, [*evidence.indicators, *extra])
@@ -1231,6 +1233,7 @@ def build_indicator_records(
         if record.role in ("target", "historical"):
             record.ports = []
     mark_source_pages(records, [evidence.url])
+    mark_placeholders(records)
     attach_url_ports(records)
     attach_text_ports(records, evidence.text)
     return records
