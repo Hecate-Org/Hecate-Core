@@ -10,6 +10,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+_SIGKILL = getattr(signal, "SIGKILL", getattr(signal, "SIGTERM", 9))
+
 
 def run_process_group(
     cmd: Sequence[str] | str,
@@ -49,7 +51,7 @@ def run_process_group(
     except subprocess.TimeoutExpired as exc:
         if os.name == "posix" and hasattr(os, "killpg"):
             with contextlib.suppress(ProcessLookupError):
-                os.killpg(proc.pid, signal.SIGKILL)
+                os.killpg(proc.pid, _SIGKILL)
         else:
             proc.kill()
         with contextlib.suppress(Exception):
@@ -63,7 +65,7 @@ def run_process_group(
     except BaseException:
         if os.name == "posix" and hasattr(os, "killpg"):
             with contextlib.suppress(ProcessLookupError):
-                os.killpg(proc.pid, signal.SIGKILL)
+                os.killpg(proc.pid, _SIGKILL)
         else:
             proc.kill()
         with contextlib.suppress(Exception):
