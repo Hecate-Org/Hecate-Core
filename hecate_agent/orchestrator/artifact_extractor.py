@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Tuple
 import httpx
 from bs4 import BeautifulSoup
 
-from hecate_agent.core.llm_provider import create_provider
+from hecate_agent.core.llm_router import create_router
 from hecate_agent.core.source_evidence import is_safe_report_url
 
 logger = logging.getLogger(__name__)
@@ -151,11 +151,30 @@ def extract_deep_artifacts(threat_intel: str) -> Dict[str, Any]:
     if not pages:
         return empty
 
+    from hecate_agent.core.llm_prompt_budget import clip_text_for_simple
+
     scraped = "\n".join(f"\n--- CONTENT FROM {url} ---\n{text}\n" for url, text in pages)
+    # artifact_extract routes to simple by default; keep the blob under the
+    # simple-tier budget before escalation can widen to complex.
+    scraped = clip_text_for_simple(scraped)
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": scraped},
+    ]
+
+    def _valid_extract(text: str) -> bool:
+        data = _parse_json_object(text)
+        return isinstance(data.get("observables"), list)
+
     try:
-        response = create_provider().complete(
-            [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": scraped}],
+        from hecate_agent.core.llm_escalate import complete_with_escalation
+
+        response, _escalated = complete_with_escalation(
+            create_router(),
+            messages,
+            validate=_valid_extract,
             temperature=0.0,
+            capability="artifact_extract",
         )
     except Exception as e:  # the provider raises its SDK's own error types
         logger.error(f"Deep Artifact Extraction Failed: {e}")

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hecate_agent.enrichment.result import report
+
 import logging
 from typing import Set
 
@@ -40,7 +42,7 @@ def query_urlhaus_url(url: str) -> str:
     """Query abuse.ch URLhaus API for malicious URL status, threat classification, and payload info."""
     key = _setting("ABUSECH_API_KEY")
     if not key:
-        return "ABUSECH_API_KEY not configured."
+        return report("ABUSECH_API_KEY not configured.", 'unconfigured')
     clean_url = url.strip()
     api_url = "https://urlhaus-api.abuse.ch/v1/url/"
     headers = {"Auth-Key": key}
@@ -65,22 +67,22 @@ def query_urlhaus_url(url: str) -> str:
                     parts.append(f"Payload: {sig}")
                 if tags:
                     parts.append(f"Tags: {', '.join(str(t) for t in tags[:3])}")
-                return " | ".join(parts)
+                return report(" | ".join(parts))
             elif q_status == "no_results":
-                return "Not listed on URLhaus."
-            return f"URLhaus: {q_status}"
+                return report("Not listed on URLhaus.", 'missing')
+            return report(f"URLhaus: {q_status}")
         elif resp.status_code in (401, 403):
-            return "URLhaus Auth Error (check ABUSECH_API_KEY)."
-        return f"HTTP {resp.status_code}"
+            return report("URLhaus Auth Error (check ABUSECH_API_KEY).", 'errors')
+        return report(f"HTTP {resp.status_code}")
     except Exception as e:
-        return f"Error querying URLhaus: {e}"
+        return report(f"Error querying URLhaus: {e}")
 
 
 def query_urlhaus_host(host: str) -> str:
     """Query abuse.ch URLhaus API for host (domain or IP) malware distribution history."""
     key = _setting("ABUSECH_API_KEY")
     if not key:
-        return "ABUSECH_API_KEY not configured."
+        return report("ABUSECH_API_KEY not configured.", 'unconfigured')
     clean_host = host.strip().lower()
     api_url = "https://urlhaus-api.abuse.ch/v1/host/"
     headers = {"Auth-Key": key}
@@ -98,22 +100,22 @@ def query_urlhaus_host(host: str) -> str:
                 parts = [f"Malware host ({cnt} URL(s))"]
                 if firstseen:
                     parts.append(f"First seen: {firstseen}")
-                return " | ".join(parts)
+                return report(" | ".join(parts))
             elif q_status == "no_results":
-                return "Not listed on URLhaus."
-            return f"URLhaus: {q_status}"
+                return report("Not listed on URLhaus.", 'missing')
+            return report(f"URLhaus: {q_status}")
         elif resp.status_code in (401, 403):
-            return "URLhaus Auth Error (check ABUSECH_API_KEY)."
-        return f"HTTP {resp.status_code}"
+            return report("URLhaus Auth Error (check ABUSECH_API_KEY).", 'errors')
+        return report(f"HTTP {resp.status_code}")
     except Exception as e:
-        return f"Error querying URLhaus: {e}"
+        return report(f"Error querying URLhaus: {e}")
 
 
 def query_urlhaus_payload(file_hash: str) -> str:
     """Query abuse.ch URLhaus API for payload hash (MD5 or SHA256) distribution info."""
     key = _setting("ABUSECH_API_KEY")
     if not key:
-        return "ABUSECH_API_KEY not configured."
+        return report("ABUSECH_API_KEY not configured.", 'unconfigured')
     clean_hash = file_hash.strip().lower()
     api_url = "https://urlhaus-api.abuse.ch/v1/payload/"
     headers = {"Auth-Key": key}
@@ -128,14 +130,14 @@ def query_urlhaus_payload(file_hash: str) -> str:
                 sig = res_json.get("signature") or "Unknown"
                 ftype = res_json.get("file_type") or "Unknown"
                 cnt = res_json.get("url_count") or 0
-                return f"Payload: {sig} ({ftype}) | Seen on {cnt} URL(s)"
+                return report(f"Payload: {sig} ({ftype}) | Seen on {cnt} URL(s)")
             elif q_status == "no_results":
-                return "No payload on URLhaus."
-            return f"URLhaus: {q_status}"
+                return report("No payload on URLhaus.", 'missing')
+            return report(f"URLhaus: {q_status}")
         elif resp.status_code in (401, 403):
-            return "URLhaus Auth Error (check ABUSECH_API_KEY)."
-        return f"HTTP {resp.status_code}"
+            return report("URLhaus Auth Error (check ABUSECH_API_KEY).", 'errors')
+        return report(f"HTTP {resp.status_code}")
     except Exception as e:
-        return f"Error querying URLhaus: {e}"
+        return report(f"Error querying URLhaus: {e}")
 
 

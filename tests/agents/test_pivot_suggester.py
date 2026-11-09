@@ -238,7 +238,7 @@ class TestPivotContextLoading:
         monkeypatch.chdir(tmp_path)
         agent = PivotSuggesterAgent(llm_enabled=False)
         env = agent._load_environment()
-        assert env == ""
+        assert "coverage are unknown" in env
 
     def test_load_environment_reads_file(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

@@ -65,7 +65,7 @@ def test_extraction_parses_the_models_json_and_drops_invented_artifacts(monkeypa
         'Here is the result:\n{"observables": ["MicrosoftIME", "update.windows-time.com"], '
         '"summary": "A scheduled task keeps CLEANGULP running."}'
     )
-    monkeypatch.setattr(ax, "create_provider", lambda: _llm(payload))
+    monkeypatch.setattr(ax, "create_router", lambda: _llm(payload))
 
     result = ax.extract_deep_artifacts(f"References: {VOLEXITY}")
 
@@ -78,7 +78,7 @@ def test_extraction_parses_the_models_json_and_drops_invented_artifacts(monkeypa
 def test_nothing_is_added_when_the_page_cannot_be_fetched(monkeypatch):
     monkeypatch.setattr(ax, "scrape_url_text", lambda url: "")
     provider = _llm("{}")
-    monkeypatch.setattr(ax, "create_provider", lambda: provider)
+    monkeypatch.setattr(ax, "create_router", lambda: provider)
 
     assert ax.extract_deep_artifacts(f"References: {VOLEXITY}") == {"new_intel": "", "new_observables": []}
     provider.complete.assert_not_called()
@@ -87,7 +87,7 @@ def test_nothing_is_added_when_the_page_cannot_be_fetched(monkeypatch):
 @pytest.mark.parametrize("payload", ["no json here", '{"observables": "not a list"}', "{broken"])
 def test_malformed_model_output_adds_nothing(monkeypatch, payload):
     monkeypatch.setattr(ax, "scrape_url_text", lambda url: PAGE)
-    monkeypatch.setattr(ax, "create_provider", lambda: _llm(payload))
+    monkeypatch.setattr(ax, "create_router", lambda: _llm(payload))
 
     assert ax.extract_deep_artifacts(f"References: {VOLEXITY}")["new_observables"] == []
 

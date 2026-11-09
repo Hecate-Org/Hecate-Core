@@ -6,7 +6,6 @@ but it made correctness depend on every caller doing the same, and any caller
 that did not got a silent "not found" rather than an error.
 """
 
-
 import pytest
 
 from hecate_agent.agents.llm.hypothesis_generator import HypothesisGeneratorAgent
@@ -15,6 +14,8 @@ from hecate_agent.core.hunting_knowledge import (
     is_enabled,
     PIVOT_SECTIONS,
     load_sections,
+    load_stage_guidance,
+    load_environment_context,
 )
 from hecate_agent.core.workspace import knowledge_file, workspace_root
 
@@ -24,21 +25,39 @@ KB = """# Hunting Brain
 
 ### Patterns
 Section one body.
+<!-- hecate:agent-guidance:start -->
+- source-scoped hypothesis rule
+<!-- hecate:agent-guidance:end -->
 
 ## Section 2: Behavioral Models
 
 ### Mapping
 Section two body.
+<!-- hecate:agent-guidance:start -->
+- verified telemetry rule
+<!-- hecate:agent-guidance:end -->
 
 ## Section 3: Pivot Logic
 
 ### Chains
 Section three body.
+<!-- hecate:agent-guidance:start -->
+- bounded pivot rule
+<!-- hecate:agent-guidance:end -->
+
+## Section 4: Analytical Rigor
+
+<!-- hecate:agent-guidance:start -->
+- preserve uncertainty rule
+<!-- hecate:agent-guidance:end -->
 
 ## Section 5: Framework Mental Models
 
 ### Pyramid
 Section five body.
+<!-- hecate:agent-guidance:start -->
+- data quality rule
+<!-- hecate:agent-guidance:end -->
 """
 
 
@@ -73,9 +92,11 @@ class TestWorkspaceResolution:
         monkeypatch.chdir(tmp_path)
         assert workspace_root() == tmp_path
 
-    def test_a_nonexistent_env_path_is_ignored(self, workspace, monkeypatch):
+    def test_a_nonexistent_env_path_is_honored(self, workspace, monkeypatch):
         monkeypatch.setenv("HECATE_WORKSPACE", "/no/such/dir")
-        assert workspace_root() != "/no/such/dir"  # type: ignore
+        from pathlib import Path
+
+        assert workspace_root() == Path("/no/such/dir")
 
 
 class TestHuntingKnowledge:
@@ -132,15 +153,11 @@ class TestPromptDoesNotShipCopyableExamples:
 
 
 class TestKnowledgeInjectionIsGated:
-    """Wiring the knowledge base in is correct; injecting it at the
-    hypothesis stage measurably degraded output, so it ships off. Given Linux
-    Redis cryptomining CTI the model returned a PowerShell hypothesis, having
-    copied 'Good: "PowerShell downloads from temp directories..."' out of the
-    tradecraft it was handed."""
+    """Compact rules ship by default; reference examples never enter prompts."""
 
-    def test_it_is_off_by_default(self, workspace, monkeypatch):
+    def test_compact_guidance_is_on_by_default(self, workspace, monkeypatch):
         monkeypatch.delenv("HECATE_HUNTING_KNOWLEDGE", raising=False)
-        assert is_enabled() is False
+        assert is_enabled() is True
 
     @pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])
     def test_it_can_be_switched_on(self, monkeypatch, value):
@@ -152,12 +169,62 @@ class TestKnowledgeInjectionIsGated:
         monkeypatch.setenv("HECATE_HUNTING_KNOWLEDGE", value)
         assert is_enabled() is False
 
-    def test_the_prompt_omits_the_block_when_off(self, workspace, monkeypatch):
-        monkeypatch.delenv("HECATE_HUNTING_KNOWLEDGE", raising=False)
-        assert HypothesisGeneratorAgent._build_hunting_knowledge_section() == ""
+    def test_optional_guidance_can_be_disabled_without_removing_evidence_rules(self, workspace, monkeypatch):
+        monkeypatch.setenv("HECATE_HUNTING_KNOWLEDGE", "false")
+        section = HypothesisGeneratorAgent._build_hunting_knowledge_section()
+        assert "source-scoped hypothesis rule" not in section
+        assert "Zero matches alone" in section
 
     def test_the_prompt_includes_it_when_on(self, workspace, monkeypatch):
         monkeypatch.setenv("HECATE_HUNTING_KNOWLEDGE", "1")
         section = HypothesisGeneratorAgent._build_hunting_knowledge_section()
         assert "Hunting Tradecraft" in section
         assert "Section 1" in section
+
+
+class TestCompactWorkspaceGuidance:
+    def test_stage_rules_exclude_worked_examples(self, workspace):
+        body = load_stage_guidance("triage")
+        assert "verified telemetry rule" in body
+        assert "preserve uncertainty rule" in body
+        assert "source-scoped hypothesis rule" not in body
+        assert "Section two body" not in body
+
+    def test_legacy_reference_without_markers_is_not_injected(self, workspace):
+        (workspace / "knowledge" / "hunting-knowledge.md").write_text(
+            "## Section 1: Hypothesis\nCopy this unrelated platform hypothesis"
+        )
+        assert load_stage_guidance("hypothesis") == ""
+
+    def test_explicit_workspace_wins_over_cwd_and_environment(self, workspace, tmp_path, monkeypatch):
+        other = tmp_path / "other"
+        (other / "knowledge").mkdir(parents=True)
+        (other / "knowledge" / "hunting-knowledge.md").write_text(KB.replace("source-scoped", "OTHER"))
+        (other / "knowledge" / "environment.md").write_text("other-estate-marker")
+        monkeypatch.chdir(workspace)
+        assert "OTHER hypothesis rule" in load_stage_guidance("hypothesis", workspace=other)
+        assert "other-estate-marker" in load_environment_context(workspace=other)
+        assert "OTHER" not in load_stage_guidance("hypothesis", workspace=workspace)
+
+    @pytest.mark.parametrize("budget", [0, 20, 100, 250, 4000])
+    def test_complete_output_stays_within_budget(self, workspace, budget):
+        assert len(load_stage_guidance("hypothesis", budget)) <= budget
+        assert len(load_environment_context(budget)) <= budget
+
+    def test_missing_workspace_does_not_fall_back_to_checkout(self, tmp_path):
+        assert load_stage_guidance("hypothesis", workspace=tmp_path) == ""
+        assert "coverage are unknown" in load_environment_context(workspace=tmp_path)
+
+    def test_oversized_profile_discloses_omitted_context(self, workspace):
+        (workspace / "knowledge" / "environment.md").write_text("profile-line\n" * 1000)
+        body = load_environment_context(500)
+        assert len(body) <= 500
+        assert "excerpted" in body
+
+    def test_explicit_hypothesis_workspace_reaches_prompt(self, workspace, tmp_path):
+        other = tmp_path / "explicit"
+        (other / "knowledge").mkdir(parents=True)
+        (other / "knowledge" / "hunting-knowledge.md").write_text(KB.replace("source-scoped", "API-owned"))
+        body = HypothesisGeneratorAgent._build_hunting_knowledge_section(other)
+        assert "API-owned hypothesis rule" in body
+        assert "source-scoped" not in body

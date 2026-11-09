@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from hecate_agent.core.attack_matrix import get_sorted_tactics, get_tactic_technique_count, get_technique, get_total_techniques
 from hecate_agent.core.hunt_parser import parse_hunt_file, parse_hunt_file_fast
+from hecate_agent.core.workspace import workspace_root
 from hecate_agent.utils.validation import validate_file_path, validate_hunt_id
 
 
@@ -99,7 +100,7 @@ class HuntManager:
         Args:
             hunts_dir: Directory containing hunt files (default: ./hunts)
         """
-        self.hunts_dir = Path(hunts_dir) if hunts_dir else Path.cwd() / "hunts"
+        self.hunts_dir = Path(hunts_dir) if hunts_dir else workspace_root() / "hunts"
 
         if not self.hunts_dir.exists():
             self.hunts_dir.mkdir(parents=True, exist_ok=True)

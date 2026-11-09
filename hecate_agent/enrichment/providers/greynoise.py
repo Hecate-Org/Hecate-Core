@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hecate_agent.enrichment.result import report
+
 import logging
 from typing import Any, Dict, List, Set
 
@@ -142,25 +144,25 @@ def extract_greynoise_context(ip: str) -> Dict[str, Any]:
 def query_greynoise_ip(ip: str) -> str:
     key = _setting("GREYNOISE_API_KEY")
     if not key:
-        return "GREYNOISE_API_KEY not configured."
+        return report("GREYNOISE_API_KEY not configured.", 'unconfigured')
     gn = extract_greynoise_context(ip)
     if gn["raw_status"] in (401, 403):
-        return f"GreyNoise Auth/API Error: {gn['raw_status']}"
+        return report(f"GreyNoise Auth/API Error: {gn['raw_status']}")
     if gn["classification"] == "error":
-        return f"GreyNoise API Error: {gn['raw_status']}"
+        return report(f"GreyNoise API Error: {gn['raw_status']}")
     if gn["classification"] == "unseen":
-        return "No mass-internet scanning observed on GreyNoise (Unseen / Targeted)."
+        return report("No mass-internet scanning observed on GreyNoise (Unseen / Targeted).", 'missing')
 
     tag_str = f" | Tags: {', '.join(gn['tags'][:3])}" if gn.get("tags") else ""
     actor = gn.get("actor") or "Unknown"
     classification = gn.get("classification") or "unknown"
 
     if gn.get("riot"):
-        return f"RIOT: Benign Enterprise Service ({actor}) | Class: {classification}{tag_str}"
+        return report(f"RIOT: Benign Enterprise Service ({actor}) | Class: {classification}{tag_str}")
     if gn.get("noise"):
-        return f"Mass Internet Scanner ({classification}) | Actor: {actor}{tag_str}"
+        return report(f"Mass Internet Scanner ({classification}) | Actor: {actor}{tag_str}")
     if classification != "unknown":
-        return f"Observed ({classification}) | Actor: {actor}{tag_str}"
-    return "Not observed as scanner noise (Targeted or Inactive)."
+        return report(f"Observed ({classification}) | Actor: {actor}{tag_str}")
+    return report("Not observed as scanner noise (Targeted or Inactive).", 'missing')
 
 

@@ -412,13 +412,9 @@ def run(  # noqa: C901
 
             # Load environment.md content if it exists
             try:
-                from pathlib import Path
+                from hecate_agent.core.hunting_knowledge import load_environment_context
 
-                env_file = Path("knowledge") / "environment.md"
-                if env_file.exists():
-                    environment = {"environment_md": env_file.read_text(encoding="utf-8")}
-                else:
-                    environment = {}
+                environment = {"environment_md": load_environment_context()}
             except Exception:
                 environment = {}
 
@@ -651,7 +647,9 @@ def _display_hypothesis_generator_result(result: Any) -> None:  # noqa: C901
         verdict = score.get("verdict", "N/A")
         total = score.get("total", 0)
         verdict_color = "green" if verdict == "GO" else ("yellow" if verdict == "CONDITIONAL" else "red")
-        console.print(f"[bold cyan]Hypothesis Quality Rubric:[/bold cyan] [{verdict_color}]{verdict} ({total}/15)[/{verdict_color}]")
+        console.print(
+            f"[bold cyan]Hypothesis Quality Rubric:[/bold cyan] [{verdict_color}]{verdict} ({total}/15)[/{verdict_color}]"
+        )
         console.print(
             f"  • Specificity: {score.get('specificity', 0)}/3 | Testability: {score.get('testability', 0)}/3 | "
             f"Falsifiability: {score.get('falsifiability', 0)}/3 | Relevance: {score.get('relevance', 0)}/3 | "

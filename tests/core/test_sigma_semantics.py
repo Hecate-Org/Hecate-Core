@@ -483,3 +483,22 @@ def test_a_runtime_rule_without_a_shell_child_is_left_alone() -> None:
     ):
         repaired, _ = repair_sigma_semantics(detection)
         assert "ParentImage|endswith" not in str(repaired)
+
+
+def test_a_shell_spawn_rule_must_name_the_parent_as_parent_image() -> None:
+    """H-0025's model rule matched the Node-RED process itself, not the shell it spawns."""
+    detection = {
+        "selection_node_red": {"Image|endswith": "/usr/bin/node-red"},
+        "selection_shell": {"CommandLine|contains": "/bin/sh"},
+        "condition": "selection_node_red and selection_shell",
+    }
+    problem = _problem("process_creation", detection, "Node-RED Runtime Spawning Shell for Command Execution")
+    assert problem and "ParentImage" in problem
+
+    fixed = {
+        "selection": {"ParentImage|endswith": "/node", "ParentCommandLine|contains": "node-red", "Image|endswith": "/sh"},
+        "condition": "selection",
+    }
+    assert _problem("process_creation", fixed, "Node-RED Runtime Spawning Shell") is None
+    # Without a spawn claim, a program run with a shell script argument is left alone.
+    assert _problem("process_creation", detection, "Node-RED started with a wrapper") is None

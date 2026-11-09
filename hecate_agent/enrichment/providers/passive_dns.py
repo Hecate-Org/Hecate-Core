@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hecate_agent.enrichment.result import report
+
 import ipaddress
 import logging
 import time
@@ -109,14 +111,14 @@ def query_passive_dns(indicator: str, max_results: int = 8) -> str:
     """
     clean = refang(indicator).strip()
     if not clean:
-        return "No passive DNS records found."
+        return report("No passive DNS records found.", 'missing')
 
     is_ip = False
     try:
         addr = ipaddress.ip_address(clean)
         is_ip = True
         if addr.is_private or addr.is_loopback or addr.is_link_local:
-            return "Private/internal IP address."
+            return report("Private/internal IP address.", 'skipped')
     except ValueError:
         is_ip = False
 
@@ -125,7 +127,7 @@ def query_passive_dns(indicator: str, max_results: int = 8) -> str:
     now = time.time()
     cached = _PDNS_CACHE.get(cache_key)
     if cached and (now - cached[0] < _PDNS_CACHE_TTL):
-        return cached[1]
+        return report(cached[1])
 
     all_entries: List[Dict[str, Any]] = []
 
@@ -163,7 +165,7 @@ def query_passive_dns(indicator: str, max_results: int = 8) -> str:
     if not records:
         res = "No passive DNS records found."
         _PDNS_CACHE[cache_key] = (now, res, [])
-        return res
+        return report(res)
 
     sorted_records = sorted(
         records.values(),
@@ -181,16 +183,16 @@ def query_passive_dns(indicator: str, max_results: int = 8) -> str:
     src_str = f" [via {', '.join(sorted(sources_used))}]" if sources_used else ""
     summary = f"Passive DNS: {', '.join(items)}{src_str}"
     _PDNS_CACHE[cache_key] = (now, summary, sorted_records)
-    return summary
+    return report(summary)
 
 
 def query_passive_dns_ip(ip: str, max_results: int = 8) -> str:
     """Convenience wrapper for IP passive DNS lookup."""
-    return query_passive_dns(ip, max_results=max_results)
+    return report(query_passive_dns(ip, max_results=max_results))
 
 
 def query_passive_dns_domain(domain: str, max_results: int = 8) -> str:
     """Convenience wrapper for Domain passive DNS lookup."""
-    return query_passive_dns(domain, max_results=max_results)
+    return report(query_passive_dns(domain, max_results=max_results))
 
 

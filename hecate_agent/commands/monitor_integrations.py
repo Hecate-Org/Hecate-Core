@@ -5,16 +5,33 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from rich import box
+from rich.console import Console, ConsoleOptions, RenderResult
+from rich.measure import Measurement
 from rich.panel import Panel
+from rich.rule import Rule
+from rich.segment import Segment
 from rich.table import Table
 from rich.text import Text
 
 from hecate_agent.commands.monitor_samplers import TrailEvent
+from hecate_agent.integration_registry import (
+    BY_LABEL,
+    INTEGRATIONS,
+    SOURCE_INTEGRATIONS,
+    STATUS_INTEGRATIONS,
+    enrichment_label,
+    label_for_host,
+)
+
+# Views of the registry. Other monitor modules import these names.
+_INTEGRATION_IDS = {item.label: item.id for item in BY_LABEL.values()}
+_SOURCE_INTEGRATIONS = {item.cti_name for item in INTEGRATIONS if item.follows_cti_provider}
 
 def _backlog_observation(events: List[TrailEvent]) -> Optional[Tuple[int, str]]:
     for event in reversed(events):
@@ -27,36 +44,7 @@ def _backlog_observation(events: List[TrailEvent]) -> Optional[Tuple[int, str]]:
 
 def _credential_status(workspace: Optional[Path] = None) -> Tuple[List[str], List[str]]:
     """Return lists of active (configured) and inactive service labels."""
-    checks = (
-        (
-            "LLM",
-            (
-                "HECATE_LLM_PROVIDER",
-                "OPENAI_API_KEY",
-                "ANTHROPIC_API_KEY",
-                "GEMINI_API_KEY",
-                "GOOGLE_API_KEY",
-                "AWS_PROFILE",
-                "OLLAMA_HOST",
-            ),
-        ),
-        ("Tavily", ("TAVILY_API_KEY",)),
-        ("OTX", ("OTX_API_KEY",)),
-        ("MISP", ("MISP_API_KEY",)),
-        ("VT", ("HECATE_RUNNER_VT_API_KEY", "VT_API_KEY")),
-        ("GreyNoise", ("GREYNOISE_API_KEY",)),
-        ("AbuseIPDB", ("ABUSEIPDB_API_KEY",)),
-        ("Shodan", ("SHODAN_API_KEY",)),
-        ("Censys", ("CENSYS_API_TOKEN",)),
-        ("ThreatFox", ("ABUSECH_API_KEY",)),
-        ("MalBazaar", ("ABUSECH_API_KEY",)),
-        ("VulnCheck", ("VULNCHECK_API_KEY",)),
-        ("Triage", ("TRIAGE_API_KEY", "HATCHING_TRIAGE_API_KEY")),
-        ("Shadowserver", ("SHADOWSERVER_API_KEY",)),
-        ("ANY.RUN", ("ANYRUN_API_KEY",)),
-        ("OpenCTI", ("OPENCTI_TOKEN", "OPENCTI_URL")),
-        ("Slack", ("SLACK_BOT_TOKEN", "HECATE_RUNNER_SLACK_WEBHOOK_URL", "SLACK_WEBHOOK_URL")),
-    )
+    checks = tuple((item.label, item.env_keys) for item in STATUS_INTEGRATIONS if item.env_keys)
     env_files = [workspace / ".env"] if workspace else []
     if workspace:
         env_files.append(workspace.parent / "Hecate-Runner" / ".env")
@@ -83,26 +71,6 @@ def _credential_summary(workspace: Optional[Path] = None) -> str:
     """Show configured status only; never read or render credential values."""
     on, off = _credential_status(workspace)
     return " · ".join([f"{item} ON" for item in on] + [f"{item} OFF" for item in off])
-
-
-_INTEGRATION_IDS = {
-    "LLM": "llm", "Tavily": "tavily", "OTX": "otx", "MISP": "misp", "VT": "vt",
-    "GreyNoise": "greynoise", "AbuseIPDB": "abuseipdb", "Shodan": "shodan", "Censys": "censys",
-    "ThreatFox": "threatfox", "MalBazaar": "malwarebazaar", "Feodo C2": "feodo", "SSLBL": "sslbl",
-    "URLhaus": "urlhaus", "URLScan": "urlscan", "Hybrid": "hybrid", "RDAP": "rdap", "crt.sh": "crtsh",
-    "PDNS": "pdns", "Spur": "spur", "Tor/Proxy": "tor_proxy", "EPSS": "epss", "OSV.dev": "osv",
-    "Slack": "slack", "VulnCheck": "vulncheck", "Triage": "triage", "Shadowsrv": "shadowserver",
-    "MSRC": "msrc", "CloudThrt": "cloud_threat", "DFIR Rept": "dfir_report", "FIRST.org": "first_org",
-    "ANY.RUN": "anyrun", "OpenCTI": "opencti", "LOLBAS": "lolbas", "LOLDrivers": "loldrivers",
-    "GTFOBins": "gtfobins", "Nuclei": "nuclei", "CISA AA": "cisa_narrative", "CISA CSAF": "cisa_advisories",
-    "CISA ICS": "cisa_ics", "ATT&CK": "attack_deltas", "CISA KEV": "cisa_kev",
-    "RSS": "rss", "GitHub PoC": "github_poc", "VXUG": "vxunderground", "CertStrm": "certstream",
-}
-_SOURCE_INTEGRATIONS = {
-    "otx", "misp", "vulncheck", "triage", "shadowserver", "msrc", "cloud_threat", "dfir_report",
-    "first_org", "anyrun", "opencti", "lolbas", "loldrivers", "gtfobins", "nuclei",
-    "cisa_advisories", "cisa_ics", "attack_deltas", "cisa_kev", "rss", "github_poc", "vxunderground", "certstream",
-}
 
 
 def _confirmed_integration(workspace: Optional[Path], name: str, enabled: bool) -> Tuple[bool, str]:
@@ -209,6 +177,213 @@ def _detect_active_integration(
     return None
 
 
+def _compact_count(value: float) -> str:
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:.1f}M"
+    if value >= 1_000:
+        return f"{value / 1_000:.1f}k"
+    return str(int(value))
+
+
+_API_CALLS_TAIL_BYTES = 512 * 1024
+_RECENT_REQUEST_S = 8.0
+
+
+def _api_label(host: str, env_values: Dict[str, str]) -> Optional[str]:
+    """The panel label for a request host. Instance hosts come from the registry's env URLs."""
+    return label_for_host(host, env_values)
+
+
+def _read_jsonl_tail(path: Path) -> List[dict]:
+    try:
+        with path.open("rb") as fh:
+            size = fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, size - _API_CALLS_TAIL_BYTES))
+            raw = fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return []
+    rows = []
+    for line in raw.splitlines():
+        try:
+            row = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def _api_traffic(
+    workspace: Optional[Path], since: float, env_values: Dict[str, str]
+) -> Dict[str, Dict[str, float]]:
+    """Per-label request counts since ``since``.
+
+    Prefers ``logs/events.jsonl`` http events (the cycle event channel) and
+    falls back to ``logs/api_calls.jsonl`` from before that channel existed.
+    """
+    if workspace is None:
+        return {}
+    logs = workspace / "logs"
+    recorded = [row for row in _read_jsonl_tail(logs / "events.jsonl") if row.get("type") == "http"]
+    calls = recorded or _read_jsonl_tail(logs / "api_calls.jsonl")
+    traffic: Dict[str, Dict[str, float]] = {}
+    for call in calls:
+        try:
+            ts, host, status = float(call["ts"]), str(call["host"]), int(call["status"])
+        except (ValueError, TypeError, KeyError):
+            continue
+        if ts < since:
+            continue
+        label = _api_label(host, env_values)
+        if label is None:
+            continue
+        row = traffic.setdefault(label, {"requests": 0, "ok": 0, "errors": 0, "limited": 0, "last_ts": 0.0})
+        row["requests"] += 1
+        if status == 429:
+            row["limited"] += 1
+        elif 200 <= status < 400:
+            row["ok"] += 1
+        else:
+            row["errors"] += 1
+        row["last_ts"] = max(row["last_ts"], ts)
+    return traffic
+
+
+def _cycle_start(events: List[TrailEvent]) -> Optional[float]:
+    """Epoch seconds the latest cycle began, from its first trail line (local time)."""
+    if not events:
+        return None
+    cycle = events[-1].cycle_id
+    first = next((e for e in events if e.cycle_id == cycle), None)
+    if first is None:
+        return None
+    try:
+        return datetime.strptime(first.timestamp, "%Y-%m-%d %H:%M:%S").timestamp() - first.elapsed
+    except ValueError:
+        return None
+
+
+def _enrichment_result(label: str, events: List[TrailEvent]) -> Optional[str]:
+    """The Runner's per-service outcome line for ``label`` from the latest enrichment."""
+    for event in reversed(events):
+        data = event.data or {}
+        if data.get("kind") == "enrichment" and enrichment_label(str(data.get("service") or "")) == label:
+            summary = data.get("summary")
+            if summary:
+                return str(summary)
+        if event.stage != "enrichment" or ": " not in event.message:
+            continue
+        service, outcome = event.message.split(": ", 1)
+        if enrichment_label(service) == label:
+            return outcome
+    return None
+
+
+def _traffic_line(row: Dict[str, float], now: float) -> Text:
+    parts = [f"{int(row['requests'])} req", f"{int(row['ok'])} ok"]
+    if row["errors"]:
+        parts.append(f"{int(row['errors'])} err")
+    if row["limited"]:
+        parts.append(f"{int(row['limited'])} rate-limited")
+    ago = max(0.0, now - row["last_ts"])
+    parts.append(f"last {ago:.0f}s ago" if ago < 120 else f"last {ago / 60:.0f}m ago")
+    style = "bright_red" if row["errors"] or row["limited"] else "bright_green"
+    return Text(" · ".join(parts), style=style, overflow="ellipsis", no_wrap=True)
+
+
+def _active_integration_lines(
+    active: Optional[str],
+    services: List[Tuple[str, bool, str, str]],
+    current: Optional[TrailEvent],
+    events: Optional[List[TrailEvent]],
+    live: Optional[Dict[str, Any]],
+    traffic: Optional[Dict[str, Dict[str, float]]] = None,
+    now: Optional[float] = None,
+) -> List[Text]:
+    """Metrics for the integration in use, or the last one used, under the panel's grid.
+
+    The monitor's layouts give this panel a fixed height and crop from the
+    bottom, so these lines fill spare rows and are the first thing dropped
+    when there are none.
+    """
+    events = events or []
+    traffic = traffic or {}
+    now = time.time() if now is None else now
+    label, event, stage_events = active, current, []
+    if label is None and traffic:
+        recent, row = max(traffic.items(), key=lambda item: item[1]["last_ts"])
+        if now - row["last_ts"] <= _RECENT_REQUEST_S:
+            label = active = recent
+    if label is None:
+        for candidate in reversed(events):
+            label = _detect_active_integration(candidate, events, None)
+            if label:
+                event = candidate
+                break
+    if label is None:
+        return [Text("No integration in use this cycle", style="dim")]
+    if event is not None:
+        stage_events = [e for e in events if e.cycle_id == event.cycle_id and e.stage == event.stage]
+
+    service = next((s for s in services if s[0] == label), None)
+    detail, metric = (service[2], service[3]) if service else ("", "--")
+    head = Text.assemble(
+        ("NOW " if active else "LAST ", "bold black on bright_cyan" if active else "bold grey62"),
+        (f" {label}", "bold bright_cyan" if active else "bold bright_white"),
+        (f" · {detail}" if detail else "", "bright_white"),
+        (f" · {metric}" if metric != "--" else "", "bright_cyan"),
+    )
+    head.no_wrap, head.overflow = True, "ellipsis"
+    lines = [head]
+    if label in traffic:
+        lines.append(_traffic_line(traffic[label], now))
+    outcome = _enrichment_result(label, events)
+    if outcome:
+        lines.append(Text(f"lookups: {outcome}", style="bright_cyan", overflow="ellipsis", no_wrap=True))
+
+    facts: List[str] = []
+    if event is not None:
+        facts.append(f"stage {event.stage}")
+        if stage_events:
+            spent = max(0.0, event.elapsed - stage_events[0].elapsed)
+            facts.append(f"{spent:.0f}s in stage")
+            facts.append(f"{len(stage_events)} step(s)")
+        if not active:
+            facts.append(f"at {event.timestamp[-8:]}")
+    if facts:
+        lines.append(Text(" · ".join(facts), style="bright_white", overflow="ellipsis", no_wrap=True))
+    if label == "LLM" and live:
+        calls = int(live.get("llm_calls") or 0)
+        usage = [f"{int(live.get('in_flight') or 0)} in flight", f"{calls} done"]
+        if live.get("failed"):
+            usage.append(f"{int(live['failed'])} failed")
+        tokens_in, tokens_out = int(live.get("input_tokens") or 0), int(live.get("output_tokens") or 0)
+        if tokens_in or tokens_out:
+            usage.append(f"{_compact_count(tokens_in)} in / {_compact_count(tokens_out)} out tok")
+        if calls and live.get("duration_ms"):
+            usage.append(f"avg {int(live['duration_ms']) / calls / 1000:.1f}s/call")
+        if live.get("cost_usd"):
+            usage.append(f"${float(live['cost_usd']):.2f}")
+        by_tier = live.get("by_tier") if isinstance(live.get("by_tier"), dict) else {}
+        tier_bits = []
+        for name in ("simple", "complex"):
+            bucket = by_tier.get(name) or {}
+            tier_calls = int(bucket.get("llm_calls") or 0)
+            if tier_calls:
+                tier_bits.append(f"{name} {tier_calls}")
+        if tier_bits:
+            usage.append(" / ".join(tier_bits))
+        if live.get("escalated_calls"):
+            usage.append(f"esc {int(live['escalated_calls'])}")
+        models = live.get("models") or []
+        if models:
+            usage.append(", ".join(str(m) for m in sorted(models))[:40])
+        lines.append(Text(" · ".join(usage), style="bright_cyan", overflow="ellipsis", no_wrap=True))
+    if event is not None and event.message:
+        lines.append(Text(event.message, style="dim", overflow="ellipsis", no_wrap=True))
+    return lines
+
+
 def _integrations_panel(
     workspace: Optional[Path] = None,
     search_count: str = "pending",
@@ -222,52 +397,6 @@ def _integrations_panel(
     grid_compact_names: bool = False,
 ) -> Panel:
     """A dedicated panel displaying external API and service integration statuses and activity metrics."""
-    checks = (
-        (
-            "LLM",
-            (
-                "HECATE_LLM_PROVIDER",
-                "OPENAI_API_KEY",
-                "ANTHROPIC_API_KEY",
-                "GEMINI_API_KEY",
-                "GOOGLE_API_KEY",
-                "AWS_PROFILE",
-                "OLLAMA_HOST",
-            ),
-        ),
-        ("Tavily", ("TAVILY_API_KEY",)),
-        ("OTX", ("OTX_API_KEY",)),
-        ("MISP", ("MISP_API_KEY",)),
-        ("VT", ("HECATE_RUNNER_VT_API_KEY", "VT_API_KEY")),
-        ("GreyNoise", ("GREYNOISE_API_KEY",)),
-        ("AbuseIPDB", ("ABUSEIPDB_API_KEY",)),
-        ("Shodan", ("SHODAN_API_KEY",)),
-        ("Censys", ("CENSYS_API_TOKEN",)),
-        ("ThreatFox", ("ABUSECH_API_KEY",)),
-        ("MalBazaar", ("ABUSECH_API_KEY",)),
-        ("Feodo C2", ()),
-        ("SSLBL", ()),
-        ("URLhaus", ("ABUSECH_API_KEY",)),
-        ("URLScan", ("URLSCAN_API_KEY",)),
-        ("Hybrid", ("HYBRID_ANALYSIS_API_KEY", "HA_API_KEY", "FALCON_SANDBOX_API_KEY")),
-        ("RDAP", ()),
-        ("crt.sh", ()),
-        ("PDNS", ("VT_API_KEY", "MNEMONIC_API_KEY", "OTX_API_KEY")),
-        ("Spur", ("SPUR_API_KEY",)),
-        ("Tor/Proxy", ("IPINFO_TOKEN", "IPINFO_API_KEY")),
-        ("EPSS", ()),
-        ("OSV.dev", ()),
-        ("Slack", ("SLACK_BOT_TOKEN", "HECATE_RUNNER_SLACK_WEBHOOK_URL", "SLACK_WEBHOOK_URL")),
-        ("VulnCheck", ("VULNCHECK_API_KEY",)),
-        ("Triage", ("TRIAGE_API_KEY", "HATCHING_TRIAGE_API_KEY")),
-        ("Shadowsrv", ("SHADOWSERVER_API_KEY",)),
-        ("MSRC", ()),
-        ("CloudThrt", ()),
-        ("DFIR Rept", ()),
-        ("FIRST.org", ()),
-        ("ANY.RUN", ("ANYRUN_API_KEY",)),
-        ("OpenCTI", ("OPENCTI_TOKEN", "OPENCTI_URL")),
-    )
     env_files = [workspace / ".env"] if workspace else []
     if workspace:
         env_files.append(workspace.parent / "Hecate-Runner" / ".env")
@@ -302,31 +431,12 @@ def _integrations_panel(
                 break
 
     services_data = []
-    for label, names in checks:
+    for item in STATUS_INTEGRATIONS:
+        label, names = item.label, item.env_keys
         is_set = (
             any(os.environ.get(name) for name in names)
             or any(name in file_keys for name in names)
-            or (
-                label
-                in (
-                    "RDAP",
-                    "EPSS",
-                    "OSV.dev",
-                    "Feodo C2",
-                    "SSLBL",
-                    "Feodo/SSLBL",
-                    "URLScan",
-                    "crt.sh",
-                    "PDNS",
-                    "Tor/Proxy",
-                    "MSRC",
-                    "CloudThrt",
-                    "DFIR Rept",
-                    "FIRST.org",
-                    "ANY.RUN",
-                    "OpenCTI",
-                )
-            )
+            or item.always_configured
         )
         if label == "LLM":
             if is_set:
@@ -724,13 +834,14 @@ def _integrations_panel(
     env_values = {**file_values, **os.environ}
     provider = env_values.get("HECATE_RUNNER_CTI_PROVIDER", "file")
     active_sources = set(env_values.get("HECATE_RUNNER_CTI_MULTI_PROVIDERS", "rss,otx,misp").replace(" ", "").split(",")) if provider == "multi" else {provider}
-    for label in ("LOLBAS", "LOLDrivers", "GTFOBins", "Nuclei", "CISA AA", "CISA CSAF", "CISA ICS", "ATT&CK", "CISA KEV", "RSS", "GitHub PoC", "VXUG", "CertStrm"):
-        services_data.append((label, True, "source", "--"))
+    for item in SOURCE_INTEGRATIONS:
+        services_data.append((item.label, True, "source", "--"))
     confirmed_data = []
     for label, configured, detail, metric in services_data:
-        name = _INTEGRATION_IDS[label]
-        source_name = "cisa_advisories" if name == "cisa_narrative" else name
-        enabled = source_name in active_sources if source_name in _SOURCE_INTEGRATIONS else configured
+        item = BY_LABEL[label]
+        name = item.id
+        source_name = item.cti_name
+        enabled = source_name in active_sources if item.follows_cti_provider else configured
         if name == "misp" and str(env_values.get("HECATE_RUNNER_MISP_PUBLISHING_ENABLED", "false")).lower() in {"true", "1", "yes", "on"}:
             name, enabled = "misp_output", True
             detail = "output only" if source_name not in active_sources else "input/output"
@@ -839,4 +950,41 @@ def _integrations_panel(
             else:
                 table.add_row(format_item(*d1), Text(""))
 
-    return Panel(table, title="[bold bright_cyan]INTEGRATIONS[/]", border_style="bright_magenta", box=box.ROUNDED)
+    body: Any = table
+    if not compact:
+        traffic = _api_traffic(workspace, _cycle_start(events or []) or time.time() - 3600, env_values)
+        body = _SpareRows(
+            table,
+            _active_integration_lines(active_integration, services_data, current, events, live, traffic),
+        )
+    return Panel(body, title="[bold bright_cyan]INTEGRATIONS[/]", border_style="bright_magenta", box=box.ROUNDED)
+
+
+class _SpareRows:
+    """``main``, then as many of ``extra`` as fit below it in a height-bounded region.
+
+    With no height bound (printed, not in a layout) only ``main`` renders, so the
+    panel is never taller than its integrations.
+    """
+
+    def __init__(self, main: Any, extra: List[Text]) -> None:
+        self.main, self.extra = main, extra
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        lines = console.render_lines(self.main, options.update(height=None), pad=False)
+        yield from _as_lines(lines)
+        spare = (options.height or 0) - len(lines)
+        if spare < 2 or not self.extra:
+            return
+        yield from _as_lines(console.render_lines(Rule(style="grey35"), options.update(height=None)))
+        for line in self.extra[: spare - 1]:
+            yield line
+
+    def __rich_measure__(self, console: Console, options: ConsoleOptions) -> Measurement:
+        return Measurement.get(console, options, self.main)
+
+
+def _as_lines(lines: List[List[Segment]]) -> RenderResult:
+    for line in lines:
+        yield from line
+        yield Segment.line()

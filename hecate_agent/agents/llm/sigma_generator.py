@@ -23,6 +23,7 @@ hunt against a backdoor with nine C2 URLs ends up scoped to process
 telemetry alone.
 """
 
+import json
 import logging
 import re
 import time
@@ -33,6 +34,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml
 
 from hecate_agent.agents.base import AgentResult, LLMAgent
+from hecate_agent.agents.llm.rule_reviewer import RuleReview, RuleReviewer, review_prompt
 from hecate_agent.core.sigma_semantics import base_field, blocks, repair_sigma_semantics, semantic_problem
 
 from hecate_agent.agents.llm.sigma.logsources import (
@@ -136,6 +138,116 @@ from hecate_agent.agents.llm.sigma.validators import (
 logger = logging.getLogger(__name__)
 
 
+def _value_tokens(rule_yaml: str) -> set:
+    """Program and path basenames a rule's positive selections match, e.g. ``{"node-red", "sh"}``."""
+    try:
+        detection = (yaml.safe_load(rule_yaml) or {}).get("detection") or {}
+    except yaml.YAMLError:
+        return set()
+    condition = str(detection.get("condition", "")).lower()
+    tokens = set()
+    for name, block in detection.items():
+        if name == "condition" or re.search(rf"\bnot\s+{re.escape(str(name).lower())}\b", condition):
+            continue
+        for item in block if isinstance(block, list) else [block]:
+            if not isinstance(item, dict):
+                continue
+            for raw in item.values():
+                for value in raw if isinstance(raw, list) else [raw]:
+                    for word in str(value).split():
+                        token = word.replace("\\", "/").rsplit("/", 1)[-1].strip("*'\"").lower()
+                        if len(token) >= 2 and not token.startswith("-"):
+                            tokens.add(token)
+    return tokens
+
+
+_AUTH_CLAIM_RE = re.compile(
+    r"(?i)\bunauthenticated\b|\bwithout (?:auth\w*|credentials)\b|\bno (?:auth\w*|credentials)\b|\bmissing auth\w*"
+)
+#: Fields that can show whether a request or session was authenticated.
+_AUTH_FIELD_RE = re.compile(r"(?i)auth|username|^user$|token|cookie|session|logon|credential|^sc-status$")
+
+
+def _unobservable_auth_claim_problem(detection: Dict[str, Any], description: str) -> Optional[str]:
+    """A rule titled "unauthenticated" whose fields cannot tell authenticated from not.
+
+    H-0026's "Unauthenticated Node-RED Flow Deployment" matched only POST and
+    /flows, which every legitimate deploy sends too.
+    """
+    if not _AUTH_CLAIM_RE.search(description):
+        return None
+    fields = {base_field(key) for _, block in blocks(detection) for key in block}
+    if any(_AUTH_FIELD_RE.search(f) for f in fields):
+        return None
+    return (
+        "the title or description says the activity is unauthenticated, but no field in the rule records "
+        f"authentication ({', '.join(sorted(fields)) or 'none'}); describe what the fields show, or add one that "
+        "records the credential or user"
+    )
+
+
+def _outbound_to_target_port_problem(
+    detection: Dict[str, Any], category: str, artifacts: List[Dict[str, Any]]
+) -> Optional[str]:
+    """An outbound connection to the port the target service listens on.
+
+    H-0026 matched ``Initiated: true`` to port 1880 from Node-RED: the attack is a
+    connection *to* Node-RED on 1880, which its host records as inbound.
+    """
+    if category != "network_connection":
+        return None
+    target_ports = {
+        str(a.get("value", "")).strip()
+        for a in artifacts
+        if a.get("kind") == "port" and str(a.get("role", "")).endswith("target")
+    }
+    if not target_ports:
+        return None
+    for _, block in blocks(detection):
+        initiated = [str(v).lower() for k, v in block.items() if base_field(k) == "Initiated"]
+        ports = {
+            str(v)
+            for k, raw in block.items()
+            if base_field(k) == "DestinationPort"
+            for v in (raw if isinstance(raw, list) else [raw])
+        }
+        if "true" in initiated and ports & target_ports and any(base_field(k) == "Image" for k in block):
+            port = sorted(ports & target_ports)[0]
+            return (
+                f"the source has the target listening on port {port}, but the rule matches an outbound connection "
+                f"(Initiated: true) to it from a local process; on the target the attack is an inbound connection "
+                f"(Initiated: false, DestinationPort: {port})"
+            )
+    return None
+
+
+def _drop_model_rules_covered_by_guidance(rules: List[SigmaRule]) -> Tuple[List[SigmaRule], List[str]]:
+    """Drop a model rule for the same match a source-guidance rule or hunting lead already makes.
+
+    H-0025 shipped the source's own "Node launching sh" rule beside a model rule
+    for the same behaviour that matched the wrong process, and H-0026 the README's
+    low-severity `POST /flows` lead beside a model copy at high severity.
+    """
+    guidance = [
+        (r.logsource_category, _value_tokens(r.rule_yaml))
+        for r in rules
+        if r.origin == "deterministic" and r.title.startswith(("Source guidance ", "Hunting lead: "))
+    ]
+    kept: List[SigmaRule] = []
+    dropped: List[str] = []
+    for rule in rules:
+        if rule.origin == "model":
+            tokens = _value_tokens(rule.rule_yaml)
+            if any(cat == rule.logsource_category and len(tokens & g) >= 2 for cat, g in guidance):
+                dropped.append(
+                    f"{rule.logsource_category}: {rule.title}: duplicates a rule built from the source's own "
+                    "detection guidance"
+                )
+                continue
+        kept.append(rule)
+    return kept, dropped
+
+
 class SigmaGeneratorAgent(LLMAgent[SigmaGenerationInput, SigmaGenerationOutput]):
     """Drafts Sigma rules covering each log source a hunt applies to."""
 
@@ -192,14 +304,20 @@ class SigmaGeneratorAgent(LLMAgent[SigmaGenerationInput, SigmaGenerationOutput])
         from concurrent.futures import ThreadPoolExecutor
 
         omitted: List[str] = []
+        # Each worker owns its cache; merge only after it finishes. Reviews live
+        # for this execution and are keyed by the complete reviewer prompt.
+        completed_reviews: Dict[str, RuleReview] = {}
+        jobs: List[Tuple[str, Dict[str, RuleReview]]] = [(source, {}) for source in logsources]
 
         with ThreadPoolExecutor(max_workers=min(len(logsources) or 1, 6)) as executor:
             futures = {
-                executor.submit(self._generate_for_logsource, input_data, logsource): logsource for logsource in logsources
+                executor.submit(self._generate_for_logsource, input_data, logsource, cache): (logsource, cache)
+                for logsource, cache in jobs
             }
             for future in futures:
-                source_name = futures[future]
+                source_name, cache = futures[future]
                 rule, rule_problems, rule_omitted = future.result()
+                completed_reviews.update(cache)
                 rejected.extend(rule_problems)
                 omitted.extend(rule_omitted)
                 if rule is not None:
@@ -228,9 +346,12 @@ class SigmaGeneratorAgent(LLMAgent[SigmaGenerationInput, SigmaGenerationOutput])
             elif ioc_problem:
                 rejected.append(ioc_problem)
 
+        rules, duplicates = _drop_model_rules_covered_by_guidance(rules)
+        rejected.extend(duplicates)
+
         review_gaps: List[Dict[str, str]] = []
         if input_data.review_rules and rules:
-            rules, review_rejected, review_gaps, review_warnings = self._review_rules(rules, input_data)
+            rules, review_rejected, review_gaps, review_warnings = self._review_rules(rules, input_data, completed_reviews)
             rejected.extend(review_rejected)
             warnings.extend(review_warnings)
 
@@ -296,14 +417,24 @@ class SigmaGeneratorAgent(LLMAgent[SigmaGenerationInput, SigmaGenerationOutput])
         return passages[:25]
 
     def _review_rules(
-        self, rules: List[SigmaRule], input_data: SigmaGenerationInput
+        self,
+        rules: List[SigmaRule],
+        input_data: SigmaGenerationInput,
+        prior_reviews: Optional[Dict[str, RuleReview]] = None,
     ) -> Tuple[List[SigmaRule], List[str], List[Dict[str, str]], List[str]]:
-        """A2: review model rules; drop one only for a contradiction quoted verbatim from the source."""
-        from hecate_agent.agents.llm.rule_reviewer import RuleReviewer
+        """Reuse generation reviews for identical rule-and-evidence prompts.
 
+        Missing or failed reviews are retried here; coverage is always checked
+        against the final rule set. Only a verified source contradiction drops a rule.
+        """
         reviewer = RuleReviewer(
             lambda prompt, validate: self._call_llm_with_retry(
-                prompt, validate, max_retries=1, max_tokens=1024, temperature=0.0
+                prompt,
+                validate,
+                max_retries=1,
+                max_tokens=1024,
+                temperature=0.0,
+                capability="sigma_review",
             )
         )
         passages = self._source_passages(input_data)
@@ -316,7 +447,10 @@ class SigmaGeneratorAgent(LLMAgent[SigmaGenerationInput, SigmaGenerationOutput])
 
         def _review_one(rule: SigmaRule) -> Tuple[SigmaRule, Optional[Any], Optional[Exception]]:
             try:
-                rev = reviewer.review(rule.rule_yaml, input_data.hypothesis, passages)
+                key = review_prompt(rule.rule_yaml, input_data.hypothesis, passages)
+                rev = (prior_reviews or {}).get(key)
+                if rev is None:
+                    rev = reviewer.review(rule.rule_yaml, input_data.hypothesis, passages)
                 return rule, rev, None
             except Exception as exc:  # noqa: BLE001 - a failed review keeps the rule, unreviewed
                 return rule, None, exc
@@ -338,12 +472,6 @@ class SigmaGeneratorAgent(LLMAgent[SigmaGenerationInput, SigmaGenerationOutput])
                 continue
             if rev is None:
                 kept.append(rule)
-                continue
-            if rev.verdict == "revise":
-                rejected.append(
-                    f"{rule.logsource_category}: reviewer requested unresolved revisions: "
-                    + ("; ".join(rev.issues) or rev.contradiction or "no revision details supplied")
-                )
                 continue
             if rev.verdict == "reject" and rev.verified:
                 remediation = _remediate_platform_contradiction(rule.rule_yaml, rev.contradiction)
@@ -428,7 +556,10 @@ class SigmaGeneratorAgent(LLMAgent[SigmaGenerationInput, SigmaGenerationOutput])
                     description=(f'The source documents this procedure: "{candidate.get("command", "")}".' if reference
                                  else f'The source shows this command being run: "{candidate.get("command", "")}".'),
                     detection=dict(candidate.get("detection") or {}),
-                    falsepositives="Administrators or software running the same command or creating the task for legitimate reasons",
+                    falsepositives=str(
+                        candidate.get("falsepositives")
+                        or "Administrators or software running the same command or creating the task for legitimate reasons"
+                    ),
                     preamble=preamble,
                     level=str(candidate.get("level", "medium")),
                     author="hecate (auto-generated from commands quoted in the source - requires analyst review)",
@@ -1053,7 +1184,10 @@ class SigmaGeneratorAgent(LLMAgent[SigmaGenerationInput, SigmaGenerationOutput])
         )
 
     def _generate_for_logsource(
-        self, input_data: SigmaGenerationInput, logsource: str
+        self,
+        input_data: SigmaGenerationInput,
+        logsource: str,
+        review_cache: Optional[Dict[str, RuleReview]] = None,
     ) -> Tuple[Optional[SigmaRule], List[str], List[str]]:
         """Draft one rule for one log source.
 
@@ -1063,6 +1197,12 @@ class SigmaGeneratorAgent(LLMAgent[SigmaGenerationInput, SigmaGenerationOutput])
         Problems are reported even alongside a successful rule: a response
         carrying one good rule and one malformed sibling is worth a warning.
         """
+
+        # Preserve the exact artifact that was reviewed, including its generated
+        # UUID. Rebuilding it after validation invalidates review reuse.
+        built_rules: Dict[str, Tuple[Optional[SigmaRule], Optional[str]]] = {}
+        if review_cache is None:
+            review_cache = {}
 
         def validate_json(text: str) -> Optional[str]:
             try:
@@ -1077,28 +1217,32 @@ class SigmaGeneratorAgent(LLMAgent[SigmaGenerationInput, SigmaGenerationOutput])
 
             problems = []
             for raw in payload["rules"]:
-                rule, problem = self._build_rule(raw, input_data)
+                raw_key = json.dumps(raw, sort_keys=True)
+                if raw_key not in built_rules:
+                    built_rules[raw_key] = self._build_rule(raw, input_data)
+                rule, problem = built_rules[raw_key]
                 if problem:
                     problems.append(problem)
                 elif rule and rule.logsource_category == logsource:
                     if input_data.review_rules:
-                        from hecate_agent.agents.llm.rule_reviewer import RuleReviewer
-
                         reviewer = RuleReviewer(
                             lambda prompt, validate: self._call_llm_with_retry(
-                                prompt, validate, max_retries=1, max_tokens=1024, temperature=0.0
+                                prompt,
+                                validate,
+                                max_retries=1,
+                                max_tokens=1024,
+                                temperature=0.0,
+                                capability="sigma_review",
                             )
                         )
                         passages = SigmaGeneratorAgent._source_passages(input_data)
                         try:
-                            review = reviewer.review(rule.rule_yaml, input_data.hypothesis, passages)
-                            if review.verdict == "revise" and review.issues:
-                                problems.append(
-                                    "The rule requires revision. Please fix these issues and try again:\n"
-                                    + "\n".join(f"- {i}" for i in review.issues)
-                                )
-                                continue
-                            elif review.verdict == "reject":
+                            key = review_prompt(rule.rule_yaml, input_data.hypothesis, passages)
+                            review = review_cache.get(key)
+                            if review is None:
+                                review = reviewer.review(rule.rule_yaml, input_data.hypothesis, passages)
+                                review_cache[key] = review
+                            if review.verdict == "reject" and review.verified:
                                 msg = f"The rule was rejected by review: {review.contradiction or '; '.join(review.issues)}"
                                 if review.quote:
                                     msg += f" (source: '{review.quote[:160]}')"
@@ -1122,20 +1266,30 @@ class SigmaGeneratorAgent(LLMAgent[SigmaGenerationInput, SigmaGenerationOutput])
                 validate_json,
                 max_retries=3,
                 temperature=0.1,
+                capability="sigma_draft",
             )
             raw_rules = self._parse_json_response(output_text).get("rules", [])
         except Exception as exc:  # noqa: BLE001 - reported per log source, not fatal
             return None, [f"{logsource}: {exc}"], []
 
-        built, problems = self._collect_rules(raw_rules, input_data)
+        built, problems = self._collect_rules(raw_rules, input_data, built_rules)
         return _select_for_logsource(built, logsource, problems)
 
-    def _collect_rules(self, raw_rules: Any, input_data: SigmaGenerationInput) -> Tuple[List[SigmaRule], List[str]]:
+    def _collect_rules(
+        self,
+        raw_rules: Any,
+        input_data: SigmaGenerationInput,
+        built_rules: Optional[Dict[str, Tuple[Optional[SigmaRule], Optional[str]]]] = None,
+    ) -> Tuple[List[SigmaRule], List[str]]:
         """Build every proposed rule, keeping the reason each rejection failed."""
         rules: List[SigmaRule] = []
         rejected: List[str] = []
         for raw in raw_rules or []:
-            rule, problem = self._build_rule(raw, input_data)
+            raw_key = json.dumps(raw, sort_keys=True) if built_rules is not None else ""
+            if built_rules is not None and raw_key in built_rules:
+                rule, problem = built_rules[raw_key]
+            else:
+                rule, problem = self._build_rule(raw, input_data)
             if rule is None:
                 rejected.append(problem or "unknown validation failure")
             else:
@@ -1200,6 +1354,8 @@ class SigmaGeneratorAgent(LLMAgent[SigmaGenerationInput, SigmaGenerationOutput])
             lambda d: _network_role_problem(d, input_data.indicator_records),
             lambda d: _literal_problem(d, literals),
             lambda d: _reversed_guidance_chain_problem(d, input_data.detection_guidance),
+            lambda d: _unobservable_auth_claim_problem(d, f"{title}. {raw.get('description', '')}"),
+            lambda d: _outbound_to_target_port_problem(d, category, input_data.source_artifacts),
             lambda d: semantic_problem(
                 d,
                 category,
@@ -1426,13 +1582,13 @@ class SigmaGeneratorAgent(LLMAgent[SigmaGenerationInput, SigmaGenerationOutput])
             block["product"] = "windows"
             return block
         # Sigma's `product` is an OS, not a vendor. Only set it when the hunt
-        # is genuinely single-platform; a multi-platform hunt pinned to one
-        # product would silently stop matching the others.
-        windows_only = [p for p in platforms if p.lower() == "windows"]
-        if platforms and len(set(p.lower() for p in platforms)) == 1 and windows_only:
-            block["product"] = "windows"
-        elif platforms and len(set(p.lower() for p in platforms)) == 1 and platforms[0].lower() in ("linux", "macos"):
-            block["product"] = platforms[0].lower()
+        # is genuinely single-OS; a multi-platform hunt pinned to one product
+        # would silently stop matching the others. "Containers" is not an OS:
+        # a Containers + Linux hunt is a Linux hunt, and leaving the product
+        # unset there lets the transpiler default it to Windows.
+        oses = {p.lower() for p in platforms} - {"containers"}
+        if len(oses) == 1 and next(iter(oses)) in ("windows", "linux", "macos"):
+            block["product"] = next(iter(oses))
         return block
 
     @staticmethod

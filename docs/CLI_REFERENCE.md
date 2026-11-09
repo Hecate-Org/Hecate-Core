@@ -710,8 +710,8 @@ Next steps:
 hunt_id: H-0023
 title: "Kerberoasting Detection"
 status: in-progress
-date: 2025-12-02
-updated: 2025-12-02
+date: 2026-10-15
+updated: 2026-10-15
 hunter: "Jane Doe"
 techniques:
   - T1558.003
@@ -1766,7 +1766,7 @@ Next steps:
 ---
 investigation_id: I-0001
 title: "Alert Triage - PowerShell Execution"
-date: 2025-12-17
+date: 2026-10-20
 investigator: "Jane Doe"
 type: finding
 related_hunts:
@@ -1828,10 +1828,10 @@ Output:
 ╭──────┬─────────────────┬─────────────┬──────────────┬────────────╮
 │ ID   │ Title           │ Type        │ Tags         │ Date       │
 ├──────┼─────────────────┼─────────────┼──────────────┼────────────┤
-│ I-01 │ Alert Triage    │ finding     │ alert-triage │ 2025-12-17 │
-│ I-02 │ CloudTrail      │ baseline    │ baseline,aws │ 2025-12-17 │
+│ I-01 │ Alert Triage    │ finding     │ alert-triage │ 2026-10-20 │
+│ I-02 │ CloudTrail      │ baseline    │ baseline,aws │ 2026-10-20 │
 │      │ Baseline        │             │              │            │
-│ I-03 │ Credential      │ exploratory │ sandbox      │ 2025-12-17 │
+│ I-03 │ Credential      │ exploratory │ sandbox      │ 2026-10-20 │
 │      │ Patterns        │             │              │            │
 ╰──────┴─────────────────┴─────────────┴──────────────┴────────────╯
 
@@ -1865,7 +1865,7 @@ Output:
     "frontmatter": {
       "investigation_id": "I-0001",
       "title": "Alert Triage - PowerShell Execution",
-      "date": "2025-12-17",
+      "date": "2026-10-20",
       "type": "finding",
       "tags": ["alert-triage", "powershell"]
     }
@@ -2917,6 +2917,9 @@ per fixture, so a local model may take a few minutes.
 | `--output` | Choice | table | `table` or `json` |
 | `--temperature` | Float | 0.0 | Sampling temperature; the default keeps runs reproducible |
 | `--grounded` | Flag | False | Score STIX-grounded fixtures instead of cold recall |
+| `--tier` | Choice | unset | Eval the dual-router `simple` or `complex` backend |
+| `--fail-under` | Float | unset (`0.8` with `--write-gate`) | Exit 1 when the score is below this threshold |
+| `--write-gate` | String | unset | On pass, write a demotion gate stamp unlocking this locked capability for simple routing |
 
 ### Cold recall vs. grounded
 
@@ -2956,6 +2959,12 @@ hecate-agent eval --model qwen2.5:14b-instruct-q4_K_M --output json > 14b.json
 
 ```bash
 hecate-agent eval --grounded
+```
+
+**Gate demoting a locked capability onto the simple tier**:
+
+```bash
+hecate-agent eval --tier simple --write-gate research_synthesize --fail-under 0.8
 ```
 
 ### JSON Output

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hecate_agent.enrichment.result import report
+
 import logging
 import re
 import time
@@ -141,7 +143,7 @@ def query_urlscan_url(url: str, check_lures: bool = True) -> str:
     now = time.monotonic()
     cached = _URLSCAN_CACHE.get(f"url:{clean_url}")
     if cached and (now - cached[0] < _URLSCAN_CACHE_TTL):
-        return cached[1]
+        return report(cached[1])
 
     api_url = "https://urlscan.io/api/v1/search/"
     headers = {"Accept": "application/json"}
@@ -160,7 +162,7 @@ def query_urlscan_url(url: str, check_lures: bool = True) -> str:
             if not results:
                 res = "Not indexed on URLScan.io."
                 _URLSCAN_CACHE[f"url:{clean_url}"] = (now, res)
-                return res
+                return report(res)
 
             r0 = results[0]
             verdicts = r0.get("verdicts", {})
@@ -209,14 +211,14 @@ def query_urlscan_url(url: str, check_lures: bool = True) -> str:
 
             res = " | ".join(parts)
             _URLSCAN_CACHE[f"url:{clean_url}"] = (now, res)
-            return res
+            return report(res)
         elif resp.status_code == 429:
-            return "URLScan.io rate limit exceeded."
+            return report("URLScan.io rate limit exceeded.", 'errors')
         elif resp.status_code in (401, 403):
-            return "URLScan.io Auth Error (check URLSCAN_API_KEY)."
-        return f"HTTP {resp.status_code}"
+            return report("URLScan.io Auth Error (check URLSCAN_API_KEY).", 'errors')
+        return report(f"HTTP {resp.status_code}")
     except Exception as e:
-        return f"Error querying URLScan.io: {e}"
+        return report(f"Error querying URLScan.io: {e}")
 
 
 def query_urlscan_domain(domain: str) -> str:
@@ -225,7 +227,7 @@ def query_urlscan_domain(domain: str) -> str:
     now = time.monotonic()
     cached = _URLSCAN_CACHE.get(f"domain:{clean_domain}")
     if cached and (now - cached[0] < _URLSCAN_CACHE_TTL):
-        return cached[1]
+        return report(cached[1])
 
     api_url = "https://urlscan.io/api/v1/search/"
     headers = {"Accept": "application/json"}
@@ -244,7 +246,7 @@ def query_urlscan_domain(domain: str) -> str:
             if not results:
                 res = "Not indexed on URLScan.io."
                 _URLSCAN_CACHE[f"domain:{clean_domain}"] = (now, res)
-                return res
+                return report(res)
 
             r0 = results[0]
             verdicts = r0.get("verdicts", {})
@@ -286,14 +288,14 @@ def query_urlscan_domain(domain: str) -> str:
 
             res = " | ".join(parts)
             _URLSCAN_CACHE[f"domain:{clean_domain}"] = (now, res)
-            return res
+            return report(res)
         elif resp.status_code == 429:
-            return "URLScan.io rate limit exceeded."
+            return report("URLScan.io rate limit exceeded.", 'errors')
         elif resp.status_code in (401, 403):
-            return "URLScan.io Auth Error (check URLSCAN_API_KEY)."
-        return f"HTTP {resp.status_code}"
+            return report("URLScan.io Auth Error (check URLSCAN_API_KEY).", 'errors')
+        return report(f"HTTP {resp.status_code}")
     except Exception as e:
-        return f"Error querying URLScan.io: {e}"
+        return report(f"Error querying URLScan.io: {e}")
 
 
 def submit_urlscan_detonation(

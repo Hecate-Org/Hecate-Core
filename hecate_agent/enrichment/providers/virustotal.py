@@ -1,8 +1,8 @@
-"""VirusTot
-from hecate_agent.enrichment.constants import _KNOWN_PUBLISHER_DOMAINS
-al v3 file, IP, domain, and behavioral intelligence provider."""
+"""VirusTotal v3 file, IP, domain, and behavioral intelligence provider."""
 
 from __future__ import annotations
+
+from hecate_agent.enrichment.result import report
 
 import logging
 from typing import Any, Dict, List, Set
@@ -102,7 +102,7 @@ def extract_vt_behavior_graph(file_hash: str) -> Dict[str, Any]:
 def query_vt_hash(file_hash: str) -> str:
     api_key = _setting("VT_API_KEY")
     if not api_key:
-        return "Not found or error."
+        return report("Not found or error.", "unconfigured")
     url = f"https://www.virustotal.com/api/v3/files/{file_hash}"
     headers = {"x-apikey": api_key}
     try:
@@ -123,12 +123,16 @@ def query_vt_hash(file_hash: str) -> str:
                 extras.append(f"MITRE: {', '.join(t_ids)}")
             if bg.get("contacted_ips"):
                 extras.append(f"C2 IPs: {', '.join(bg['contacted_ips'][:3])}")
-            if extras:
-                return f"{base} | {' | '.join(extras)}"
-            return base
-        return "Not found or error."
+            text = f"{base} | {' | '.join(extras)}" if extras else base
+            return report(
+                text,
+                "flagged" if malicious else "found",
+                verdict="malicious" if malicious else "clean",
+                facts={"malicious": malicious, "threat_label": threat_label},
+            )
+        return report("Not found or error.", "missing")
     except Exception as e:
-        return f"Error querying VT: {e}"
+        return report(f"Error querying VT: {e}")
 
 
 def query_vt_ip(ip: str) -> str:
@@ -141,10 +145,15 @@ def query_vt_ip(ip: str) -> str:
             malicious = data.get("last_analysis_stats", {}).get("malicious", 0)
             asn = data.get("asn", "Unknown")
             owner = data.get("as_owner", "Unknown")
-            return f"Malicious hits: {malicious} | ASN: {asn} | Owner: {owner}"
-        return "Not found or error."
+            return report(
+                f"Malicious hits: {malicious} | ASN: {asn} | Owner: {owner}",
+                "flagged" if malicious else "found",
+                verdict="malicious" if malicious else "clean",
+                facts={"malicious": malicious},
+            )
+        return report("Not found or error.", "missing")
     except Exception as e:
-        return f"Error querying VT: {e}"
+        return report(f"Error querying VT: {e}")
 
 
 def query_vt_domain(domain: str) -> str:
@@ -159,12 +168,17 @@ def query_vt_domain(domain: str) -> str:
             categories = data.get("categories", {})
             cat_sample = list(categories.values())[:2]
             cat_str = f" | Category: {', '.join(cat_sample)}" if cat_sample else ""
-            return f"Malicious hits: {malicious} | Registrar: {registrar}{cat_str}"
+            return report(
+                f"Malicious hits: {malicious} | Registrar: {registrar}{cat_str}",
+                "flagged" if malicious else "found",
+                verdict="malicious" if malicious else "clean",
+                facts={"malicious": malicious},
+            )
         elif resp.status_code == 404:
-            return "Domain not found on VirusTotal."
-        return f"HTTP {resp.status_code}"
+            return report("Domain not found on VirusTotal.", "missing")
+        return report(f"HTTP {resp.status_code}")
     except Exception as e:
-        return f"Error querying VT: {e}"
+        return report(f"Error querying VT: {e}")
 
 
 def query_vt_pdns_domain(domain: str) -> List[Dict[str, Any]]:

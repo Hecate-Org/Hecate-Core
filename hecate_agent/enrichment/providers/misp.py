@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hecate_agent.enrichment.result import report
+
 import logging
 from typing import Set
 
@@ -46,10 +48,10 @@ def query_misp_indicator(indicator: str) -> str:
             events = resp.json().get("response", {}).get("Attribute", [])
             if events:
                 event_ids = list(set([str(e.get("event_id")) for e in events]))
-                return f"Found in MISP Incident(s): {', '.join(event_ids[:3])}"
-        return "Not seen in local MISP."
+                return report(f"Found in MISP Incident(s): {', '.join(event_ids[:3])}")
+        return report("Not seen in local MISP.", 'missing')
     except Exception as e:
-        return f"Error querying MISP: {e}"
+        return report(f"Error querying MISP: {e}")
 
 
 def expand_ttps(threat_intel: str) -> str:

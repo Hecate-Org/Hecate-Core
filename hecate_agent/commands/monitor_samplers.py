@@ -32,6 +32,7 @@ class TrailEvent:
     elapsed: float
     stage: str
     message: str
+    data: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -520,6 +521,23 @@ def _tail(path: Path, limit: int = 180) -> List[str]:
 
 
 def _read_events(log_path: Path) -> List[TrailEvent]:
+    """Stage events for the monitor.
+
+    ``events.jsonl`` is the channel the runner writes. Cycles that are only in
+    the trail log (from before that file existed) are still read from it.
+    """
+    recorded = _read_recorded_events(log_path.parent / "events.jsonl")
+    logged = _read_logged_events(log_path)
+    if not recorded:
+        return logged
+    recorded_cycles = {event.cycle_id for event in recorded}
+    merged = [event for event in logged if event.cycle_id not in recorded_cycles]
+    merged.extend(recorded)
+    merged.sort(key=lambda event: (event.timestamp, event.elapsed))
+    return merged
+
+
+def _read_logged_events(log_path: Path) -> List[TrailEvent]:
     events: List[TrailEvent] = []
     for line in _tail(log_path):
         match = _LOG_RE.match(line)
@@ -530,6 +548,40 @@ def _read_events(log_path: Path) -> List[TrailEvent]:
             continue
         cycle_id, elapsed, stage, message = trail.groups()
         events.append(TrailEvent(match.group(1), cycle_id, float(elapsed), stage, message))
+    return events
+
+
+def _read_recorded_events(path: Path) -> List[TrailEvent]:
+    events: List[TrailEvent] = []
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - 512_000))
+            raw = handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        return events
+    for line in raw.splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict) or row.get("type") != "stage":
+            continue
+        try:
+            stamp = datetime.fromtimestamp(float(row["ts"])).strftime("%Y-%m-%d %H:%M:%S")
+            events.append(
+                TrailEvent(
+                    stamp,
+                    str(row["cycle_id"]),
+                    float(row["elapsed"]),
+                    str(row["stage"]),
+                    str(row.get("message") or ""),
+                    data=row.get("data") if isinstance(row.get("data"), dict) else None,
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
     return events
 
 

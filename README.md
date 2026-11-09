@@ -42,8 +42,9 @@ flowchart LR
 Hecate-Core/
 ├── hecate_agent/                # Primary Python package
 │   ├── agents/                  # Autonomous LLM agents (Hypothesis, Researcher, Reviewer)
-│   ├── commands/                # CLI subcommands (hunt, attack, investigate, monitor)
+│   ├── commands/                # CLI subcommands (hunt, attack, investigate, monitor, monitor_views)
 │   ├── core/                    # Deterministic engines (grounding, AST validation, transpiler)
+│   ├── enrichment/              # Pluggable CTI enrichment providers (VT, Shodan, AbuseIPDB, Censys...)
 │   ├── mcp/                     # Model Context Protocol (MCP) server & tool integrations
 │   ├── utils/                   # Validation & helper utilities
 │   ├── api.py                   # High-level Python programmatic API
@@ -58,7 +59,7 @@ Hecate-Core/
 ├── evals/                       # Ground-truth evaluation pulses and replay scripts
 ├── knowledge/                   # OCSF schemas, ATT&CK STIX cache, hunting knowledge
 ├── prompts/                     # System prompts and few-shot templates
-└── tests/                       # 2,000+ unit and integration tests
+└── tests/                       # 2,197+ unit and integration tests
 ```
 
 ---
@@ -98,7 +99,7 @@ Edit `.env` with your preferred AI provider:
 HECATE_AI_PROVIDER=anthropic      # options: anthropic, openai, bedrock, ollama
 ANTHROPIC_API_KEY=sk-ant-...
 TAVILY_API_KEY=tvly-...          # For web-grounded threat research
-HECATE_WORKSPACE=/home/chemch/betas/Hecate-Workspace
+HECATE_WORKSPACE=~/betas/Hecate-Workspace
 ```
 
 Verify your environment configuration:
@@ -193,12 +194,22 @@ for rule in rules:
 The test suite runs offline without requiring network calls or paid API credits:
 
 ```bash
-# Run full test suite (1,900+ tests)
+# Run full test suite (2,197+ tests)
 uv run pytest -q
 
 # Run with coverage report
 uv run pytest --cov=hecate_agent tests/
 ```
+
+---
+
+## 📦 Public Metadata Exports
+
+`hecate-agent hunt export H-0001 --public` produces a versioned metadata-only
+profile for review. It excludes sessions, raw content, research, operator paths,
+and claimed validation results. Titles and tags undergo privacy and source
+rights review before publication. Downstream external publishing is owned by
+`Hecate-Runner`.
 
 ---
 
@@ -216,12 +227,3 @@ uv run pytest --cov=hecate_agent tests/
 ## 📄 License
 
 MIT License. See [LICENSE](LICENSE) for details.
-
-## Public metadata exports
-
-`hecate-agent hunt export H-0001 --public` produces a versioned metadata-only
-profile for review. It excludes sessions, raw content, research, operator paths
-and claimed validation results. Titles and tags still need privacy and source
-rights review before publication. General internal exports keep their existing
-behavior. Runner owns approved downstream delivery; the legacy direct Core
-MISP writer has been retired. See LICENSES.md for attribution scope.

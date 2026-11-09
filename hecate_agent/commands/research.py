@@ -647,7 +647,15 @@ def _generate_research_markdown(output: ResearchOutput) -> str:  # noqa: C901
     lines.append("")
     lines.append(f"- Web Searches: {output.web_searches_performed}")
     lines.append(f"- LLM Calls: {output.llm_calls}")
-    lines.append(f"- Tokens: {output.input_tokens:,} input, {output.output_tokens:,} output")
+    input_total = f"{output.input_tokens:,}" if output.input_token_samples in (None, output.llm_calls) else "unavailable"
+    output_total = f"{output.output_tokens:,}" if output.output_tokens or not output.llm_calls else "unavailable"
+    lines.append(f"- Tokens: {input_total} input, {output_total} output")
+    peak = f"{output.max_input_tokens:,}" if output.max_input_tokens is not None else "unavailable"
+    coverage = (
+        f"{output.input_token_samples}/{output.llm_calls} calls reporting input usage"
+        if output.input_token_samples is not None else "reporting coverage unavailable"
+    )
+    lines.append(f"- Largest Reported Prompt: {peak} tokens ({coverage})")
     lines.append(f"- Total Cost: {format_cost(output.total_cost_usd, output.cost_basis)}")
     lines.append(f"- Duration: {output.total_duration_ms / 1000:.1f} seconds")
     lines.append("")
@@ -737,6 +745,10 @@ def _display_json_output(output: ResearchOutput) -> None:
             "grounding": research_grounding(output.web_searches_performed),
             **({"web_search_note": output.web_search_note} if output.web_search_note else {}),
             "llm_calls": output.llm_calls,
+            "input_tokens": output.input_tokens if output.input_token_samples in (None, output.llm_calls) else None,
+            "output_tokens": output.output_tokens,
+            "max_input_tokens": output.max_input_tokens,
+            "input_token_samples": output.input_token_samples,
             "cost_usd": output.total_cost_usd,
             "cost_basis": output.cost_basis,
         },

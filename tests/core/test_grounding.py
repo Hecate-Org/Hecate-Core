@@ -56,6 +56,19 @@ def test_accepts_a_cve_the_research_document_cites():
     assert report.is_clean
 
 
+def test_an_affected_version_bound_must_come_from_a_source():
+    """H-0021 and H-0025 scoped the hunt to "< V4.3.4.1" with no quote for it."""
+    draft = "Siemens SIMATIC IoT2050 devices running Node-RED < V4.3.4.1 on port 1880."
+    report = audit_draft(draft_text=draft, cti_text="IoT2050 Node-RED unauthenticated root RCE.")
+    [claim] = [c for c in report.claims if c.kind == "version"]
+    assert (claim.value, claim.status) == ("4.3.4.1", "unsupported")
+
+    sourced = audit_draft(draft_text=draft, cti_text="Affected: IoT2050 Industrial OS < V4.3.4.1")
+    assert [(c.value, c.status) for c in sourced.claims if c.kind == "version"] == [("4.3.4.1", "asserted")]
+    assert not [c for c in audit_draft(draft_text="Node-RED 4.1.0 listens on 1880.", cti_text="").claims
+                if c.kind == "version"]
+
+
 def test_flags_a_rule_matching_infrastructure_from_no_source():
     report = audit_draft(
         draft_text=_rule("selection:\n  DestinationHostname: evil-c2.example.io"),

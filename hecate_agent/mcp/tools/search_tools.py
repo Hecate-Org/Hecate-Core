@@ -131,8 +131,7 @@ def register_search_tools(mcp: "FastMCP") -> None:  # type: ignore[name-defined]
         if tactic:
             from hecate_agent.commands.context import _get_relevant_domain_files
 
-            for relative_path in _get_relevant_domain_files(tactic):
-                domain_file = workspace / relative_path
+            for domain_file in _get_relevant_domain_files(tactic, workspace=workspace):
                 if domain_file.exists() and domain_file.name != "hunting-knowledge.md":
                     result.setdefault("domain_knowledge", {})[domain_file.stem] = domain_file.read_text(encoding="utf-8")
 

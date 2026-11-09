@@ -1,5 +1,6 @@
 """Semantic similarity search for past hunts."""
 
+import hashlib
 import json
 import threading
 from pathlib import Path
@@ -10,19 +11,23 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
+from hecate_agent.core.catalog_index import CatalogIndex, file_fingerprint
+
 console = Console()
 
 
 class _CachedCorpus(NamedTuple):
-    signature: Tuple[Tuple[str, int], ...]
+    signature: Tuple[Any, ...]
     hunt_data: List[Dict[str, Any]]
     session_data: List[Dict[str, Any]]
     vectorizer: Any
     doc_vectors: Any
+    text_signature: str
 
 
 _CACHE_LOCK = threading.Lock()
 _CORPUS_CACHE: Dict[str, _CachedCorpus] = {}
+_BUILD_LOCKS: Dict[str, Any] = {}
 
 
 def _clear_tfidf_cache() -> None:
@@ -31,12 +36,12 @@ def _clear_tfidf_cache() -> None:
         _CORPUS_CACHE.clear()
 
 
-def _get_corpus_signature(hunt_files: List[Path], sessions_dir: Path) -> Tuple[Tuple[str, int], ...]:
-    """Compute mtime signature for hunt files and session files."""
-    files: List[Tuple[str, int]] = []
+def _get_corpus_signature(hunt_files: List[Path], sessions_dir: Path) -> Tuple[Any, ...]:
+    """Check edits and replacements, including same-size/restored-mtime edits."""
+    files = []
     for hf in hunt_files:
         try:
-            files.append((str(hf.resolve()), hf.stat().st_mtime_ns))
+            files.append((str(hf.absolute()), file_fingerprint(hf)))
         except OSError:
             pass
     if sessions_dir.exists() and sessions_dir.is_dir():
@@ -45,11 +50,10 @@ def _get_corpus_signature(hunt_files: List[Path], sessions_dir: Path) -> Tuple[T
                 if item.is_dir():
                     for name in ("decisions.yaml", "summary.md", "session.yaml"):
                         p = item / name
-                        if p.exists():
-                            try:
-                                files.append((str(p.resolve()), p.stat().st_mtime_ns))
-                            except OSError:
-                                pass
+                        try:
+                            files.append((str(p.absolute()), file_fingerprint(p)))
+                        except OSError:
+                            pass
         except OSError:
             pass
     files.sort(key=lambda x: x[0])
@@ -206,6 +210,7 @@ def _build_corpus(
     sessions_dir: Path,
     exclude_hunt: Optional[str],
     include_sessions: bool,
+    catalog_root: Optional[Path] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Turn hunt files into searchable documents, folding sessions in.
 
@@ -216,17 +221,25 @@ def _build_corpus(
     """
     hunt_data: List[Dict[str, Any]] = []
     session_data: List[Dict[str, Any]] = []
+    if not hunt_files:
+        return hunt_data, session_data
 
+    index = CatalogIndex(catalog_root or hunt_files[0].parent, "similarity-hunts-v1")
+    index.refresh(hunt_files, _hunt_search_document)
+    indexed_hunts = {entry.path: entry.data for entry in index.entries()}
+    indexed_sessions = _indexed_session_data(sessions_dir, set(path.stem for path in hunt_files))
     for hunt_file in hunt_files:
         hunt_id = hunt_file.stem
         if exclude_hunt and hunt_id == exclude_hunt:
             continue
 
-        content = hunt_file.read_text(encoding="utf-8")
-        metadata = _extract_hunt_metadata(content)
-        searchable_text = _extract_searchable_text(content, metadata)
+        document = indexed_hunts.get(hunt_file.absolute())
+        if document is None:
+            continue
+        metadata = document["metadata"]
+        searchable_text = document["searchable_text"]
 
-        hunt_sessions = _load_session_data(sessions_dir, hunt_id)
+        hunt_sessions = indexed_sessions.get(hunt_id, [])
         if hunt_sessions:
             session_texts = " ".join(s["searchable_text"] for s in hunt_sessions)
             searchable_text = f"{searchable_text} {session_texts[: int(len(session_texts) * 0.75)]}"
@@ -246,6 +259,50 @@ def _build_corpus(
     return hunt_data, session_data
 
 
+def _hunt_search_document(path: Path, content: str) -> Dict[str, Any]:
+    metadata = _extract_hunt_metadata(content)
+    return {"metadata": metadata, "searchable_text": _extract_searchable_text(content, metadata)}
+
+
+def _session_component(path: Path, content: str) -> Dict[str, Any]:
+    if path.name == "summary.md":
+        return {"text": " ".join(filter(None, (_extract_section(content, heading) for heading in ("## Key Decisions", "## Lessons"))))}
+    try:
+        data = yaml.safe_load(content)
+    except yaml.YAMLError:
+        data = {}
+    if path.name == "decisions.yaml":
+        return {"text": " ".join(_decision_parts(data))}
+    return {"metadata": data if isinstance(data, dict) else {}}
+
+
+def _indexed_session_data(sessions_dir: Path, hunt_ids: set) -> Dict[str, List[Dict[str, Any]]]:
+    paths: list[Path] = []
+    if sessions_dir.is_dir():
+        for directory in sorted(sessions_dir.iterdir()):
+            if directory.is_dir():
+                paths.extend(directory / name for name in ("decisions.yaml", "summary.md", "session.yaml"))
+    index = CatalogIndex(sessions_dir, "similarity-session-components-v1")
+    index.refresh(paths, _session_component)
+    components: Dict[str, Dict[str, Any]] = {}
+    for entry in index.entries():
+        components.setdefault(entry.path.parent.name, {})[entry.path.name] = entry.data
+    results: Dict[str, List[Dict[str, Any]]] = {}
+    for session_id, values in sorted(components.items()):
+        text = " ".join(filter(None, (values.get(name, {}).get("text", "") for name in ("decisions.yaml", "summary.md")))).strip()
+        if not text:
+            continue
+        # Match the old '<hunt-id>-*' rule without scanning every session for
+        # every hunt. Prefixes also preserve behavior for nonstandard hunt IDs.
+        parents = {session_id[:i] for i, char in enumerate(session_id) if char == "-"} & hunt_ids
+        for hunt_id in parents:
+            results.setdefault(hunt_id, []).append({
+                "session_id": session_id, "hunt_id": hunt_id, "searchable_text": text,
+                "metadata": values.get("session.yaml", {}).get("metadata", {}),
+            })
+    return results
+
+
 def _get_or_build_corpus_cache(
     hunt_files: List[Path],
     sessions_dir: Path,
@@ -253,11 +310,18 @@ def _get_or_build_corpus_cache(
     vectorizer_cls: Any,
 ) -> Optional[_CachedCorpus]:
     """Retrieve cached corpus and TF-IDF matrix or build a new one if stale."""
+    with _CACHE_LOCK:
+        build_lock = _BUILD_LOCKS.setdefault(workspace_key, threading.Lock())
+    with build_lock:
+        return _refresh_corpus_cache(hunt_files, sessions_dir, workspace_key, vectorizer_cls)
+
+
+def _refresh_corpus_cache(hunt_files: List[Path], sessions_dir: Path, workspace_key: str, vectorizer_cls: Any) -> Optional[_CachedCorpus]:
     current_sig = _get_corpus_signature(hunt_files, sessions_dir)
     with _CACHE_LOCK:
         cached = _CORPUS_CACHE.get(workspace_key)
-        if cached is not None and cached.signature == current_sig:
-            return cached
+    if cached is not None and cached.signature == current_sig:
+        return cached
 
     # Rebuild corpus
     hunt_data, session_data = _build_corpus(
@@ -265,6 +329,7 @@ def _get_or_build_corpus_cache(
         sessions_dir=sessions_dir,
         exclude_hunt=None,
         include_sessions=True,
+        catalog_root=Path(workspace_key) / "hunts",
     )
 
     if not hunt_data:
@@ -273,16 +338,18 @@ def _get_or_build_corpus_cache(
     all_docs = hunt_data + session_data
     doc_texts = [d["searchable_text"] for d in all_docs]
 
-    vectorizer = vectorizer_cls(
-        max_features=1000,
-        stop_words="english",
-        ngram_range=(1, 2),
-    )
-
-    try:
-        doc_vectors = vectorizer.fit_transform(doc_texts)
-    except ValueError:
-        doc_vectors = None
+    signature = hashlib.sha256()
+    for document in all_docs:
+        signature.update(json.dumps([document["hunt_id"], document.get("session_id"), document["searchable_text"]]).encode())
+    text_signature = signature.hexdigest()
+    if cached is not None and cached.text_signature == text_signature:
+        vectorizer, doc_vectors = cached.vectorizer, cached.doc_vectors
+    else:
+        vectorizer = vectorizer_cls(max_features=1000, stop_words="english", ngram_range=(1, 2))
+        try:
+            doc_vectors = vectorizer.fit_transform(doc_texts)
+        except ValueError:
+            doc_vectors = None
 
     entry = _CachedCorpus(
         signature=current_sig,
@@ -290,9 +357,12 @@ def _get_or_build_corpus_cache(
         session_data=session_data,
         vectorizer=vectorizer,
         doc_vectors=doc_vectors,
+        text_signature=text_signature,
     )
     with _CACHE_LOCK:
         _CORPUS_CACHE[workspace_key] = entry
+        while len(_CORPUS_CACHE) > 16:
+            _CORPUS_CACHE.pop(next(key for key in _CORPUS_CACHE if key != workspace_key))
     return entry
 
 
@@ -541,7 +611,11 @@ def _decision_text(decisions_file: Path) -> List[str]:
     except (yaml.YAMLError, OSError):
         return []
 
-    if not data or not isinstance(data.get("decisions"), list):
+    return _decision_parts(data)
+
+
+def _decision_parts(data: Any) -> List[str]:
+    if not isinstance(data, dict) or not isinstance(data.get("decisions"), list):
         return []
 
     parts: List[str] = []

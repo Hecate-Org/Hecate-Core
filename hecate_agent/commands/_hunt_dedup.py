@@ -18,51 +18,23 @@ from hecate_agent.core.sigma_subsumption import (
     SubsumptionRelation,
 )
 
+from hecate_agent.core.workspace import workspace_root
+
 console = Console()
 
 
 def _resolve_query_paths(target_path: Optional[str], hunt_id: Optional[str]) -> List[Path]:
     """Resolve directory paths to scan for Sigma rules."""
-    paths: List[Path] = []
-    cwd = Path.cwd()
-
     if target_path:
-        p = Path(target_path)
-        if not p.is_absolute():
-            p = cwd / p
+        p = Path(target_path).expanduser().resolve()
         if p.exists():
             return [p]
         console.print(f"[yellow]Warning: Specified path '{target_path}' does not exist.[/yellow]")
-
-    # Check for hunt-specific directory
+        return []
+    root = workspace_root() / "queries"
     if hunt_id:
-        norm_hunt = hunt_id.upper().strip()
-        candidates = [
-            cwd / "queries" / norm_hunt,
-            Path(f"queries/{norm_hunt}"),
-            Path(f"/home/chemch/betas/Hecate-Public/queries/{norm_hunt}"),
-            Path(f"/home/chemch/betas/Hecate-Workspace/queries/{norm_hunt}"),
-        ]
-        for c in candidates:
-            if c and c.exists() and c.is_dir():
-                return [c]
-
-    # Default discovery paths
-    candidates = [
-        cwd / "queries",
-        Path("queries"),
-        Path("/home/chemch/betas/Hecate-Public/queries"),
-        Path("/home/chemch/betas/Hecate-Workspace/queries"),
-    ]
-    seen: set[str] = set()
-    for c in candidates:
-        if c and c.exists() and c.is_dir():
-            resolved = str(c.resolve())
-            if resolved not in seen:
-                seen.add(resolved)
-                paths.append(c)
-
-    return paths
+        root = root / hunt_id.upper().strip()
+    return [root] if root.is_dir() else []
 
 
 DEDUP_EPILOG = """

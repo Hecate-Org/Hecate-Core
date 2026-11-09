@@ -34,6 +34,9 @@ Examples:
   # instead of asking the model to recall them cold
   hecate-agent eval --grounded
 
+  # Gate demoting a locked capability (hypothesis/Sigma/…) onto the simple tier
+  hecate-agent eval --tier simple --write-gate research_synthesize --fail-under 0.8
+
 \b
 What it checks:
   A small set of unambiguous, known-answer fixtures (mostly MITRE ATT&CK
@@ -94,19 +97,58 @@ def _print_eval_report(report: Any) -> None:
         "it's given', which points at whether to fix retrieval/prompting vs. chase a bigger model."
     ),
 )
-def eval_cmd(provider: Optional[str], model: Optional[str], output_format: str, temperature: float, grounded: bool) -> None:
+@click.option(
+    "--tier",
+    type=click.Choice(["simple", "complex"]),
+    default=None,
+    help="Eval the dual-router simple or complex backend instead of the legacy single provider.",
+)
+@click.option(
+    "--fail-under",
+    type=float,
+    default=None,
+    help="Exit 1 when the score (0-1) is below this threshold.",
+)
+@click.option(
+    "--write-gate",
+    "write_gate",
+    default=None,
+    help=(
+        "If the score meets --fail-under (default 0.8), write a demotion gate stamp unlocking "
+        "this locked capability for simple-tier routing (e.g. research_synthesize)."
+    ),
+)
+def eval_cmd(
+    provider: Optional[str],
+    model: Optional[str],
+    output_format: str,
+    temperature: float,
+    grounded: bool,
+    tier: Optional[str],
+    fail_under: Optional[float],
+    write_gate: Optional[str],
+) -> None:
     """Run known-answer fixtures against an LLM provider and score the result."""
     from hecate_agent.core.eval_harness import build_grounded_fixtures, run_eval
+    from hecate_agent.core.llm_demotion import (
+        DEFAULT_FAIL_UNDER,
+        DemotionGateResult,
+        write_demotion_gate,
+    )
     from hecate_agent.core.llm_provider import create_provider
+    from hecate_agent.core.llm_router import create_router
 
-    config = {}
+    config: dict[str, str] = {}
     if provider:
         config["provider"] = provider
     if model:
         config["model"] = model
 
     try:
-        llm_provider = create_provider(config or None)
+        if tier is not None:
+            llm_provider = create_router(config or None).provider_for(tier=tier)
+        else:
+            llm_provider = create_provider(config or None)
     except (RuntimeError, ValueError) as exc:
         console.print(f"[red]Could not create LLM provider: {exc}[/red]")
         raise click.Abort()
@@ -115,19 +157,62 @@ def eval_cmd(provider: Optional[str], model: Optional[str], output_format: str, 
 
     if output_format == "table":
         mode = "grounded (STIX-fed)" if grounded else "cold recall"
+        tier_note = f", tier={tier}" if tier else ""
         console.print(
             f"\n[bold cyan]Running eval:[/bold cyan] {llm_provider.provider_name} / "
-            f"{getattr(llm_provider, 'model', 'unknown')} [dim]({mode})[/dim]"
+            f"{getattr(llm_provider, 'model', 'unknown')} [dim]({mode}{tier_note})[/dim]"
         )
         console.print("[dim]This makes one LLM call per fixture — may take a few minutes on a local model.[/dim]\n")
 
     report = run_eval(llm_provider, fixtures=fixtures, temperature=temperature)
+    threshold = fail_under if fail_under is not None else (DEFAULT_FAIL_UNDER if write_gate else None)
+
+    if write_gate:
+        gate_threshold = threshold if threshold is not None else DEFAULT_FAIL_UNDER
+        gate = DemotionGateResult(
+            capability=write_gate,
+            allowed=report.score >= gate_threshold,
+            score=report.score,
+            fail_under=gate_threshold,
+            provider=llm_provider.provider_name,
+            model=str(getattr(llm_provider, "model", getattr(llm_provider, "model_id", "unknown"))),
+            reason=(
+                f"score {report.score:.3f} meets fail_under {gate_threshold:.3f}"
+                if report.score >= gate_threshold
+                else f"score {report.score:.3f} below fail_under {gate_threshold:.3f}"
+            ),
+            report=report,
+        )
+        if gate.allowed:
+            path = write_demotion_gate(gate)
+            if output_format == "table":
+                console.print(
+                    f"[green]Demotion gate written[/green] for `{write_gate}` → {path}"
+                )
+        elif output_format == "table":
+            console.print(
+                f"[yellow]Demotion gate not written[/yellow] for `{write_gate}`: {gate.reason}"
+            )
 
     if output_format == "json":
-        console.print(json.dumps(report.to_dict(), indent=2), soft_wrap=True)
+        payload = report.to_dict()
+        if write_gate:
+            payload["demotion_gate"] = {
+                "capability": write_gate,
+                "allowed": report.score >= (threshold or DEFAULT_FAIL_UNDER),
+                "fail_under": threshold or DEFAULT_FAIL_UNDER,
+            }
+        console.print(json.dumps(payload, indent=2), soft_wrap=True)
+        if threshold is not None and report.score < threshold:
+            raise SystemExit(1)
         return
 
     _print_eval_report(report)
+    if threshold is not None and report.score < threshold:
+        console.print(
+            f"\n[red]Score {report.score:.3f} is below fail-under {threshold:.3f}[/red]"
+        )
+        raise SystemExit(1)
 
 
 EVAL_GOLD_EPILOG = """

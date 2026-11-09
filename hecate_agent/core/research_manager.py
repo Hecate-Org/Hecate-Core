@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 import yaml
 
+from hecate_agent.core.catalog_index import CatalogIndex
 from hecate_agent.utils.validation import validate_research_id
 
 try:
@@ -88,6 +89,11 @@ class ResearchParser:
 
         with open(self.file_path, "r", encoding="utf-8") as f:
             content = f.read()
+
+        return self.parse_text(content)
+
+    def parse_text(self, content: str) -> Dict[str, Any]:
+        """Parse an already-read document, for incremental catalog readers."""
 
         # Parse YAML frontmatter
         self.frontmatter = self._parse_frontmatter(content)
@@ -206,6 +212,7 @@ class ResearchManager:
             research_dir: Directory containing research files (default: ./research)
         """
         self.research_dir = Path(research_dir) if research_dir else Path.cwd() / "research"
+        self._research_mtimes: Dict[str, int] = {}
 
         if not self.research_dir.exists():
             self.research_dir.mkdir(parents=True, exist_ok=True)
@@ -444,11 +451,20 @@ class ResearchManager:
             List of research metadata dicts
         """
         research_list = []
+        self._research_mtimes = {}
 
-        for research_file in self._find_all_research_files():
+        research_files = self._find_all_research_files()
+        index = CatalogIndex(self.research_dir, "research-frontmatter-v1")
+        index.refresh(
+            research_files,
+            lambda path, text: {"frontmatter": ResearchParser(path)._parse_frontmatter(text)},
+        )
+        CatalogIndex(self.research_dir, "research-document-v1").prune(research_files)
+        for entry in index.entries():
+            research_file = self.research_dir / entry.path.relative_to(self.research_dir.absolute())
+            self._research_mtimes[str(research_file)] = entry.mtime_ns
             try:
-                research_data = parse_research_file(research_file)
-                frontmatter = research_data.get("frontmatter", {})
+                frontmatter = entry.data.get("frontmatter", {})
 
                 # Apply filters
                 if status and frontmatter.get("status") != status:
@@ -509,7 +525,7 @@ class ResearchManager:
             return None
 
         if research_file.exists():
-            return parse_research_file(research_file)
+            return self._indexed_research(research_file)
 
         # Try nested search
         research_files = list(self.research_dir.rglob(f"{research_id}.md"))
@@ -520,9 +536,19 @@ class ResearchManager:
                 nested_file.resolve().relative_to(self.research_dir.resolve())
             except (ValueError, OSError):
                 return None
-            return parse_research_file(nested_file)
+            return self._indexed_research(nested_file)
 
         return None
+
+    def _indexed_research(self, path: Path) -> Optional[Dict[str, Any]]:
+        index = CatalogIndex(self.research_dir, "research-document-v1")
+        index.refresh([path], lambda path, text: ResearchParser(path).parse_text(text), prune=False)
+        entries = index.entries()
+        if not entries:
+            return parse_research_file(path)  # Preserve selected-document parse errors.
+        result = entries[0].data
+        result["file_path"] = str(path)
+        return result
 
     def extract_research_context(self, research_doc: Dict[str, Any]) -> "ResearchContext":
         """Extract structured ResearchContext from a parsed research document.
@@ -631,7 +657,9 @@ class ResearchManager:
             age_ok = False
             if r_path:
                 try:
-                    mtime = datetime.datetime.fromtimestamp(Path(r_path).stat().st_mtime, tz=datetime.timezone.utc)
+                    timestamp = self._research_mtimes.get(r_path)
+                    modified = timestamp / 1_000_000_000 if timestamp is not None else Path(r_path).stat().st_mtime
+                    mtime = datetime.datetime.fromtimestamp(modified, tz=datetime.timezone.utc)
                     if (now - mtime).total_seconds() <= max_age_days * 86400:
                         age_ok = True
                 except Exception:

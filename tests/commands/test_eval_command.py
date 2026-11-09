@@ -75,3 +75,23 @@ class TestEvalCommand:
 
         assert "Failed fixtures" in result.output
         assert "T1003.001" in result.output
+
+    def test_write_gate_persists_stamp_when_score_passes(self, runner: CliRunner, tmp_path) -> None:
+        backend = MagicMock()
+        backend.provider_name = "ollama"
+        backend.model = "local"
+        router = MagicMock()
+        router.provider_for.return_value = backend
+        with patch("hecate_agent.core.llm_router.create_router", return_value=router):
+            with patch("hecate_agent.core.eval_harness.run_eval", return_value=_fake_report()):
+                with patch(
+                    "hecate_agent.core.llm_demotion.demotion_gates_path",
+                    return_value=tmp_path / "gates.json",
+                ):
+                    result = runner.invoke(
+                        eval_cmd,
+                        ["--tier", "simple", "--write-gate", "research_synthesize", "--fail-under", "0.5"],
+                    )
+        assert result.exit_code == 0
+        assert "Demotion gate written" in result.output
+        assert (tmp_path / "gates.json").is_file()

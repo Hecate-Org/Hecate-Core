@@ -102,8 +102,12 @@ hecate_agent/
 │   ├── env.py              # `hecate-agent env setup/clean` — creates/manages the project .venv
 │   ├── eval.py             # Model-quality eval harness — scripted known-answer spot checks
 │   ├── mcp.py              # MCP server control
-│   ├── monitor.py          # Live terminal dashboard over a Runner cycle (trail, stage metrics, live call log)
+│   ├── monitor.py          # Live terminal dashboard over a Runner cycle (state polling, event aggregation)
+│   ├── monitor_views.py    # Terminal UI views, stage renderers, ribbons, and layout rendering
 │   └── splunk.py           # Optional Splunk integration (loaded conditionally)
+├── enrichment/             # Modular CTI enrichment architecture
+│   ├── constants.py        # Shared normalization mappings, confidence scoring, timeouts
+│   └── providers/          # 17 pluggable OSINT/CTI provider modules (VT, Shodan, GreyNoise...)
 ├── core/                   # Business logic layer
 │   ├── hunt_manager.py     # Hunt file discovery, lifecycle, stats, ATT&CK coverage; class-level cache keyed on fs fingerprint
 │   ├── hunt_parser.py      # YAML frontmatter + LOCK section markdown parser

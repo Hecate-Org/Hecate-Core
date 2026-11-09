@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hecate_agent.enrichment.result import report
+
 import logging
 import time
 from typing import Any, Dict, List, Set, Tuple, cast
@@ -61,21 +63,21 @@ def query_threatfox(indicator: str) -> str:
                 summary = f"Type: {threat_type} | Malware: {malware}"
                 if tags:
                     summary += f" | Tags: {', '.join(tags[:3])}"
-                return summary
+                return report(summary)
             elif data.get("query_status") == "no_result":
-                return "No results on ThreatFox."
+                return report("No results on ThreatFox.", 'missing')
             else:
-                return f"ThreatFox error: {data.get('query_status')}"
-        return f"HTTP {resp.status_code}"
+                return report(f"ThreatFox error: {data.get('query_status')}")
+        return report(f"HTTP {resp.status_code}")
     except Exception as e:
-        return f"Error querying ThreatFox: {e}"
+        return report(f"Error querying ThreatFox: {e}")
 
 
 def query_malwarebazaar(file_hash: str) -> str:
     """Query Abuse.ch MalwareBazaar for sample metadata, file type, signature, and YARA rules."""
     key = _setting("ABUSECH_API_KEY")
     if not key:
-        return "ABUSECH_API_KEY not configured."
+        return report("ABUSECH_API_KEY not configured.", 'unconfigured')
     url = "https://mb-api.abuse.ch/api/v1/"
     headers = {"Auth-Key": key}
     data = {"query": "get_info", "hash": file_hash}
@@ -102,16 +104,16 @@ def query_malwarebazaar(file_hash: str) -> str:
                     parts.append(f"YARA: {', '.join(yara_rules[:3])}")
                 elif tags:
                     parts.append(f"Tags: {', '.join(tags[:3])}")
-                return " | ".join(parts)
+                return report(" | ".join(parts))
             elif status == "hash_not_found":
-                return "No sample found on MalwareBazaar."
+                return report("No sample found on MalwareBazaar.", 'missing')
             else:
-                return f"MalwareBazaar: {status}"
+                return report(f"MalwareBazaar: {status}")
         elif resp.status_code in (401, 403):
-            return "MalwareBazaar Auth Error (check ABUSECH_API_KEY)."
-        return f"HTTP {resp.status_code}"
+            return report("MalwareBazaar Auth Error (check ABUSECH_API_KEY).", 'errors')
+        return report(f"HTTP {resp.status_code}")
     except Exception as e:
-        return f"Error querying MalwareBazaar: {e}"
+        return report(f"Error querying MalwareBazaar: {e}")
 
 
 def _get_feodo_ip_map() -> Dict[str, Dict[str, Any]]:
@@ -179,7 +181,7 @@ def query_feodotracker_ip(ip: str) -> str:
     clean_ip = ip.strip()
     feodo_map = _get_feodo_ip_map()
     if not feodo_map:
-        return "Not listed on Feodo Tracker (feed empty/clean)."
+        return report("Not listed on Feodo Tracker (feed empty/clean).", 'missing')
     entry = feodo_map.get(clean_ip)
     if entry:
         malware = entry.get("malware") or "Unknown Botnet"
@@ -195,8 +197,8 @@ def query_feodotracker_ip(ip: str) -> str:
             details.append(f"First Seen: {first_seen}")
         if asn:
             details.append(f"ASN: {asn}")
-        return " · ".join(details)
-    return "Not listed on Feodo Tracker (clean)."
+        return report(" · ".join(details))
+    return report("Not listed on Feodo Tracker (clean).", 'missing')
 
 
 def query_sslbl_fingerprint(fingerprint: str) -> str:
@@ -204,12 +206,12 @@ def query_sslbl_fingerprint(fingerprint: str) -> str:
     clean_fp = fingerprint.strip().lower()
     sslbl_map = _get_sslbl_fingerprint_map()
     if not sslbl_map:
-        return "Not listed on SSLBL (feed empty/clean)."
+        return report("Not listed on SSLBL (feed empty/clean).", 'missing')
     entry = sslbl_map.get(clean_fp)
     if entry:
         reason, listing_date = entry
         date_str = f" · Listed: {listing_date.split()[0]}" if listing_date else ""
-        return f"Malicious SSL Cert / JA3: {reason}{date_str}"
-    return "Not listed on SSLBL (clean)."
+        return report(f"Malicious SSL Cert / JA3: {reason}{date_str}")
+    return report("Not listed on SSLBL (clean).", 'missing')
 
 

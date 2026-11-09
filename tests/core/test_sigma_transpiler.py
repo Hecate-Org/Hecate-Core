@@ -315,6 +315,42 @@ detection:
         assert results[SigmaTranspiler.TARGET_CROWDSTRIKE].success is True
         assert results[SigmaTranspiler.TARGET_RAPID7].success is True
 
+    def test_normalize_rule_infers_linux_from_unix_paths(self):
+        rule_without_product = """
+title: Node launching sh
+id: 287970fb-1f86-4536-b929-cde93d7ccdfb
+status: experimental
+logsource:
+  category: process_creation
+detection:
+  selection:
+    ParentImage|endswith: /node
+    ParentCommandLine|contains: node-red
+    Image|endswith: /sh
+  condition: selection
+"""
+        normalized = SigmaTranspiler.normalize_rule_for_backends(rule_without_product)
+        assert "product: linux" in normalized
+
+        s1 = SigmaTranspiler().transpile(rule_without_product).get(SigmaTranspiler.TARGET_SENTINELONE)
+        if s1 is not None and s1.success:
+            assert 'EndpointOS = "windows"' not in s1.query
+
+    def test_normalize_rule_leaves_web_paths_without_os(self):
+        rule = """
+title: POST flows
+id: 0131dcf2-509b-4c42-bcad-e02ea5271995
+status: experimental
+logsource:
+  category: webserver
+detection:
+  selection:
+    cs-method: POST
+    cs-uri-stem: /flows
+  condition: selection
+"""
+        assert "product" not in SigmaTranspiler.normalize_rule_for_backends(rule)
+
     def test_format_markdown_queries(self, sample_process_creation_rule):
         transpiler = SigmaTranspiler()
         results = transpiler.transpile(sample_process_creation_rule)

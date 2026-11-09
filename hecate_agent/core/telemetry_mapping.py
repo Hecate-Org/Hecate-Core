@@ -88,6 +88,15 @@ def normalize_field(name: str) -> Optional[str]:
 def environment_fields(environment: str) -> Dict[str, List[str]]:
     """``{label: [field, ...]}`` from the profile's "Common Fields" list ("- Endpoint: `a`, `b`")."""
     out: Dict[str, List[str]] = {}
+    contract = _verified_contract_rows(environment)
+    if contract is not None:
+        for row in contract:
+            names = re.findall(r"`([^`]+)`", row[3])
+            if names:
+                out[row[0]] = names
+        return out
+    if "unverified-template" in (environment or "").lower():
+        return out
     in_list = False
     for line in (environment or "").splitlines():
         if re.match(r"^\s*-\s*\*\*common fields:?\*\*", line, re.I):
@@ -164,13 +173,40 @@ _PLACEHOLDER = re.compile(r"\[(to be configured|specify|link to|tbd|todo)[^\]]*\
 #: A configured section says what product it is; a template leaves the placeholder.
 _PRODUCT_LINE = re.compile(r"^\s*-\s*\*\*(product|platform|firewalls|ids/ips):?\*\*\s*(.*)$", re.I)
 _TELEMETRY_KEYWORDS: Dict[str, Tuple[str, ...]] = {
-    "process_execution": ("process execution", "process creation", "endpoint telemetry", "sysmon"),
+    "process_execution": ("process execution", "process creation", "process and lineage", "endpoint telemetry", "sysmon"),
     "file_operations": ("file event", "file operation", "file integrity", "file monitoring"),
     "network_connections": (
         "network connection", "network flow", "netflow", "firewall log", "proxy log", "dns log", "dns quer",
     ),
     "registry_events": ("registry modification", "registry event", "registry telemetry", "registry change"),
 }  # fmt: skip
+
+
+def _verified_contract_rows(environment: str) -> Optional[List[List[str]]]:
+    """Read explicit source contracts; unknown rows must never become availability.
+
+    Return None for legacy profiles, [] for a contract with no verified rows.
+    Check metadata as well as the word 'verified': an unchanged placeholder row
+    does not establish collection just because its status was changed.
+    """
+    rows: List[List[str]] = []
+    in_contract = False
+    found = False
+    for line in (environment or "").splitlines():
+        if line.startswith("## "):
+            in_contract = line.strip().lower() == "## telemetry availability contract"
+            found = found or in_contract
+            continue
+        if not in_contract or not line.lstrip().startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) != 7 or cells[1].lower() != "verified":
+            continue
+        missing = re.compile(r"\b(unknown|unverified|not verified|not supplied|tbd|to be configured)\b", re.I)
+        if any(not cell or missing.search(cell) or _PLACEHOLDER.search(cell) for cell in cells[2:]):
+            continue
+        rows.append(cells)
+    return rows if found else None
 
 
 def _telemetry_sections(environment: str) -> List[List[str]]:
@@ -202,6 +238,18 @@ def documented_data_sources(environment: str) -> Dict[str, bool]:
     under "Product: [To be configured]"; that documents nothing.
     """
     found = dict.fromkeys(_TELEMETRY_KEYWORDS, False)
+    contract = _verified_contract_rows(environment)
+    if contract is not None:
+        for row in contract:
+            # Match the event family and mapping only, not unrelated free-form
+            # comments in provenance/retention columns.
+            text = f"{row[0]} {row[3]}".lower()
+            for source, keywords in _TELEMETRY_KEYWORDS.items():
+                if any(keyword in text for keyword in keywords):
+                    found[source] = True
+        return found
+    if "unverified-template" in (environment or "").lower():
+        return found
     for lines in _telemetry_sections(environment):
         product = next((m.group(2) for m in map(_PRODUCT_LINE.match, lines) if m), "")
         if product and _PLACEHOLDER.search(product):

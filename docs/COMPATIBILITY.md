@@ -43,8 +43,7 @@ Hecate treats workspace content as human-and-machine-readable source of truth. T
 ### 1. Directory Structure
 * `hunts/`: Hunt files stored in dated folders `hunts/{YYYY}/{QX}/H-XXXX.md` or flat `hunts/H-XXXX.md`. Both formats are supported for discovery.
 * `research/`: Research documents stored as `research/R-XXXX.md`.
-* `queries/`: SIEM/EDR query files (`.spl`, `.kql`, `.eql`).
-* `detections/`: Exported detection rules (e.g. Sigma `.yml`).
+* `queries/`: SIEM/EDR query files (`.spl`, `.kql`, `.eql`, `.cql`) and candidate Sigma rules (`sigma.yml`).
 
 ### 2. Hunt Document Format (LOCK Pattern)
 * **YAML Frontmatter**: Delimited by `---`. Additive fields are permitted without breaking compatibility. Mandatory fields: `id`, `title`, `status`, `tactics`, `techniques`.

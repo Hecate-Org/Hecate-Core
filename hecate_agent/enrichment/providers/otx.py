@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hecate_agent.enrichment.result import report
+
 import logging
 from typing import Any, Dict, List, Set
 
@@ -43,7 +45,7 @@ def query_otx_indicator(indicator_type: str, indicator: str) -> str:
     """
     key = _setting("OTX_API_KEY") or _setting("HECATE_RUNNER_OTX_API_KEY")
     if not key:
-        return "OTX_API_KEY not configured."
+        return report("OTX_API_KEY not configured.", 'unconfigured')
 
     headers = {
         "X-OTX-API-KEY": key,
@@ -120,38 +122,38 @@ def query_otx_indicator(indicator_type: str, indicator: str) -> str:
                     parts.append(f"Tags: {', '.join(tags[:3])}")
                 if pdns_hosts:
                     parts.append(f"Passive DNS: {', '.join(pdns_hosts)}")
-                return " | ".join(parts)
+                return report(" | ".join(parts))
             else:
                 if pdns_hosts:
-                    return f"0 Pulses | Passive DNS: {', '.join(pdns_hosts)}"
-                return "Not observed in OTX Pulses."
+                    return report(f"0 Pulses | Passive DNS: {', '.join(pdns_hosts)}")
+                return report("Not observed in OTX Pulses.", 'missing')
         elif resp.status_code == 404:
-            return "No record on OTX."
+            return report("No record on OTX.", 'missing')
         elif resp.status_code in (401, 403):
-            return "OTX Auth Error (check OTX_API_KEY)."
-        return f"OTX error: HTTP {resp.status_code}"
+            return report("OTX Auth Error (check OTX_API_KEY).", 'errors')
+        return report(f"OTX error: HTTP {resp.status_code}")
     except Exception as e:
-        return f"Error querying OTX: {e}"
+        return report(f"Error querying OTX: {e}")
 
 
 def query_otx_ip(ip: str) -> str:
     """Query AlienVault OTX Direct API for an IPv4 address."""
-    return query_otx_indicator("IPv4", ip)
+    return report(query_otx_indicator("IPv4", ip))
 
 
 def query_otx_domain(domain: str) -> str:
     """Query AlienVault OTX Direct API for a domain."""
-    return query_otx_indicator("domain", domain)
+    return report(query_otx_indicator("domain", domain))
 
 
 def query_otx_hash(file_hash: str) -> str:
     """Query AlienVault OTX Direct API for a file hash."""
-    return query_otx_indicator("file", file_hash)
+    return report(query_otx_indicator("file", file_hash))
 
 
 def query_otx_cve(cve: str) -> str:
     """Query AlienVault OTX Direct API for a CVE vulnerability."""
-    return query_otx_indicator("cve", cve)
+    return report(query_otx_indicator("cve", cve))
 
 
 def query_otx_pdns(indicator: str, is_ip: bool = False) -> List[Dict[str, Any]]:

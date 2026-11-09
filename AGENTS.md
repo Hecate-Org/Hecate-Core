@@ -713,5 +713,5 @@ AI: 1. hecate-agent similar "kerberoasting" --format json
 - New integrations or MCP servers added (update "Memory and Search")
 - Team practices change (update CLI workflow or hunt execution steps)
 
-**Last reviewed:** 2026-10-05
+**Last reviewed:** 2026-11-09
 **Maintained By:** Hecate Framework Team

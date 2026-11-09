@@ -287,12 +287,34 @@ This file is gitignored by default — it is machine-local config (your LLM key,
 | `HECATE_LLM_PROVIDER` | auto | Force provider: `litellm`, `bedrock`, `ollama`, `openai` |
 | `HECATE_LLM_MODEL` | provider default | Override model name |
 | `HECATE_LLM_BASE_URL` | provider default | Override API base URL (useful in Docker) |
+| `HECATE_LLM_SIMPLE_PROVIDER` / `_MODEL` / `_BASE_URL` | inherit root | Dual-router local/simple backend (volume work: extraction, summarize, pivots) |
+| `HECATE_LLM_COMPLEX_PROVIDER` / `_MODEL` / `_BASE_URL` | inherit root | Dual-router complex backend (hypothesis, Sigma, triage, synthesis) |
+| `HECATE_LLM_SIMPLE_MAX_PROMPT_CHARS` | `12000` | Soft clip for simple-tier prompts so local models are not silently truncated mid-token |
+| `HECATE_LLM_ALLOW_DEMOTION` | unset | `1` unlocks routing locked capabilities to simple without an eval gate (lab only) |
+| `HECATE_LLM_DEMOTION_GATES` | `.hecate/llm_demotion_gates.json` | Path to demotion gate stamps written by `hecate-agent eval --write-gate` |
 | `HECATE_OLLAMA_TIMEOUT_SEC` | `180` | Per-request timeout for Ollama calls |
 | `HECATE_OLLAMA_NUM_CTX` | `16384` | Context window requested per Ollama call. Ollama's own default of 4096 silently truncates long prompts |
 | `HECATE_OLLAMA_THINK` | model default | `false` stops a reasoning model spending its output budget on thinking |
 | `GOOGLE_API_KEY` / `GEMINI_API_KEY` | — | Gemini key, used through LiteLLM. Not auto-detected: also set `HECATE_LLM_PROVIDER=litellm` and a `gemini/...` model |
 | `HECATE_LLM_CALL_LOG` | unset (off) | File to append every provider call to as it starts and ends. Hecate-Runner sets it so `hecate-agent monitor` can show a running cycle's usage |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama service URL |
+
+#### Dual LLM demotions
+
+Locked capabilities (`hypothesis`, `sigma_draft`, `sigma_review`, `finding_triage`,
+`research_synthesize`) stay on complex until you prove the simple backend:
+
+1. `hecate-agent eval --tier simple --write-gate research_synthesize --fail-under 0.8`
+2. Confirm `.hecate/llm_demotion_gates.json` records `allowed: true`
+3. Set in `.hecateconfig.yaml`:
+
+```yaml
+llm:
+  defaults:
+    research_synthesize: simple
+```
+
+Lab bypass (skips the gate): `HECATE_LLM_ALLOW_DEMOTION=1`.
 
 ### AWS Bedrock
 

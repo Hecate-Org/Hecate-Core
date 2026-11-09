@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hecate_agent.enrichment.result import report
+
 import logging
 from typing import Any, Dict, Set, cast
 
@@ -50,20 +52,20 @@ def query_shodan_ip(ip: str) -> str:
             summary = f"Org: {org} | OS: {os_name} | Open Ports: {ports}"
             if vulns:
                 summary += f" | Vulns: {', '.join(vulns[:5])}"
-            return summary
+            return report(summary)
         elif resp.status_code == 404:
-            return "No open ports found on Shodan."
+            return report("No open ports found on Shodan.", 'missing')
         else:
-            return f"Shodan API error: {resp.status_code}"
+            return report(f"Shodan API error: {resp.status_code}")
     except Exception as e:
-        return f"Error querying Shodan: {e}"
+        return report(f"Error querying Shodan: {e}")
 
 
 def query_censys_ip(ip: str) -> str:
     """Query Censys for open ports, services, TLS certificates, and JARM/JA4 fingerprints."""
     token = _setting("CENSYS_API_TOKEN")
     if not token:
-        return "CENSYS_API_TOKEN not configured."
+        return report("CENSYS_API_TOKEN not configured.", 'unconfigured')
 
     url = f"https://api.platform.censys.io/v3/global/asset/host/{ip}"
     headers = {
@@ -120,18 +122,18 @@ def query_censys_ip(ip: str) -> str:
                 parts.append(f"JA4: {', '.join(ja4_hashes[:2])}")
             if cert_subjects:
                 parts.append(f"TLS Cert: {', '.join(cert_subjects[:2])}")
-            return " | ".join(parts)
+            return report(" | ".join(parts))
         elif resp.status_code in (401, 403):
-            return "Censys Auth Error (check CENSYS_API_TOKEN)."
+            return report("Censys Auth Error (check CENSYS_API_TOKEN).", 'errors')
         elif resp.status_code == 422:
-            return "Censys API limit reached (insufficient credits/balance)."
+            return report("Censys API limit reached (insufficient credits/balance).", 'found')
         elif resp.status_code == 429:
-            return "Censys rate limit exceeded."
+            return report("Censys rate limit exceeded.", 'errors')
         elif resp.status_code == 404:
-            return "No data on Censys."
+            return report("No data on Censys.", 'missing')
         else:
-            return f"Censys API error: {resp.status_code}"
+            return report(f"Censys API error: {resp.status_code}")
     except Exception as e:
-        return f"Error querying Censys: {e}"
+        return report(f"Error querying Censys: {e}")
 
 

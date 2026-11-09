@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hecate_agent.enrichment.result import report
+
 import ipaddress
 import logging
 import re
@@ -42,13 +44,13 @@ def query_shadowserver_ip(ip: str) -> str:
     """Query Shadowserver Foundation free public API for network origin, BGP ASN, and prefix."""
     clean_ip = refang(ip).strip()
     if not clean_ip:
-        return "Invalid IP address."
+        return report("Invalid IP address.", 'skipped')
     try:
         addr = ipaddress.ip_address(clean_ip)
         if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_multicast or addr.is_reserved:
-            return "Private/internal IP address."
+            return report("Private/internal IP address.", 'skipped')
     except ValueError:
-        return f"Invalid IP address: {clean_ip}"
+        return report(f"Invalid IP address: {clean_ip}")
 
     try:
         url = f"https://api.shadowserver.org/net/asn?query={clean_ip}"
@@ -56,7 +58,7 @@ def query_shadowserver_ip(ip: str) -> str:
         if resp.status_code == 200:
             data = resp.json()
             if not data or not isinstance(data, dict):
-                return f"No ASN record on Shadowserver for {clean_ip}."
+                return report(f"No ASN record on Shadowserver for {clean_ip}.")
             asn = data.get("asn") or data.get("origin")
             asn_name = data.get("asn_name") or "Unknown"
             prefix = data.get("prefix") or ""
@@ -66,19 +68,19 @@ def query_shadowserver_ip(ip: str) -> str:
                 parts.append(f"Prefix: {prefix}")
             if isp and isp != asn_name:
                 parts.append(f"ISP: {isp}")
-            return " · ".join(parts)
+            return report(" · ".join(parts))
         elif resp.status_code == 404:
-            return f"No record on Shadowserver ({clean_ip})."
-        return f"Shadowserver error: HTTP {resp.status_code}"
+            return report(f"No record on Shadowserver ({clean_ip}).")
+        return report(f"Shadowserver error: HTTP {resp.status_code}")
     except Exception as e:
-        return f"Error querying Shadowserver: {e}"
+        return report(f"Error querying Shadowserver: {e}")
 
 
 def query_shadowserver_hash(file_hash: str) -> str:
     """Query Shadowserver Foundation free malware API for known sample signatures and imphash."""
     clean_hash = file_hash.strip().lower()
     if not re.match(r"^[a-f0-9]{32,64}$", clean_hash):
-        return f"Invalid hash format '{file_hash}'."
+        return report(f"Invalid hash format '{file_hash}'.")
 
     try:
         url = f"https://api.shadowserver.org/malware/info?sample={clean_hash}"
@@ -86,7 +88,7 @@ def query_shadowserver_hash(file_hash: str) -> str:
         if resp.status_code == 200:
             data = resp.json()
             if not data or not isinstance(data, list):
-                return f"No record on Shadowserver for {clean_hash}."
+                return report(f"No record on Shadowserver for {clean_hash}.")
             item = data[0] if isinstance(data[0], dict) else {}
             av_list = item.get("anti_virus") or []
             imphash = item.get("import_hash") or item.get("imphash")
@@ -105,11 +107,11 @@ def query_shadowserver_hash(file_hash: str) -> str:
                 parts.append("Sample recorded in Shadowserver repository")
             if imphash:
                 parts.append(f"imphash: {imphash}")
-            return " · ".join(parts)
+            return report(" · ".join(parts))
         elif resp.status_code == 404:
-            return f"No record on Shadowserver ({clean_hash})."
-        return f"Shadowserver error: HTTP {resp.status_code}"
+            return report(f"No record on Shadowserver ({clean_hash}).")
+        return report(f"Shadowserver error: HTTP {resp.status_code}")
     except Exception as e:
-        return f"Error querying Shadowserver: {e}"
+        return report(f"Error querying Shadowserver: {e}")
 
 

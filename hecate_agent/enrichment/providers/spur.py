@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hecate_agent.enrichment.result import report
+
 import ipaddress
 import logging
 import time
@@ -92,33 +94,33 @@ def query_spur_ip(ip: str) -> str:
     """Query Spur.us Context API for residential proxies, VPN tunnels, and bulletproof infrastructure."""
     clean_ip = refang(ip).strip()
     if not clean_ip:
-        return "Invalid IP address."
+        return report("Invalid IP address.", 'skipped')
 
     try:
         addr = ipaddress.ip_address(clean_ip)
         if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_multicast or addr.is_reserved:
-            return "Private/internal IP address."
+            return report("Private/internal IP address.", 'skipped')
     except ValueError:
-        return f"Invalid IP address: {clean_ip}"
+        return report(f"Invalid IP address: {clean_ip}")
 
     key = _setting("SPUR_API_KEY")
     if not key:
-        return "SPUR_API_KEY not configured."
+        return report("SPUR_API_KEY not configured.", 'unconfigured')
 
     now = time.time()
     cached = _SPUR_CACHE.get(clean_ip)
     if cached and (now - cached[0] < _SPUR_CACHE_TTL):
-        return cached[1]
+        return report(cached[1])
 
     data = extract_spur_context(clean_ip)
     if not data.get("configured", True):
-        return str(data.get("error") or "SPUR_API_KEY not configured.")
+        return report(str(data.get("error") or "SPUR_API_KEY not configured."))
     if data.get("error"):
-        return str(data["error"])
+        return report(str(data["error"]))
     if not data.get("found", True):
         res = "Not observed on Spur."
         _SPUR_CACHE[clean_ip] = (now, res, data)
-        return res
+        return report(res)
 
     infra = data.get("infrastructure") or ""
     as_info = data.get("as") or {}
@@ -161,6 +163,6 @@ def query_spur_ip(ip: str) -> str:
 
     summary = " | ".join(parts) if parts else "No threat or proxy signals reported."
     _SPUR_CACHE[clean_ip] = (now, summary, data)
-    return summary
+    return report(summary)
 
 

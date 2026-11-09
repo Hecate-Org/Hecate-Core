@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hecate_agent.enrichment.result import report
+
 import functools
 import logging
 import re
@@ -42,7 +44,7 @@ def query_epss(cve: str) -> str:
     """Query FIRST EPSS API for vulnerability exploit prediction probability and percentile."""
     clean_cve = cve.strip().upper()
     if not re.match(r"^CVE-\d{4}-\d{4,7}$", clean_cve):
-        return f"Invalid CVE identifier '{cve}'."
+        return report(f"Invalid CVE identifier '{cve}'.")
     try:
         url = f"https://api.first.org/data/v1/epss?cve={clean_cve}"
         resp = httpx.get(url, timeout=5.0)
@@ -64,11 +66,11 @@ def query_epss(cve: str) -> str:
                 else:
                     severity = "MODERATE/LOW EXPLOIT PROBABILITY"
                 date_str = f" · Date: {date_val}" if date_val else ""
-                return f"EPSS: {epss_pct:.2f}% ({severity}) · {perc_pct:.1f}th percentile{date_str}"
-            return f"No EPSS score published for {clean_cve}."
-        return f"EPSS API HTTP {resp.status_code}"
+                return report(f"EPSS: {epss_pct:.2f}% ({severity}) · {perc_pct:.1f}th percentile{date_str}")
+            return report(f"No EPSS score published for {clean_cve}.")
+        return report(f"EPSS API HTTP {resp.status_code}")
     except Exception as e:
-        return f"Error querying EPSS: {e}"
+        return report(f"Error querying EPSS: {e}")
 
 
 def query_epss_batch(cves: List[str]) -> Dict[str, str]:
@@ -101,13 +103,17 @@ def query_epss_batch(cves: List[str]) -> Dict[str, str]:
                 else:
                     severity = "MODERATE/LOW EXPLOIT PROBABILITY"
                 date_str = f" · Date: {date_val}" if date_val else ""
-                results[cve_id] = f"EPSS: {epss_pct:.2f}% ({severity}) · {perc_pct:.1f}th percentile{date_str}"
+                results[cve_id] = report(
+                    f"EPSS: {epss_pct:.2f}% ({severity}) · {perc_pct:.1f}th percentile{date_str}",
+                    "found",
+                    facts={"epss": epss_val},
+                )
         for c in chunk:
             if c not in results:
-                results[c] = f"No EPSS score published for {c}."
+                results[c] = report(f"No EPSS score published for {c}.", "missing")
     except Exception as e:
         for c in chunk:
-            results[c] = f"Error querying EPSS: {e}"
+            results[c] = report(f"Error querying EPSS: {e}", "errors", error=str(e))
     return results
 
 
@@ -115,7 +121,7 @@ def query_osv_vuln(vuln_id: str) -> str:
     """Query OSV.dev (Google / OpenSSF Open Source Vulnerabilities) API for advisory details, affected packages, and severity."""
     clean_id = vuln_id.strip()
     if not clean_id:
-        return "Invalid vulnerability ID."
+        return report("Invalid vulnerability ID.", 'skipped')
     try:
         url = f"https://api.osv.dev/v1/vulns/{clean_id}"
         resp = httpx.get(url, timeout=5.0)
@@ -161,23 +167,23 @@ def query_osv_vuln(vuln_id: str) -> str:
             if cvss:
                 parts.append(f"CVSS: {cvss}")
 
-            return " | ".join(parts) if parts else "Advisory cataloged on OSV.dev."
+            return report(" | ".join(parts) if parts else "Advisory cataloged on OSV.dev.")
         elif resp.status_code == 404:
-            return "No open-source advisory on OSV.dev."
-        return f"OSV.dev error: HTTP {resp.status_code}"
+            return report("No open-source advisory on OSV.dev.", 'missing')
+        return report(f"OSV.dev error: HTTP {resp.status_code}")
     except Exception as e:
-        return f"Error querying OSV.dev: {e}"
+        return report(f"Error querying OSV.dev: {e}")
 
 
 def query_vulncheck_cve(cve: str) -> str:
     """Query VulnCheck KEV API for weaponization status, in-the-wild exploitation, and threat actors."""
     key = _setting("VULNCHECK_API_KEY")
     if not key:
-        return "VULNCHECK_API_KEY not configured."
+        return report("VULNCHECK_API_KEY not configured.", 'unconfigured')
 
     clean_cve = cve.strip().upper()
     if not re.match(r"^CVE-\d{4}-\d{4,7}$", clean_cve):
-        return f"Invalid CVE identifier '{cve}'."
+        return report(f"Invalid CVE identifier '{cve}'.")
 
     headers = {
         "Authorization": f"Bearer {key}",
@@ -190,7 +196,7 @@ def query_vulncheck_cve(cve: str) -> str:
         if resp.status_code == 200:
             data = resp.json().get("data") or []
             if not data:
-                return f"Not listed in VulnCheck KEV ({clean_cve})."
+                return report(f"Not listed in VulnCheck KEV ({clean_cve}).")
             item = data[0] if isinstance(data, list) else data
             exploit_type = item.get("exploit_type") or "Actively Exploited"
             actors = item.get("threat_actors") or []
@@ -204,16 +210,16 @@ def query_vulncheck_cve(cve: str) -> str:
                 parts.append(f"Target: {target}")
             if actors:
                 parts.append(f"Threat Actors: {', '.join(actors[:3])}")
-            return " · ".join(parts)
+            return report(" · ".join(parts))
         elif resp.status_code == 404:
-            return f"Not listed in VulnCheck KEV ({clean_cve})."
+            return report(f"Not listed in VulnCheck KEV ({clean_cve}).")
         elif resp.status_code in (401, 403):
-            return "VulnCheck Auth Error (check VULNCHECK_API_KEY)."
+            return report("VulnCheck Auth Error (check VULNCHECK_API_KEY).", 'errors')
         elif resp.status_code == 429:
-            return "VulnCheck rate limit reached."
-        return f"VulnCheck error: HTTP {resp.status_code}"
+            return report("VulnCheck rate limit reached.", 'errors')
+        return report(f"VulnCheck error: HTTP {resp.status_code}")
     except Exception as e:
-        return f"Error querying VulnCheck: {e}"
+        return report(f"Error querying VulnCheck: {e}")
 
 
 @functools.lru_cache(maxsize=16)
@@ -232,14 +238,14 @@ def query_msrc_cve(cve: str) -> str:
     clean_cve = cve.strip().upper()
     m = re.match(r"^CVE-(\d{4})-\d{4,7}$", clean_cve)
     if not m:
-        return f"Invalid CVE identifier '{cve}'."
+        return report(f"Invalid CVE identifier '{cve}'.")
     year = m.group(1)
 
     try:
         updates_url = "https://api.msrc.microsoft.com/cvrf/v2.0/updates"
         resp = httpx.get(updates_url, headers={"Accept": "application/json"}, timeout=6.0)
         if resp.status_code != 200:
-            return f"MSRC API error (HTTP {resp.status_code})"
+            return report(f"MSRC API error (HTTP {resp.status_code})")
         updates = resp.json().get("value") or []
         matching_docs = [u["ID"] for u in updates if isinstance(u, dict) and u.get("ID", "").startswith(year)]
         for doc_id in matching_docs[:12]:
@@ -267,9 +273,9 @@ def query_msrc_cve(cve: str) -> str:
                         parts.append(f"CVSS: {cvss}")
                     if exploitability:
                         parts.append(f"Exploitability: {exploitability}")
-                    return " · ".join(parts)
-        return f"Not listed in Microsoft Security Updates ({clean_cve})."
+                    return report(" · ".join(parts))
+        return report(f"Not listed in Microsoft Security Updates ({clean_cve}).")
     except Exception as e:
-        return f"Error querying MSRC: {e}"
+        return report(f"Error querying MSRC: {e}")
 
 

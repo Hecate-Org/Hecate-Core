@@ -2917,6 +2917,9 @@ per fixture, so a local model may take a few minutes.
 | `--output` | Choice | table | `table` or `json` |
 | `--temperature` | Float | 0.0 | Sampling temperature; the default keeps runs reproducible |
 | `--grounded` | Flag | False | Score STIX-grounded fixtures instead of cold recall |
+| `--tier` | Choice | unset | Eval the dual-router `simple` or `complex` backend |
+| `--fail-under` | Float | unset (`0.8` with `--write-gate`) | Exit 1 when the score is below this threshold |
+| `--write-gate` | String | unset | On pass, write a demotion gate stamp unlocking this locked capability for simple routing |
 
 ### Cold recall vs. grounded
 
@@ -2956,6 +2959,12 @@ hecate-agent eval --model qwen2.5:14b-instruct-q4_K_M --output json > 14b.json
 
 ```bash
 hecate-agent eval --grounded
+```
+
+**Gate demoting a locked capability onto the simple tier**:
+
+```bash
+hecate-agent eval --tier simple --write-gate research_synthesize --fail-under 0.8
 ```
 
 ### JSON Output

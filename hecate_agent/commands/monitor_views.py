@@ -238,8 +238,8 @@ def _stage_table(
     step_elapsed: Optional[float] = None,
 ) -> Table:
     table = Table(box=None, expand=True, padding=(0, 1))
-    table.add_column("STATE", width=14)
-    table.add_column("PIPELINE STAGE", ratio=1)
+    table.add_column("STATE", width=18, no_wrap=True, overflow="ellipsis")
+    table.add_column("PIPELINE STAGE", ratio=1, no_wrap=True, overflow="ellipsis")
     current_order = in_progress if in_progress is not None else (_stage_order(current.stage) if current else -1)
     for index, (key, label) in enumerate(_STAGES):
         if current and current.stage == "done":
@@ -428,6 +428,7 @@ def _narrow_usage_rows(
     by_stage: str,
     latency: str,
     workspace: Optional[Path] = None,
+    by_tier: str = "",
 ) -> None:
     """The usage rows for a column a third of the screen wide: one fact a row."""
     table.add_row("LLM", llm)
@@ -435,6 +436,8 @@ def _narrow_usage_rows(
     table.add_row("Speed", speed)
     table.add_row("Latency", latency)
     table.add_row("Model", model)
+    if by_tier:
+        table.add_row("By tier", by_tier)
     first, _, second = by_stage.partition("\n")
     table.add_row("By stage", first)
     if second:
@@ -453,10 +456,41 @@ _PURPLE_PANEL_HEIGHT = 14
 _BOTTOM_DETAIL_PANELS_HEIGHT = 14
 
 
-def _usage_rows(table: Table, llm: str, model: str, by_stage: str, latency: str) -> None:
-    """The full layout's four usage rows: the panel is this tall and no taller."""
+def _tier_line(live: Dict[str, Any]) -> str:
+    """Compact simple/complex split from call-log ``by_tier`` (empty when absent)."""
+    by_tier = live.get("by_tier")
+    if not isinstance(by_tier, dict):
+        return ""
+    parts: List[str] = []
+    for name in ("simple", "complex"):
+        bucket = by_tier.get(name) or {}
+        calls = int(bucket.get("llm_calls") or 0)
+        if calls <= 0:
+            continue
+        duration_ms = int(bucket.get("duration_ms") or 0)
+        avg = f"{duration_ms / calls / 1000:.1f}s" if duration_ms > 0 else "—"
+        cost = float(bucket.get("cost_usd") or 0.0)
+        cost_part = f" · ${cost:.2f}" if cost > 0 else ""
+        parts.append(f"{name} {calls} · {avg}{cost_part}")
+    escalated = int(live.get("escalated_calls") or 0)
+    if escalated:
+        parts.append(f"escalated {escalated}")
+    return " · ".join(parts)
+
+
+def _usage_rows(
+    table: Table,
+    llm: str,
+    model: str,
+    by_stage: str,
+    latency: str,
+    by_tier: str = "",
+) -> None:
+    """The full layout's usage rows: the panel is this tall and no taller."""
     table.add_row("LLM", llm)
     table.add_row("Model", model)
+    if by_tier:
+        table.add_row("By tier", by_tier)
     table.add_row("By stage", by_stage)
     table.add_row("Latency", latency)
 
@@ -635,6 +669,9 @@ def _live_usage_panel(
         live_stage_line = " · ".join(f"{stage} {count}" for stage, count in stage_counts.items() if stage != "cycle")
     else:
         live_stage_line = "no usage recorded yet"
+    live_tier_line = _tier_line(live)
+    cost_usd = float(live.get("cost_usd") or 0.0)
+    cost_suffix = f" · ${cost_usd:.2f}" if cost_usd > 0 else ""
 
     table = Table(box=None, show_header=False, expand=True, padding=(0, 1))
     table.add_column("label", style="dim", width=10, min_width=10, no_wrap=True)
@@ -642,7 +679,7 @@ def _live_usage_panel(
     if narrow:
         _narrow_usage_rows(
             table,
-            call_text,
+            call_text + cost_suffix,
             f"{live['input_tokens']:,} in / {live['output_tokens']:,} out",
             speed_text,
             models,
@@ -650,19 +687,26 @@ def _live_usage_panel(
             live_stage_line,
             latency_text,
             workspace,
+            by_tier=live_tier_line,
         )
     elif compact:
-        table.add_row("LLM", f"{call_text} · {live['input_tokens']:,} in / {live['output_tokens']:,} out")
+        table.add_row(
+            "LLM",
+            f"{call_text} · {live['input_tokens']:,} in / {live['output_tokens']:,} out{cost_suffix}",
+        )
         table.add_row("Speed", speed_text)
         table.add_row("Latency", latency_text)
         table.add_row("Model", models)
+        if live_tier_line:
+            table.add_row("By tier", live_tier_line)
     else:
         _usage_rows(
             table,
-            f"{call_text} · {live['input_tokens']:,} in / {live['output_tokens']:,} out · speed {speed_text}",
+            f"{call_text} · {live['input_tokens']:,} in / {live['output_tokens']:,} out · speed {speed_text}{cost_suffix}",
             models,
             live_stage_line,
             latency_text,
+            by_tier=live_tier_line,
         )
     return Panel(table, title="[bold bright_cyan]LLM[/]", border_style="bright_magenta", box=box.ROUNDED)
 
@@ -2602,7 +2646,7 @@ def _render_dashboard(
     usage_on_left = body_height >= stages_height + service_height + llm_height + hunts_height + detections_height + 5
     middle_height = body_height if usage_on_left else max(10, body_height - _BOTTOM_ROW_HEIGHT)
     service_on_left = runner.installed and middle_height >= stages_height + service_height
-    left_width = min(56, max(48, console.size.width // 4)) if console.size.width >= 120 else None
+    left_width = min(68, max(48, console.size.width // 4)) if console.size.width >= 120 else None
     ops_width = (console.size.width - left_width - 2) if left_width else (console.size.width * 2 // 3)
     expanded_mitre = usage_on_left and ops_width >= 135
     llm_panel = _usage_panel(

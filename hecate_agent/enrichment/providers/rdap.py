@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hecate_agent.enrichment.result import report
+
 import logging
 import re
 from datetime import datetime, timezone
@@ -102,12 +104,12 @@ def query_rdap_domain(domain: str) -> str:
                 parts.append(f"Registrar: {registrar}")
 
             if parts:
-                return " | ".join(parts)
-            return "Domain active (no creation date recorded in RDAP)."
+                return report(" | ".join(parts))
+            return report("Domain active (no creation date recorded in RDAP).", 'found')
         elif resp.status_code == 404:
-            return "Domain not found on RDAP."
-        return f"RDAP error: HTTP {resp.status_code}"
+            return report("Domain not found on RDAP.", "missing")
+        return report(f"RDAP error: HTTP {resp.status_code}")
     except Exception as e:
-        return f"Error querying RDAP: {e}"
+        return report(f"Error querying RDAP: {e}")
 
 

@@ -13,12 +13,14 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from hecate_agent.agents.base import AgentResult, LLMAgent
 from hecate_agent.core.telemetry_examples import render_examples
 from hecate_agent.core.telemetry_mapping import documented_data_sources, map_findings
 from hecate_agent.core.workspace import knowledge_file
+from hecate_agent.core.hunting_knowledge import EVIDENCE_RULES, load_environment_context, load_stage_guidance
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +198,7 @@ class ResearchInput:
     # payloads and IDE-task autorun was researched from its headline alone,
     # and a pun in a title ("We'll Call Your APIs") became a telemetry gap.
     source_context: Optional[str] = None
+    workspace: Optional[Path] = None
 
 
 @dataclass
@@ -251,6 +254,8 @@ class ResearchOutput:
     #: price, or a provider that reported no usage. ``cost_basis`` says which.
     total_cost_usd: Optional[float] = 0.0
     cost_basis: str = ""
+    max_input_tokens: Optional[int] = None
+    input_token_samples: Optional[int] = None
     input_tokens: int = 0
     output_tokens: int = 0
     llm_duration_ms: int = 0
@@ -306,6 +311,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
         #: First failure detail, for the research document's grounding note.
         self._search_failure_detail = ""
         self._web_searches = 0
+        self._workspace: Optional[Path] = None
 
     def _log_llm_metrics(
         self,
@@ -427,6 +433,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
         start_time = time.time()
         self._reset_llm_usage()
         self._web_searches = 0
+        self._workspace = input_data.workspace
         # Read by every skill's prompt; set once before the skills fan out.
         self._source_context = (input_data.source_context or "").strip()[:_SOURCE_CONTEXT_MAX_CHARS]
 
@@ -529,6 +536,8 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
                 llm_calls=usage["llm_calls"],
                 total_cost_usd=usage["estimated_cost_usd"],
                 cost_basis=usage.get("cost_basis", ""),
+                max_input_tokens=usage["max_input_tokens"],
+                input_token_samples=usage["input_token_samples"],
                 input_tokens=usage["input_tokens"],
                 output_tokens=usage["output_tokens"],
                 llm_duration_ms=usage["llm_duration_ms"],
@@ -983,7 +992,22 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
                 grounding=_GROUNDING_INSTRUCTION,
             )
 
-            response = self._call_llm(prompt, max_tokens=2048)
+            def validate_json(text: str) -> Optional[str]:
+                try:
+                    data = self._parse_json_response(text)
+                except ValueError as exc:
+                    return str(exc)
+                if "summary" not in data or "key_findings" not in data:
+                    return "response JSON missing summary or key_findings"
+                return None
+
+            response = self._call_llm_with_retry(
+                prompt,
+                validate_json,
+                max_retries=1,
+                max_tokens=2048,
+                capability="research_summarize",
+            )
             data = self._parse_json_response(response)
             return data["summary"], data["key_findings"]
 
@@ -1082,7 +1106,22 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
                 context=context,
             )
 
-            response = self._call_llm(prompt, max_tokens=2048)
+            def validate_json(text: str) -> Optional[str]:
+                try:
+                    data = self._parse_json_response(text)
+                except ValueError as exc:
+                    return str(exc)
+                if "summary" not in data or "key_findings" not in data:
+                    return "response JSON missing summary or key_findings"
+                return None
+
+            response = self._call_llm_with_retry(
+                prompt,
+                validate_json,
+                max_retries=1,
+                max_tokens=2048,
+                capability="research_summarize",
+            )
             data = self._parse_json_response(response)
             return data["summary"], data["key_findings"]
 
@@ -1150,7 +1189,22 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
                 environment_data=environment_data[:1000],
             )
 
-            response = self._call_llm(prompt, max_tokens=2048)
+            def validate_json(text: str) -> Optional[str]:
+                try:
+                    data = self._parse_json_response(text)
+                except ValueError as exc:
+                    return str(exc)
+                if "summary" not in data or "key_findings" not in data:
+                    return "response JSON missing summary or key_findings"
+                return None
+
+            response = self._call_llm_with_retry(
+                prompt,
+                validate_json,
+                max_retries=1,
+                max_tokens=2048,
+                capability="research_summarize",
+            )
             data = self._parse_json_response(response)
             return data["summary"], data["key_findings"]
 
@@ -1187,6 +1241,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
             prompt = (
                 "You are a senior threat hunter synthesizing"
                 " research for a hunt.\n\n"
+                "{tradecraft}\n\n"
                 "{grounding}"
                 "Topic: {topic}{technique_str}\n\n"
                 "{source}"
@@ -1207,6 +1262,9 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
                 '    "Focus: ..."\n'
                 "  ]\n}}"
             ).format(
+                tradecraft=EVIDENCE_RULES
+                + "\n"
+                + load_stage_guidance("research", workspace=getattr(self, "_workspace", None)),
                 grounding=grounding,
                 topic=topic,
                 technique_str=technique_str,
@@ -1214,7 +1272,22 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
                 context=context,
             )
 
-            response = self._call_llm(prompt, max_tokens=2048)
+            def validate_json(text: str) -> Optional[str]:
+                try:
+                    data = self._parse_json_response(text)
+                except ValueError as exc:
+                    return str(exc)
+                if "summary" not in data or "key_findings" not in data:
+                    return "response JSON missing summary or key_findings"
+                return None
+
+            response = self._call_llm_with_retry(
+                prompt,
+                validate_json,
+                max_retries=1,
+                max_tokens=2048,
+                capability="research_synthesize",
+            )
             data = self._parse_json_response(response)
             return data["summary"], data["key_findings"]
 
@@ -1233,7 +1306,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
         Resolved against the workspace rather than the working directory, so
         a caller that does not chdir into the workspace first still finds it.
         """
-        schema_path = knowledge_file("OCSF_SCHEMA_REFERENCE.md")
+        schema_path = knowledge_file("OCSF_SCHEMA_REFERENCE.md", getattr(self, "_workspace", None))
         if schema_path.exists():
             return schema_path.read_text(encoding="utf-8")[:5000]  # Limit size
         return "OCSF schema reference not found"
@@ -1243,10 +1316,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
 
         Workspace-relative for the same reason as the schema above.
         """
-        env_path = knowledge_file("environment.md")
-        if env_path.exists():
-            return env_path.read_text(encoding="utf-8")  # Limit size
-        return "Environment file not found"
+        return load_environment_context(workspace=getattr(self, "_workspace", None))
 
     def _extract_hypothesis(
         self,

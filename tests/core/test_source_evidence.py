@@ -372,7 +372,9 @@ def test_the_models_usage_is_counted_across_both_passes(monkeypatch: pytest.Monk
                 text=_reply(), input_tokens=1000, output_tokens=50, model="claude-sonnet-4-5", duration_ms=2000, cost_usd=0.01
             )
 
-    monkeypatch.setattr(llm_provider, "create_provider", lambda *_a, **_k: Provider())
+    monkeypatch.setattr(
+        "hecate_agent.core.llm_router.create_router", lambda *_a, **_k: Provider()
+    )
     ev = se.extract_source_evidence("https://report.example/a", page_text=PAGE)
     assert ev.usage_metadata()["llm_calls"] == ev.chunks
     se.classify_feed_indicators([IndicatorRecord(DECODED, "sha256")], ev)
@@ -460,3 +462,46 @@ def test_a_github_repository_is_read_as_its_readme(monkeypatch: pytest.MonkeyPat
     assert se.fetch_page_text("https://github.com/al4n4n/CVE-2026-58115") == readme.strip()
     assert calls == ["https://api.github.com/repos/al4n4n/CVE-2026-58115/readme"]
     assert se.github_readme_text("https://github.com/al4n4n/CVE-2026-58115/blob/main/x.py") == ""
+
+
+def test_reference_urls_and_domains_are_excluded_from_indicators() -> None:
+    from hecate_agent.core.source_evidence import is_reference_url, _checked
+
+    # CVE, CVSS, CWE, NVD reference URLs and domains must be recognized as reference URLs
+    assert is_reference_url("https://www.cve.org/CVERecord?id=CVE-2024-3400") is True
+    assert is_reference_url("hxxps://www[.]cve[.]org/CVERecord?id=CVE-2024-3400") is True
+    assert is_reference_url("https://www.first.org/cvss/calculator/4.0#...") is True
+    assert is_reference_url("https://cwe.mitre.org/data/definitions/77.html") is True
+    assert is_reference_url("https://nvd.nist.gov/vuln/detail/CVE-2024-3400") is True
+    assert is_reference_url("cve.org") is True
+    assert is_reference_url("www.first.org") is True
+
+    # Matching the source report URL domain itself
+    assert (
+        is_reference_url(
+            "https://security.paloaltonetworks.com/CVE-2024-3400",
+            source_url="https://security.paloaltonetworks.com/CVE-2024-3400",
+        )
+        is True
+    )
+
+    # Adversary URLs and endpoints must NOT be flagged as reference URLs
+    assert is_reference_url("http://198.51.100.7/beacon") is False
+    assert is_reference_url("https://malicious-c2.com/payload.exe") is False
+    assert is_reference_url("/ssl-vpn/hipreport.esp") is False
+
+    # In _checked, reference URLs are rejected with an informative problem message
+    artifact, problem = _checked(
+        {
+            "value": "hxxps://www[.]cve[.]org/CVERecord?id=CVE-2024-3400",
+            "kind": "url",
+            "role": "unknown",
+            "status": "active",
+            "evidence": "See CVE record hxxps://www[.]cve[.]org/CVERecord?id=CVE-2024-3400",
+        },
+        page="See CVE record hxxps://www[.]cve[.]org/CVERecord?id=CVE-2024-3400",
+        page_words="See CVE record hxxps://www[.]cve[.]org/CVERecord?id=CVE-2024-3400",
+    )
+    assert artifact is None
+    assert "reference/documentation URL" in problem
+

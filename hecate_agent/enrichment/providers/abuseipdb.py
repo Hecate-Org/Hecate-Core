@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hecate_agent.enrichment.result import report
+
 import logging
 from typing import Set
 
@@ -40,7 +42,7 @@ def query_abuseipdb_ip(ip: str) -> str:
     """Query AbuseIPDB for IP abuse confidence score, reports, ISP, and usage type."""
     key = _setting("ABUSEIPDB_API_KEY")
     if not key:
-        return "ABUSEIPDB_API_KEY not configured."
+        return report("ABUSEIPDB_API_KEY not configured.", 'unconfigured')
     url = "https://api.abuseipdb.com/api/v2/check"
     headers = {
         "Key": key,
@@ -63,15 +65,15 @@ def query_abuseipdb_ip(ip: str) -> str:
             parts = [f"Score: {score}% (Reports: {reports})", f"ISP: {isp}", f"Usage: {usage}"]
             if country:
                 parts.append(f"Country: {country}")
-            return " | ".join(parts)
+            return report(" | ".join(parts))
         elif resp.status_code in (401, 403):
-            return "AbuseIPDB Auth Error (check ABUSEIPDB_API_KEY)."
+            return report("AbuseIPDB Auth Error (check ABUSEIPDB_API_KEY).", 'errors')
         elif resp.status_code == 429:
-            return "AbuseIPDB rate limit exceeded."
+            return report("AbuseIPDB rate limit exceeded.", 'errors')
         elif resp.status_code in (404, 422):
-            return "No data on AbuseIPDB."
-        return f"AbuseIPDB error: HTTP {resp.status_code}"
+            return report("No data on AbuseIPDB.", 'missing')
+        return report(f"AbuseIPDB error: HTTP {resp.status_code}")
     except Exception as e:
-        return f"Error querying AbuseIPDB: {e}"
+        return report(f"Error querying AbuseIPDB: {e}")
 
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hecate_agent.enrichment.result import report
+
 import logging
 import re
 import time
@@ -160,7 +162,7 @@ def query_crtsh_domain(domain: str) -> str:
     now = time.monotonic()
     cached = _CRTSH_CACHE.get(clean)
     if cached and (now - cached[0] < _CRTSH_CACHE_TTL):
-        return cached[1]
+        return report(cached[1])
 
     apex = _get_apex_domain(clean)
     if any(clean.endswith(f".{suffix}") or clean == suffix for suffix in _SHARED_HOSTING_SUFFIXES):
@@ -189,7 +191,7 @@ def query_crtsh_domain(domain: str) -> str:
             if not isinstance(data, list) or not data:
                 res = "No certificates found on crt.sh."
                 _CRTSH_CACHE[clean] = (now, res, [])
-                return res
+                return report(res)
 
             siblings: Set[str] = set()
             issuers: Set[str] = set()
@@ -242,11 +244,11 @@ def query_crtsh_domain(domain: str) -> str:
 
             res = " | ".join(parts)
             _CRTSH_CACHE[clean] = (now, res, sorted_sibs)
-            return res
+            return report(res)
         elif resp.status_code == 429:
-            return "crt.sh rate limit exceeded."
-        return f"crt.sh error: HTTP {resp.status_code}"
+            return report("crt.sh rate limit exceeded.", 'errors')
+        return report(f"crt.sh error: HTTP {resp.status_code}")
     except Exception as e:
-        return f"Error querying crt.sh: {e}"
+        return report(f"Error querying crt.sh: {e}")
 
 

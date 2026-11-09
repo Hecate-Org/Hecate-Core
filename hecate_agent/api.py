@@ -19,6 +19,8 @@ from hecate_agent.agents.llm.hunt_researcher import HuntResearcherAgent, Researc
 from hecate_agent.core.attack_matrix import get_technique, get_superseding_technique_id, is_using_stix
 from hecate_agent.core.research_manager import ResearchManager
 from hecate_agent.commands.research import _generate_research_markdown
+from hecate_agent.core.hunting_knowledge import load_environment_context
+from hecate_agent.core.workspace import workspace_root
 
 
 class GenerationError(RuntimeError):
@@ -39,19 +41,15 @@ def _generate_hypothesis(
     agent = HypothesisGeneratorAgent(llm_enabled=True)
 
     past_hunts: List[dict] = []
-    environment = {}
+    workspace = workspace_root(workspace)
+    environment = {"environment_md": load_environment_context(workspace=workspace)}
     research_ctx = None
 
-    if workspace:
+    if research_id:
         research_mgr = ResearchManager(workspace / "research")
-        if research_id:
-            research_doc = research_mgr.get_research(research_id)
-            if research_doc:
-                research_ctx = research_mgr.extract_research_context(research_doc)
-
-        env_file = workspace / "knowledge" / "environment.md"
-        if env_file.exists():
-            environment = {"environment_md": env_file.read_text(encoding="utf-8")}
+        research_doc = research_mgr.get_research(research_id)
+        if research_doc:
+            research_ctx = research_mgr.extract_research_context(research_doc)
 
     input_data = HypothesisGenerationInput(
         threat_intel=threat_intel,
@@ -59,6 +57,7 @@ def _generate_hypothesis(
         environment=environment,
         research=research_ctx,
         intel_is_indicator_only=indicators_only,
+        workspace=workspace,
     )
 
     result = agent.execute(input_data)
@@ -125,6 +124,7 @@ def generate_research(
             web_search_enabled=web_search_enabled,
             research_id=research_id,
             source_context=source_context,
+            workspace=workspace,
         )
     )
 
@@ -152,6 +152,8 @@ def generate_research(
         "grounding": research_grounding(output.web_searches_performed),
         **({"web_search_note": output.web_search_note} if output.web_search_note else {}),
         "llm_calls": output.llm_calls,
+        "max_input_tokens": output.max_input_tokens,
+        "input_token_samples": output.input_token_samples,
         "total_cost_usd": output.total_cost_usd,
         "cost_basis": output.cost_basis,
         "data_source_availability": output.data_source_availability,
@@ -214,11 +216,9 @@ def generate_sigma_with_metrics(
             written_paths.append(path)
             try:
                 trans_queries = transpile_sigma_rule(rule.rule_yaml)
-                for t_res in trans_queries.values():
-                    if getattr(t_res, "success", False) and getattr(t_res, "query", None):
-                        q_path = path.with_suffix(t_res.file_extension)
-                        q_path.write_text(t_res.query.strip() + "\n", encoding="utf-8")
-                        written_paths.append(q_path)
+                from hecate_agent.core.sigma_transpiler import write_transpiled_queries
+
+                written_paths.extend(write_transpiled_queries(path, trans_queries))
             except Exception:
                 pass
 
@@ -282,16 +282,22 @@ def link_research_to_hunt(
     return manager.link_hunt_to_research(research_id, hunt_id)
 
 
-def generate_enrichment_summary(threat_intel: str) -> str:
+def generate_enrichment_summary(
+    threat_intel: str,
+    stats: Optional[Dict[str, Dict[str, int]]] = None,
+    citations: Optional[List[Dict[str, str]]] = None,
+) -> str:
     """Enrich indicators found in threat intelligence using external OSINT sources.
 
     Extracts hashes, IPs, and domains from the threat_intel text, concurrently queries
     configured OSINT platforms (VirusTotal, Shodan, Censys, ThreatFox, MISP, etc.),
-    and returns a formatted markdown summary of the findings.
+    and returns a formatted markdown summary of the findings. ``stats``, when
+    given, is filled with per-service lookup counts and outcomes. ``citations``,
+    when given, receives one record per lookup.
     """
     from hecate_agent.orchestrator.enrichment import generate_enrichment_summary as _enrich
 
-    return _enrich(threat_intel)
+    return _enrich(threat_intel, stats, citations)
 
 
 def extract_indicators(threat_intel: str) -> Dict[str, List[str]]:

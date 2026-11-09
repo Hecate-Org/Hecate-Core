@@ -29,14 +29,12 @@ def workspace_root(explicit: Optional[Path] = None) -> Path:
     the working directory holding a workspace config, then the working
     directory itself.
     """
-    if explicit is not None and Path(explicit).is_dir():
-        return Path(explicit)
+    if explicit is not None:
+        return Path(explicit).expanduser().resolve()
 
     env_path = os.environ.get("HECATE_WORKSPACE")
     if env_path:
-        candidate = Path(env_path)
-        if candidate.is_dir():
-            return candidate
+        return Path(env_path).expanduser().resolve()
 
     current = Path.cwd()
     for parent in [current, *current.parents]:
@@ -63,25 +61,19 @@ def load_workspace_env() -> None:
     1. Existing environment variables (override=False)
     2. Local directory .env (if present)
     3. Workspace root .env (from HECATE_WORKSPACE, .hecateconfig.yaml discovery,
-       or default ~/betas/Hecate-Workspace/.env)
+       or the current working directory)
     """
     from dotenv import load_dotenv
 
     had_ws = "HECATE_WORKSPACE" in os.environ
 
     # 1. Local cwd .env (developer override)
-    load_dotenv(override=False)
+    load_dotenv(Path.cwd() / ".env", override=False)
 
     # 2. Discovered workspace root .env
     ws = workspace_root()
     if (ws / ".env").is_file():
         load_dotenv(ws / ".env", override=False)
-    else:
-        # 3. Default workspace location fallback if cwd wasn't inside the workspace
-        default_ws = Path.home() / "betas" / "Hecate-Workspace"
-        if (default_ws / ".env").is_file():
-            load_dotenv(default_ws / ".env", override=False)
-
     # Preserve environment isolation: if HECATE_WORKSPACE was not set before
     # loading .env, don't let .env define it in os.environ and break tests
     # that verify dynamic cwd walk-up resolution.

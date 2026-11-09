@@ -96,7 +96,7 @@ def test_a_verified_contradiction_drops_the_model_rule() -> None:
     assert rejected == [f'process_creation: reviewer: the source has cmd.exe starting Word (source: "{GUIDANCE}")']
 
 
-def test_unresolved_revisions_are_deferred_with_an_actionable_reason() -> None:
+def test_unverified_revisions_are_kept_with_an_actionable_note() -> None:
     agent = _agent(
         [
             {"verdict": "revise", "issues": ["no command-line context"], "contradiction": "maybe reversed", "quote": ""},
@@ -104,8 +104,11 @@ def test_unresolved_revisions_are_deferred_with_an_actionable_reason() -> None:
         ]
     )
     kept, rejected, gaps, _ = agent._review_rules([_rule("Word spawning cmd")], _input())
-    assert kept == []
-    assert rejected == ["process_creation: reviewer requested unresolved revisions: no command-line context"]
+    assert len(kept) == 1
+    assert rejected == []
+    note = yaml.safe_load(kept[0].rule_yaml)["hecate_review"]
+    assert note["verdict"] == "revise"
+    assert note["issues"] == ["no command-line context"]
     assert gaps == [{"behaviour": "decoy opened in Word", "quote": "opens a decoy DOCX in Word"}]
 
 
@@ -183,3 +186,23 @@ detection:
     assert doc["logsource"]["product"] == "freebsd"
     assert doc["hecate_review"]["verdict"] == "remediated"
     assert any("auto-remediated platform" in w for w in warnings)
+
+
+def test_generation_keeps_unverified_review_advice() -> None:
+    """Neither advisory revisions nor an invented quote can veto a valid draft."""
+    for verdict in ("revise", "reject"):
+        agent = SigmaGeneratorAgent.__new__(SigmaGeneratorAgent)
+        agent._build_prompt = lambda *args: "draft"  # type: ignore
+        agent._build_rule = lambda *args: (_rule("Word spawning cmd"), None)  # type: ignore
+
+        def complete(prompt: str, validate: Any, **kwargs: Any) -> str:
+            if prompt == "draft":
+                response = json.dumps({"rules": [{}]})
+                assert validate(response) is None
+                return response
+            return json.dumps({"verdict": verdict, "issues": ["needs more detail"], "contradiction": "wrong order", "quote": "invented source passage"})
+
+        agent._call_llm_with_retry = complete  # type: ignore
+        rule, problems, _ = agent._generate_for_logsource(_input(), "process_creation")
+        assert rule is not None
+        assert problems == []

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from hecate_agent.agents.base import AgentResult, LLMAgent
-from hecate_agent.core.workspace import knowledge_file
+from hecate_agent.core.hunting_knowledge import EVIDENCE_RULES, load_environment_context, load_stage_guidance
 
 
 @dataclass
@@ -234,7 +234,7 @@ class PivotSuggesterAgent(LLMAgent[PivotInput, PivotOutput]):
                 except ValueError as e:
                     return str(e)
 
-            output_text = self._call_llm_with_retry(prompt, validate, max_retries=2)
+            output_text = self._call_llm_with_retry(prompt, validate, max_retries=2, capability="pivot_suggest")
             data = self._parse_json_response(output_text)
 
             pivots = [
@@ -316,14 +316,7 @@ class PivotSuggesterAgent(LLMAgent[PivotInput, PivotOutput]):
 
     def _load_environment(self) -> str:
         """Load knowledge/environment.md if available."""
-        try:
-
-            env_file = knowledge_file("environment.md")
-            if env_file.exists():
-                return env_file.read_text(encoding="utf-8")
-        except Exception:
-            pass
-        return ""
+        return load_environment_context()
 
     # ------------------------------------------------------------------
     # Prompt builder
@@ -359,6 +352,7 @@ class PivotSuggesterAgent(LLMAgent[PivotInput, PivotOutput]):
         return (
             "You are an expert threat hunter. A hunter has found something suspicious "
             "and needs your help deciding what to investigate next.\n\n"
+            f"EVIDENCE RULES:\n{EVIDENCE_RULES}\n{load_stage_guidance('pivot')}\n\n"
             f"FINDING:\n{input_data.finding}{tech_hint}{hunt_section}{past_section}{env_section}\n\n"
             "Based on this finding, suggest 3-5 concrete next pivot queries or investigation steps. "
             "Each pivot should:\n"

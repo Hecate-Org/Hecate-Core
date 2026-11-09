@@ -209,6 +209,21 @@ def test_documented_reference_candidates_keep_exact_request_and_reference_wordin
     assert candidate["passage"] in agent._source_passages(data)
 
 
+def test_a_reference_candidate_keeps_its_own_falsepositives_and_level() -> None:
+    import yaml
+
+    candidate = {"category": "webserver", "title": "Hunting lead: POST /flows as the PoC README documents",
+                 "command": "POST /flows", "level": "low",
+                 "falsepositives": "Legitimate clients of the product send POST /flows too",
+                 "detection": {"selection": {"cs-method": "POST", "cs-uri-stem": "/flows"}, "condition": "selection"}}
+    agent = SigmaGeneratorAgent.__new__(SigmaGeneratorAgent)
+    [(rule, problem)] = agent._command_rules(SigmaGenerationInput(hypothesis="Reference probe", reference_candidates=[candidate]))
+    assert rule and not problem
+    document = yaml.safe_load(rule.rule_yaml)
+    assert document["level"] == "low"
+    assert document["falsepositives"] == ["Legitimate clients of the product send POST /flows too"]
+
+
 def test_reference_web_rule_transpiles_to_real_ecs_fields_and_fails_closed_without_http_tables() -> None:
     from hecate_agent.core.sigma_transpiler import SigmaTranspiler
 

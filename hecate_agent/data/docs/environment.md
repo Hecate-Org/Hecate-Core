@@ -1,5 +1,12 @@
 # Environment Profile
 
+**Profile status:** unverified-template
+
+This is an authoring reference, not evidence of deployed telemetry. The active
+workspace's `knowledge/environment.md` supplies runtime context. Use its telemetry
+availability contract to record verified sources, fields, coverage, retention,
+validation queries, dates and owners. Examples below do not establish collection.
+
 **Last Updated:** YYYY-MM-DD
 **Review Cadence:** Quarterly
 **Maintained By:** [Team/Individual Name]

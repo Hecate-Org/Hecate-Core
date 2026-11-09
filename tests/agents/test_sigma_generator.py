@@ -1532,3 +1532,53 @@ def test_a_model_rule_duplicating_source_guidance_is_dropped():
     kept, dropped = _drop_model_rules_covered_by_guidance([guidance, duplicate, distinct])
     assert kept == [guidance, distinct]
     assert len(dropped) == 1 and "Node-RED Runtime Spawning Shell" in dropped[0]
+
+
+def test_an_unauthenticated_claim_needs_a_field_that_records_authentication():
+    """H-0026's "Unauthenticated Node-RED Flow Deployment" matched only POST /flows."""
+    from hecate_agent.agents.llm.sigma_generator import _unobservable_auth_claim_problem
+
+    detection = {"selection": {"cs-method|contains": "POST", "cs-uri-stem|contains": "/flows",
+                               "c-useragent": "python-requests"}, "condition": "selection"}
+    assert "records authentication" in (
+        _unobservable_auth_claim_problem(detection, "Unauthenticated Node-RED Flow Deployment via Admin API") or ""
+    )
+    assert _unobservable_auth_claim_problem(detection, "Node-RED flow deployment via the admin API") is None
+    with_user = {"selection": {"cs-uri-stem": "/flows", "cs-username": "-"}, "condition": "selection"}
+    assert _unobservable_auth_claim_problem(with_user, "Unauthenticated flow deployment") is None
+
+
+def test_an_outbound_connection_to_the_targets_listening_port_is_rejected():
+    """H-0026 matched Node-RED initiating a connection to 1880, the port it listens on."""
+    from hecate_agent.agents.llm.sigma_generator import _outbound_to_target_port_problem
+
+    artifacts = [{"value": "1880", "kind": "port", "role": "network_target"}]
+    outbound = {"selection": {"DestinationPort": 1880, "Image|endswith": "/node-red", "Initiated": True},
+                "condition": "selection"}
+    assert "inbound" in (_outbound_to_target_port_problem(outbound, "network_connection", artifacts) or "")
+    inbound = {"selection": {"DestinationPort": 1880, "Initiated": False}, "condition": "selection"}
+    assert _outbound_to_target_port_problem(inbound, "network_connection", artifacts) is None
+    assert _outbound_to_target_port_problem(outbound, "network_connection", []) is None
+
+
+def test_a_model_rule_duplicating_a_hunting_lead_is_dropped():
+    """H-0026 kept the README's low POST /flows lead and a model copy at high."""
+    from hecate_agent.agents.llm.sigma.models import SigmaRule
+    from hecate_agent.agents.llm.sigma_generator import _drop_model_rules_covered_by_guidance
+
+    lead = SigmaRule(
+        logsource_category="webserver",
+        title="Hunting lead: POST /flows as the PoC README documents",
+        rule_yaml=yaml.safe_dump({"detection": {"selection": {"cs-method": "POST", "cs-uri-stem": "/flows"},
+                                                "condition": "selection"}}),
+        origin="deterministic",
+    )
+    copy = SigmaRule(
+        logsource_category="webserver",
+        title="Unauthenticated Node-RED Flow Deployment via Admin API",
+        rule_yaml=yaml.safe_dump({"detection": {"selection": {"cs-method|contains": "POST",
+                                                              "cs-uri-stem|contains": "/flows"},
+                                                "condition": "selection"}}),
+    )
+    kept, dropped = _drop_model_rules_covered_by_guidance([lead, copy])
+    assert kept == [lead] and len(dropped) == 1

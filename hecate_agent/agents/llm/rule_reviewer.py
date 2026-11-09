@@ -179,7 +179,13 @@ class RuleReviewer:
         self._complete = complete
 
     def review(self, rule_yaml: str, hypothesis: str, passages: List[str]) -> RuleReview:
-        data = _json(self._complete(review_prompt(rule_yaml, hypothesis, passages), validate_review))
+        response = self._complete(review_prompt(rule_yaml, hypothesis, passages), validate_review)
+        # The retry helper can return its last response after validation attempts
+        # are exhausted. An invalid verdict must not become a reusable review.
+        problem = validate_review(response)
+        if problem:
+            raise ValueError(problem)
+        data = _json(response)
         issues = [str(i) for i in data.get("issues") or [] if str(i).strip()][:5]
         quote = str(data.get("quote") or "").strip()
         review = RuleReview(

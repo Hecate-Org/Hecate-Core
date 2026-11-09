@@ -339,8 +339,8 @@ def get_atomic_tests(
     Looks up:
     1. Workspace or user custom atomic test definitions
     2. Curated sub-technique then base technique in ATOMIC_TESTS_MAP (filtered by platform)
-    3. Real ATT&CK matrix technique metadata (dynamic emulation procedure)
-    4. Procedural generic fallback template
+
+    Returns an empty list when neither has a test for the technique and platforms.
     """
     tid = technique_id.strip()
     custom = load_custom_atomic_tests(workspace)
@@ -365,38 +365,10 @@ def get_atomic_tests(
         if filtered:
             return filtered
 
-    # Dynamic lookup against MITRE ATT&CK Matrix metadata
-    try:
-        from hecate_agent.core.attack_matrix import get_technique
-
-        meta = get_technique(tid) or get_technique(base_tid)
-        if meta and meta.get("name"):
-            name = meta["name"]
-            meta_platforms = meta.get("platforms") or []
-            target_pfs = [p for p in (platforms or [])] or meta_platforms
-            pf_str = "/".join(target_pfs[:3]) if target_pfs else "test host"
-            data_sources = meta.get("data_sources") or []
-            ds_str = ", ".join(data_sources[:3]) if data_sources else "sensor and audit event logs"
-            return [
-                {
-                    "name": f"Procedural Emulation for {name}",
-                    "test_id": f"ART {tid} (Procedural)",
-                    "command": f"# Execute controlled simulation of {name} ({tid}) in {pf_str}",
-                    "telemetry": f"Verify sensor capture in: {ds_str}",
-                }
-            ]
-    except Exception:
-        pass
-
-    target_pf_str = "/".join(platforms[:3]) if platforms else "dedicated test host"
-    return [
-        {
-            "name": f"Procedural Emulation for {tid}",
-            "test_id": f"ART {tid} #1 (Generic)",
-            "command": f"# Execute controlled simulation of {tid} in {target_pf_str}",
-            "telemetry": "Verify sensor telemetry (Process, Network, or Audit logs) captures the activity",
-        }
-    ]
+    # No test is mapped. H-0021 and H-0025 listed "ART T1190 (Procedural)" with the
+    # command "# Execute controlled simulation of ...": a test that does not exist,
+    # presented as a validation step.
+    return []
 
 
 def format_atomic_tests_markdown(
@@ -418,8 +390,11 @@ def format_atomic_tests_markdown(
     ]
 
     seen_tests = set()
+    unmapped: List[str] = []
     for tid in techniques:
         tests = get_atomic_tests(tid, workspace=workspace, platforms=platforms)
+        if not tests:
+            unmapped.append(tid)
         for t in tests:
             test_key = (tid, t["test_id"])
             if test_key in seen_tests:
@@ -429,6 +404,20 @@ def format_atomic_tests_markdown(
             telemetry = t["telemetry"].replace("|", "\\|")
             lines.append(f"| `{tid}` | **{t['test_id']}**<br>*{t['name']}* | `{cmd}` | {telemetry} |")
 
+    scope = f" on {'/'.join(platforms)}" if platforms else ""
+    missing = ", ".join(f"`{t}`" for t in unmapped)
+    if not seen_tests:
+        return "\n".join(
+            [
+                "### Validation Procedure (Atomic Red Team)",
+                "",
+                f"No Atomic Red Team test is mapped for {missing}{scope}. Validate the rules by "
+                "reproducing the source's procedure in a lab, or with telemetry from a real event.",
+                "",
+            ]
+        )
+    if unmapped:
+        lines += ["", f"No Atomic Red Team test is mapped for {missing}{scope}."]
     lines.append("")
     return "\n".join(lines)
 

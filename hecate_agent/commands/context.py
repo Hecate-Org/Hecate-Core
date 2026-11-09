@@ -9,6 +9,8 @@ import click
 import yaml
 from rich.console import Console
 
+from hecate_agent.core.workspace import knowledge_file, workspace_root
+
 console = Console()
 
 CONTEXT_EPILOG = """
@@ -156,22 +158,22 @@ def _build_context(  # noqa: C901
     }
 
     # Always include environment.md
-    env_path = Path("knowledge") / "environment.md"
+    env_path = knowledge_file("environment.md")
     if env_path.exists():
         context["environment"] = _read_and_optimize(env_path)
 
     # Always include hunts/INDEX.md
-    index_path = Path("hunts/INDEX.md")
+    index_path = workspace_root() / "hunts/INDEX.md"
     if index_path.exists():
         context["hunt_index"] = _read_and_optimize(index_path)
 
     # Load hunts based on filters (can be combined)
     if full:
         # Full export: include all hunts (recursive for nested directory structure)
-        hunt_files = list(Path("hunts").glob("**/H-*.md"))
+        hunt_files = list((workspace_root() / "hunts").glob("**/H-*.md"))
     elif hunt:
         # Specific hunt: search recursively in hunts directory
-        hunt_files = list(Path("hunts").glob(f"**/{hunt}.md"))
+        hunt_files = list((workspace_root() / "hunts").glob(f"**/{hunt}.md"))
     else:
         # Combine tactic and platform filters
         if tactic and platform:
@@ -262,12 +264,12 @@ def _find_research_file(research_id: str) -> Optional[Path]:
         Path to research file or None
     """
     # Try flat structure first
-    flat_path = Path("research") / f"{research_id}.md"
+    flat_path = workspace_root() / "research" / f"{research_id}.md"
     if flat_path.exists():
         return flat_path
 
     # Try recursive search
-    matches = list(Path("research").rglob(f"{research_id}.md"))
+    matches = list((workspace_root() / "research").rglob(f"{research_id}.md"))
     if matches:
         return matches[0]
 
@@ -303,7 +305,7 @@ def _read_and_optimize(file_path: Path) -> str:
 
 def _find_hunts_by_tactic(tactic: str) -> List[Path]:
     """Find hunt files matching MITRE tactic."""
-    hunts_dir = Path("hunts")
+    hunts_dir = workspace_root() / "hunts"
     matching_hunts = []
 
     # Normalize tactic name (e.g., "credential-access" -> "credential access")
@@ -333,7 +335,7 @@ def _find_hunts_by_tactic(tactic: str) -> List[Path]:
 
 def _find_hunts_by_platform(platform: str) -> List[Path]:
     """Find hunt files matching platform."""
-    hunts_dir = Path("hunts")
+    hunts_dir = workspace_root() / "hunts"
     matching_hunts = []
 
     normalized_platform = platform.lower()
@@ -359,12 +361,14 @@ def _find_hunts_by_platform(platform: str) -> List[Path]:
     return matching_hunts
 
 
-def _get_relevant_domain_files(tactic: Optional[str] = None) -> List[Path]:
+def _get_relevant_domain_files(
+    tactic: Optional[str] = None, workspace: Optional[Path] = None
+) -> List[Path]:
     """Get relevant domain knowledge files based on tactic."""
     domain_files = []
 
     # Always include core hunting knowledge
-    domain_files.append(Path("knowledge/hunting-knowledge.md"))
+    domain_files.append(knowledge_file("hunting-knowledge.md", explicit=workspace))
 
     # Add tactic-specific domain files
     if tactic:
@@ -372,18 +376,18 @@ def _get_relevant_domain_files(tactic: Optional[str] = None) -> List[Path]:
 
         # Map tactics to domain files
         tactic_domain_map = {
-            "credential access": [Path("knowledge/domains/iam-security.md")],
-            "persistence": [Path("knowledge/domains/endpoint-security.md")],
-            "privilege escalation": [Path("knowledge/domains/endpoint-security.md")],
-            "defense evasion": [Path("knowledge/domains/endpoint-security.md")],
-            "execution": [Path("knowledge/domains/endpoint-security.md")],
+            "credential access": [knowledge_file("domains/iam-security.md", explicit=workspace)],
+            "persistence": [knowledge_file("domains/endpoint-security.md", explicit=workspace)],
+            "privilege escalation": [knowledge_file("domains/endpoint-security.md", explicit=workspace)],
+            "defense evasion": [knowledge_file("domains/endpoint-security.md", explicit=workspace)],
+            "execution": [knowledge_file("domains/endpoint-security.md", explicit=workspace)],
             "initial access": [
-                Path("knowledge/domains/endpoint-security.md"),
-                Path("knowledge/domains/iam-security.md"),
+                knowledge_file("domains/endpoint-security.md", explicit=workspace),
+                knowledge_file("domains/iam-security.md", explicit=workspace),
             ],
-            "collection": [Path("knowledge/domains/insider-threat.md")],
-            "exfiltration": [Path("knowledge/domains/insider-threat.md")],
-            "impact": [Path("knowledge/domains/insider-threat.md")],
+            "collection": [knowledge_file("domains/insider-threat.md", explicit=workspace)],
+            "exfiltration": [knowledge_file("domains/insider-threat.md", explicit=workspace)],
+            "impact": [knowledge_file("domains/insider-threat.md", explicit=workspace)],
         }
 
         if tactic_lower in tactic_domain_map:

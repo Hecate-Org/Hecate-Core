@@ -10,6 +10,36 @@ import pytest
 
 from hecate_agent.core import attack_matrix
 
+# Live developer shells often export workspace / SIEM / LLM vars (or load them
+# via dotenv). Those leak into unit tests that assert missing-file, missing-
+# credential, or walk-up behavior. CI runners do not set them; clear them here
+# so local suite results match CI.
+_ENV_VARS_TO_ISOLATE = (
+    "HECATE_WORKSPACE",
+    "HECATE_HUNTING_KNOWLEDGE",
+    "HECATE_LLM_PROVIDER",
+    "HECATE_LLM_MODEL",
+    "HECATE_LLM_SIMPLE_PROVIDER",
+    "HECATE_LLM_SIMPLE_MODEL",
+    "HECATE_LLM_SIMPLE_BASE_URL",
+    "HECATE_LLM_COMPLEX_PROVIDER",
+    "HECATE_LLM_COMPLEX_MODEL",
+    "HECATE_LLM_COMPLEX_BASE_URL",
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "SPLUNK_HOST",
+    "SPLUNK_TOKEN",
+    "SPLUNK_PASSWORD",
+    "SPLUNK_USERNAME",
+    "SPLUNK_VERIFY_SSL",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_live_operator_env(monkeypatch):
+    for var in _ENV_VARS_TO_ISOLATE:
+        monkeypatch.delenv(var, raising=False)
+
 
 @pytest.fixture(autouse=True)
 def _reset_attack_matrix_provider(monkeypatch):

@@ -23,10 +23,18 @@ class TestAtomicRedTeam:
         assert "T1055" in tests[0]["test_id"]
 
     def test_get_atomic_tests_unmapped_technique(self):
-        tests = get_atomic_tests("T9999.001")
-        assert len(tests) == 1
-        assert "T9999.001" in tests[0]["test_id"]
-        assert "Generic" in tests[0]["test_id"]
+        assert get_atomic_tests("T9999.001") == []
+
+    def test_an_unmapped_technique_is_named_not_given_a_placeholder_step(self):
+        """H-0021 listed "# Execute controlled simulation of ..." as a test to run."""
+        md = format_atomic_tests_markdown(["T9999.001"], platforms=["Containers", "Linux"])
+        assert "No Atomic Red Team test is mapped for `T9999.001` on Containers/Linux" in md
+        assert "Execute controlled simulation" not in md
+        assert "| Technique |" not in md
+
+        mixed = format_atomic_tests_markdown(["T1059.001", "T9999.001"])
+        assert "`T1059.001`" in mixed and "| Technique |" in mixed
+        assert "No Atomic Red Team test is mapped for `T9999.001`." in mixed
 
     def test_format_atomic_tests_markdown_empty(self):
         assert format_atomic_tests_markdown([]) == ""
@@ -58,8 +66,7 @@ class TestAtomicRedTeam:
         assert "cmd1 \\| cmd2" in md
         assert "Event 1 \\| Event 2" in md
 
-    def test_get_atomic_tests_dynamic_attack_lookup(self, monkeypatch):
-        # Mock get_technique to isolate unit test from external STIX dependency on CI
+    def test_attack_metadata_alone_does_not_make_a_test(self, monkeypatch):
         monkeypatch.setattr(
             "hecate_agent.core.attack_matrix.get_technique",
             lambda tid: (
@@ -72,12 +79,7 @@ class TestAtomicRedTeam:
                 else None
             ),
         )
-        tests = get_atomic_tests("T1110")
-        assert len(tests) >= 1
-        assert "Brute Force" in tests[0]["name"]
-        assert "Procedural" in tests[0]["test_id"]
-        assert "Linux/Windows" in tests[0]["command"]
-        assert "Logon Session" in tests[0]["telemetry"]
+        assert get_atomic_tests("T1110") == []
 
     def test_get_atomic_tests_workspace_custom_tests(self, tmp_path):
         import json

@@ -9,6 +9,8 @@ from typing import Dict, List, Set
 import httpx
 
 from hecate_agent.enrichment.constants import _KNOWN_PUBLISHER_DOMAINS
+from hecate_agent.enrichment.result import OUTCOMES as ENRICHMENT_OUTCOMES
+from hecate_agent.enrichment.result import classify_enrichment_result
 from hecate_agent.core.provenance import is_valid_ipv4, trim_shell_tail
 from hecate_agent.core.workspace import load_workspace_env
 
@@ -531,11 +533,55 @@ def extract_indicators(text: str) -> Dict[str, List[str]]:
 
 
 
-def generate_enrichment_summary(threat_intel: str) -> str:
-    """Extracts indicators and queries OSINT platforms, returning a markdown summary."""
+class _EnrichmentTally:
+    def __init__(
+        self,
+        sink: Dict[str, Dict[str, int]] | None,
+        citations: List[Dict[str, str]] | None = None,
+    ) -> None:
+        import threading
+
+        self._sink = sink
+        self._citations = citations
+        self._lock = threading.Lock()
+
+    def __call__(self, service: str, result: str, observable: str = "", kind: str = "") -> str:
+        outcome = classify_enrichment_result(result)  # reads EnrichmentResult.outcome when set
+        with self._lock:
+            if self._sink is not None:
+                row = self._sink.setdefault(service, {"checked": 0, **{k: 0 for k in ENRICHMENT_OUTCOMES}})
+                row["checked"] += 1
+                row[outcome] += 1
+                if outcome == "flagged":
+                    row["found"] += 1
+            if self._citations is not None and observable:
+                self._citations.append(
+                    {
+                        "observable": observable,
+                        "kind": kind or "observable",
+                        "service": service,
+                        "outcome": outcome,
+                        "verdict": str(getattr(result, "verdict", "") or ""),
+                    }
+                )
+        return result
+
+
+def generate_enrichment_summary(
+    threat_intel: str,
+    stats: Dict[str, Dict[str, int]] | None = None,
+    citations: List[Dict[str, str]] | None = None,
+) -> str:
+    """Extracts indicators and queries OSINT platforms, returning a markdown summary.
+
+    ``stats``, when given, is filled per service with how many lookups ran and
+    how they came out. ``citations``, when given, receives one record per
+    lookup so the hunt can label each observable corroborated or not.
+    """
     indicators = extract_indicators(threat_intel)
     if not any(indicators.values()):
         return ""
+    rec = _EnrichmentTally(stats, citations)
 
     summary = [
         "\n\n### 🛡️ Automated Threat Enrichment (VT, AlienVault OTX, URLScan.io, crt.sh, Passive DNS, Tor Project, IPinfo, Hybrid Analysis, Hatching Triage, Abuse.ch [ThreatFox, MalwareBazaar, Feodo, SSLBL, URLhaus], GreyNoise, AbuseIPDB, Shodan, Censys [JARM/JA4], Shadowserver Foundation, RDAP, EPSS, VulnCheck KEV, OSV.dev & MISP)"
@@ -544,16 +590,16 @@ def generate_enrichment_summary(threat_intel: str) -> str:
     from concurrent.futures import ThreadPoolExecutor
 
     def process_hash(h: str) -> str:
-        res = query_vt_hash(h)
-        otx_res = query_otx_hash(h)
-        ha_res = query_hybrid_analysis(h)
-        triage_res = query_triage_hash(h)
-        mb_res = query_malwarebazaar(h)
-        ss_hash_res = query_shadowserver_hash(h)
-        sslbl_res = query_sslbl_fingerprint(h)
-        urlhaus_res = query_urlhaus_payload(h)
-        threatfox_res = query_threatfox(h)
-        misp_res = query_misp_indicator(h)
+        res = rec("VirusTotal", query_vt_hash(h), h, "hash")
+        otx_res = rec("OTX", query_otx_hash(h), h, "hash")
+        ha_res = rec("Hybrid Analysis", query_hybrid_analysis(h), h, "hash")
+        triage_res = rec("Triage", query_triage_hash(h), h, "hash")
+        mb_res = rec("MalwareBazaar", query_malwarebazaar(h), h, "hash")
+        ss_hash_res = rec("Shadowserver", query_shadowserver_hash(h), h, "hash")
+        sslbl_res = rec("SSLBL", query_sslbl_fingerprint(h), h, "hash")
+        urlhaus_res = rec("URLhaus", query_urlhaus_payload(h), h, "hash")
+        threatfox_res = rec("ThreatFox", query_threatfox(h), h, "hash")
+        misp_res = rec("MISP", query_misp_indicator(h), h, "hash")
         lines = [
             f"- **Hash {h}**:\n"
             f"  - *VirusTotal:* {res}\n"
@@ -573,19 +619,19 @@ def generate_enrichment_summary(threat_intel: str) -> str:
         return "\n".join(lines)
 
     def process_ip(ip: str) -> str:
-        vt_res = query_vt_ip(ip)
-        otx_res = query_otx_ip(ip)
-        feodo_res = query_feodotracker_ip(ip)
-        abuseipdb_res = query_abuseipdb_ip(ip)
-        anon_res = query_anonymity_proxy_ip(ip)
-        spur_res = query_spur_ip(ip)
-        pdns_res = query_passive_dns(ip)
-        gn_res = query_greynoise_ip(ip)
-        shodan_res = query_shodan_ip(ip)
-        censys_res = query_censys_ip(ip)
-        ss_ip_res = query_shadowserver_ip(ip)
-        threatfox_res = query_threatfox(ip)
-        misp_res = query_misp_indicator(ip)
+        vt_res = rec("VirusTotal", query_vt_ip(ip), ip, "ip")
+        otx_res = rec("OTX", query_otx_ip(ip), ip, "ip")
+        feodo_res = rec("Feodo", query_feodotracker_ip(ip), ip, "ip")
+        abuseipdb_res = rec("AbuseIPDB", query_abuseipdb_ip(ip), ip, "ip")
+        anon_res = rec("Tor/Proxy", query_anonymity_proxy_ip(ip), ip, "ip")
+        spur_res = rec("Spur", query_spur_ip(ip), ip, "ip")
+        pdns_res = rec("Passive DNS", query_passive_dns(ip), ip, "ip")
+        gn_res = rec("GreyNoise", query_greynoise_ip(ip), ip, "ip")
+        shodan_res = rec("Shodan", query_shodan_ip(ip), ip, "ip")
+        censys_res = rec("Censys", query_censys_ip(ip), ip, "ip")
+        ss_ip_res = rec("Shadowserver", query_shadowserver_ip(ip), ip, "ip")
+        threatfox_res = rec("ThreatFox", query_threatfox(ip), ip, "ip")
+        misp_res = rec("MISP", query_misp_indicator(ip), ip, "ip")
         lines = [
             f"- **IP {ip}**:\n"
             f"  - *VirusTotal:* {vt_res}\n"
@@ -617,15 +663,15 @@ def generate_enrichment_summary(threat_intel: str) -> str:
         return "\n".join(lines)
 
     def process_domain(d: str) -> str:
-        vt_res = query_vt_domain(d)
-        otx_res = query_otx_domain(d)
-        rdap_res = query_rdap_domain(d)
-        urlscan_res = query_urlscan_domain(d)
-        crtsh_res = query_crtsh_domain(d)
-        pdns_res = query_passive_dns(d)
-        urlhaus_res = query_urlhaus_host(d)
-        threatfox_res = query_threatfox(d)
-        misp_res = query_misp_indicator(d)
+        vt_res = rec("VirusTotal", query_vt_domain(d), d, "domain")
+        otx_res = rec("OTX", query_otx_domain(d), d, "domain")
+        rdap_res = rec("RDAP", query_rdap_domain(d), d, "domain")
+        urlscan_res = rec("URLScan", query_urlscan_domain(d), d, "domain")
+        crtsh_res = rec("crt.sh", query_crtsh_domain(d), d, "domain")
+        pdns_res = rec("Passive DNS", query_passive_dns(d), d, "domain")
+        urlhaus_res = rec("URLhaus", query_urlhaus_host(d), d, "domain")
+        threatfox_res = rec("ThreatFox", query_threatfox(d), d, "domain")
+        misp_res = rec("MISP", query_misp_indicator(d), d, "domain")
         lines = [
             f"- **Domain {d}**:\n"
             f"  - *VirusTotal:* {vt_res}\n"
@@ -645,10 +691,10 @@ def generate_enrichment_summary(threat_intel: str) -> str:
         return "\n".join(lines)
 
     def process_url(u: str) -> str:
-        urlscan_res = query_urlscan_url(u)
-        urlhaus_res = query_urlhaus_url(u)
-        threatfox_res = query_threatfox(u)
-        misp_res = query_misp_indicator(u)
+        urlscan_res = rec("URLScan", query_urlscan_url(u), u, "url")
+        urlhaus_res = rec("URLhaus", query_urlhaus_url(u), u, "url")
+        threatfox_res = rec("ThreatFox", query_threatfox(u), u, "url")
+        misp_res = rec("MISP", query_misp_indicator(u), u, "url")
         return (
             f"- **URL {u}**:\n"
             f"  - *URLScan.io (DOM & Web Lure Analysis):* {urlscan_res}\n"
@@ -696,12 +742,12 @@ def generate_enrichment_summary(threat_intel: str) -> str:
     if cve_list:
         epss_batch = query_epss_batch(cve_list)
         for cve in cve_list:
-            epss_res = epss_batch.get(cve, "No EPSS score published.")
-            otx_res = query_otx_cve(cve)
-            misp_res = query_misp_indicator(cve)
-            osv_res = query_osv_vuln(cve)
-            vulncheck_res = query_vulncheck_cve(cve)
-            msrc_res = query_msrc_cve(cve)
+            epss_res = rec("EPSS", epss_batch.get(cve, "No EPSS score published."), cve, "cve")
+            otx_res = rec("OTX", query_otx_cve(cve), cve, "cve")
+            misp_res = rec("MISP", query_misp_indicator(cve), cve, "cve")
+            osv_res = rec("OSV.dev", query_osv_vuln(cve), cve, "cve")
+            vulncheck_res = rec("VulnCheck", query_vulncheck_cve(cve), cve, "cve")
+            msrc_res = rec("MSRC", query_msrc_cve(cve), cve, "cve")
             summary.append(
                 f"- **Vulnerability {cve}**:\n"
                 f"  - *FIRST EPSS (Exploit Prediction):* {epss_res}\n"
@@ -715,6 +761,13 @@ def generate_enrichment_summary(threat_intel: str) -> str:
     final_output = ""
     if len(summary) > 1:
         final_output += "\n".join(summary)
+
+    if citations:
+        from hecate_agent.enrichment.result import render_enrichment_citations
+
+        rendered = render_enrichment_citations(citations)
+        if rendered:
+            final_output = rendered + "\n\n" + final_output
 
     ttp_summary = expand_ttps(threat_intel)
     if ttp_summary:

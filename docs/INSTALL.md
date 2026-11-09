@@ -327,7 +327,7 @@ owner_team: {{ owner_team | default('SOC') }}
 
 # Get all completed hunts from last week
 hecate-agent hunt list --status completed --output json | \
-  jq '[.[] | select(.date >= "2025-11-29")] | length'
+  jq '[.[] | select(.date >= "2026-10-25")] | length'
 ```
 
 ### CI/CD Integration

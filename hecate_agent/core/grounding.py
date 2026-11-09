@@ -59,6 +59,12 @@ _IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 _DOMAIN_RE = re.compile(r"\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b", re.IGNORECASE)
 _HASH_RE = re.compile(r"\b[a-f0-9]{32}\b|\b[a-f0-9]{40}\b|\b[a-f0-9]{64}\b", re.IGNORECASE)
 _CVE_RE = re.compile(r"CVE-\d{4}-\d{4,7}", re.IGNORECASE)
+#: An affected-version bound: "< V4.3.4.1", "prior to 2.1", "before version 10.0.2".
+_VERSION_BOUND_RE = re.compile(
+    r"(?:<=?|≤|\bprior to|\bbefore|\bearlier than|\bbelow|\bolder than|\bup to)\s+"
+    r"(?:versions?\s+)?v?(\d+(?:\.\d+){1,4})\b",
+    re.IGNORECASE,
+)
 _TECHNIQUE_RE = re.compile(r"\bT\d{4}(?:\.\d{3})?\b")
 #: The draft's "Not mapped, capability only" list (hunt_writer's Technique
 #: Evidence section): techniques named there were dropped, not claimed.
@@ -980,6 +986,14 @@ def audit_draft(
     for cve in _CVE_RE.findall(draft_text):
         status, note = grade(cve)
         add("cve", cve.upper(), status, note)
+
+    # --- Affected-version bounds --------------------------------------------
+    # A cutoff decides which devices are in scope, and a model writes one as
+    # readily as it writes a CVE: H-0021 and H-0025 scoped to "< V4.3.4.1"
+    # with nothing in their claim evidence quoting it.
+    for version in _VERSION_BOUND_RE.findall(_YAML_BLOCK_RE.sub(" ", draft_text)):
+        status, note = grade(version)
+        add("version", version, status, f"affected-version bound {note}")
 
     # --- Named entities in prose ------------------------------------------
     # Rule bodies are excluded: a Sigma selection naming a family is derived

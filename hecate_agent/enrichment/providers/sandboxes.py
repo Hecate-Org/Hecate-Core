@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hecate_agent.enrichment.result import report
+
 import logging
 import re
 from typing import List, Set
@@ -41,11 +43,11 @@ def query_hybrid_analysis(file_hash: str) -> str:
     """Query Hybrid Analysis (CrowdStrike Falcon Sandbox) API v2 for hash detonation results, threat score, and MITRE techniques."""
     key = _setting("HYBRID_ANALYSIS_API_KEY") or _setting("HA_API_KEY") or _setting("FALCON_SANDBOX_API_KEY")
     if not key:
-        return "HYBRID_ANALYSIS_API_KEY not configured."
+        return report("HYBRID_ANALYSIS_API_KEY not configured.", 'unconfigured')
 
     clean_hash = file_hash.strip().lower()
     if not re.match(r"^[a-f0-9]{32,64}$", clean_hash):
-        return f"Invalid hash format '{file_hash}'."
+        return report(f"Invalid hash format '{file_hash}'.")
 
     headers = {
         "api-key": key,
@@ -59,7 +61,7 @@ def query_hybrid_analysis(file_hash: str) -> str:
         if resp.status_code == 200:
             data = resp.json()
             if not isinstance(data, dict) or not data:
-                return "No records on Hybrid Analysis."
+                return report("No records on Hybrid Analysis.", 'missing')
 
             score = data.get("threat_score")
             verdict = data.get("verdict")
@@ -110,27 +112,27 @@ def query_hybrid_analysis(file_hash: str) -> str:
             if mitre_ids:
                 parts.append(f"MITRE: {', '.join(mitre_ids[:3])}")
 
-            return " | ".join(parts) if parts else "Sample analyzed on Hybrid Analysis."
+            return report(" | ".join(parts) if parts else "Sample analyzed on Hybrid Analysis.")
         elif resp.status_code == 404:
-            return "No records on Hybrid Analysis."
+            return report("No records on Hybrid Analysis.", 'missing')
         elif resp.status_code in (401, 403):
-            return "Hybrid Analysis Auth Error (check HYBRID_ANALYSIS_API_KEY)."
+            return report("Hybrid Analysis Auth Error (check HYBRID_ANALYSIS_API_KEY).", 'errors')
         elif resp.status_code == 429:
-            return "Hybrid Analysis rate limit exceeded."
-        return f"Hybrid Analysis error: HTTP {resp.status_code}"
+            return report("Hybrid Analysis rate limit exceeded.", 'errors')
+        return report(f"Hybrid Analysis error: HTTP {resp.status_code}")
     except Exception as e:
-        return f"Error querying Hybrid Analysis: {e}"
+        return report(f"Error querying Hybrid Analysis: {e}")
 
 
 def query_triage_hash(file_hash: str) -> str:
     """Query Hatching Triage (tria.ge) sandbox API for sample detonation overview and extracted config."""
     key = _setting("TRIAGE_API_KEY") or _setting("HATCHING_TRIAGE_KEY") or _setting("TRIA_GE_API_KEY")
     if not key:
-        return "TRIAGE_API_KEY not configured."
+        return report("TRIAGE_API_KEY not configured.", 'unconfigured')
 
     clean_hash = file_hash.strip().lower()
     if not re.match(r"^[a-f0-9]{32,64}$", clean_hash):
-        return f"Invalid hash format '{file_hash}'."
+        return report(f"Invalid hash format '{file_hash}'.")
 
     headers = {
         "Authorization": f"Bearer {key}",
@@ -142,27 +144,27 @@ def query_triage_hash(file_hash: str) -> str:
         search_url = f"https://api.tria.ge/v0/search?query={clean_hash}"
         resp = httpx.get(search_url, headers=headers, timeout=5.0)
         if resp.status_code == 404:
-            return "No records on tria.ge."
+            return report("No records on tria.ge.", 'missing')
         elif resp.status_code in (401, 403):
-            return "tria.ge Auth Error (check TRIAGE_API_KEY)."
+            return report("tria.ge Auth Error (check TRIAGE_API_KEY).", 'errors')
         elif resp.status_code == 429:
-            return "tria.ge rate limit exceeded."
+            return report("tria.ge rate limit exceeded.", 'errors')
         elif resp.status_code != 200:
-            return f"tria.ge error: HTTP {resp.status_code}"
+            return report(f"tria.ge error: HTTP {resp.status_code}")
 
         search_data = resp.json()
         samples = search_data.get("data") or []
         if not samples:
-            return "No records on tria.ge."
+            return report("No records on tria.ge.", 'missing')
 
         sample_id = samples[0].get("id")
         if not sample_id:
-            return "Sample found on tria.ge without ID."
+            return report("Sample found on tria.ge without ID.", 'found')
 
         overview_url = f"https://api.tria.ge/v0/samples/{sample_id}/overview.json"
         ov_resp = httpx.get(overview_url, headers=headers, timeout=5.0)
         if ov_resp.status_code != 200:
-            return f"tria.ge sample {sample_id} status HTTP {ov_resp.status_code}"
+            return report(f"tria.ge sample {sample_id} status HTTP {ov_resp.status_code}")
 
         ov_data = ov_resp.json()
         analysis = ov_data.get("analysis") or {}
@@ -225,8 +227,8 @@ def query_triage_hash(file_hash: str) -> str:
         if tags:
             parts.append(f"Tags: {', '.join(tags[:4])}")
 
-        return " | ".join(parts) if parts else "Sample analyzed on tria.ge."
+        return report(" | ".join(parts) if parts else "Sample analyzed on tria.ge.")
     except Exception as e:
-        return f"Error querying tria.ge: {e}"
+        return report(f"Error querying tria.ge: {e}")
 
 

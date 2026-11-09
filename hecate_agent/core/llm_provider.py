@@ -5,11 +5,14 @@ with lazy imports so no single provider's dependencies are required at install t
 
 Usage:
     from hecate_agent.core.llm_provider import create_provider
+    from hecate_agent.core.llm_router import create_router
 
-    provider = create_provider()  # auto-detect from env/config
-    response = provider.complete(
+    provider = create_provider()  # single backend from env/config
+    router = create_router()  # simple + complex backends (share one when unset)
+    response = router.complete(
         messages=[{"role": "user", "content": "Hello"}],
         max_tokens=1024,
+        capability="hypothesis",
     )
     print(response.text, response.cost_usd)
 """
@@ -1125,8 +1128,8 @@ def create_provider(config: Optional[Dict[str, Any]] = None) -> LLMProvider:
         RuntimeError: If no provider can be determined.
         ValueError: If an unknown provider name is given.
     """
-    effective = _resolve_llm_config(config)
-    provider_name = effective.get("provider", "").lower()
+    effective = _backend_only_config(_resolve_llm_config(config))
+    provider_name = str(effective.get("provider", "") or "").lower()
     model = effective.get("model")
 
     if provider_name in ("none", "disabled", "offline"):
@@ -1169,6 +1172,15 @@ def _resolve_llm_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if config:
         effective.update(config)
     return effective
+
+
+def _backend_only_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop dual-router sections so provider builders see only backend keys."""
+    return {
+        key: value
+        for key, value in config.items()
+        if key not in ("simple", "complex", "defaults", "tiers") and not isinstance(value, dict)
+    }
 
 
 def _autodetect_provider(model: Optional[str], effective: Dict[str, Any]) -> LLMProvider:

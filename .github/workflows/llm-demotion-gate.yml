@@ -1,0 +1,98 @@
+name: LLM demotion gate
+
+# Manual / scheduled only — needs a live simple-tier model and is too slow/flaky
+# for the PR matrix. Use after changing the local model or before demoting a
+# locked capability in llm.defaults.
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: Ollama model tag for the simple tier
+        required: true
+        default: qwen2.5:14b-instruct-q4_K_M
+      capability:
+        description: Locked capability to gate (or "all")
+        required: true
+        default: research_synthesize
+      fail_under:
+        description: Minimum eval score (0-1)
+        required: true
+        default: "0.8"
+  schedule:
+    # Weekly Sunday 06:00 UTC — opt-in signal; fails soft if Ollama is unavailable.
+    - cron: "0 6 * * 0"
+
+jobs:
+  demotion-gate:
+    name: Eval simple tier + write demotion gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v2
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Hecate (LLM + Ollama extras)
+        run: uv pip install --system -e ".[dev,ollama,litellm]"
+
+      - name: Install Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama serve >/tmp/ollama.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:11434/api/tags >/dev/null && break
+            sleep 1
+          done
+
+      - name: Pull simple-tier model
+        env:
+          MODEL: ${{ github.event.inputs.model || 'qwen2.5:14b-instruct-q4_K_M' }}
+        run: ollama pull "$MODEL"
+
+      - name: Run demotion eval gates
+        env:
+          MODEL: ${{ github.event.inputs.model || 'qwen2.5:14b-instruct-q4_K_M' }}
+          CAPABILITY: ${{ github.event.inputs.capability || 'research_synthesize' }}
+          FAIL_UNDER: ${{ github.event.inputs.fail_under || '0.8' }}
+          HECATE_LLM_SIMPLE_PROVIDER: ollama
+          HECATE_LLM_SIMPLE_MODEL: ${{ github.event.inputs.model || 'qwen2.5:14b-instruct-q4_K_M' }}
+          HECATE_LLM_SIMPLE_BASE_URL: http://127.0.0.1:11434
+          HECATE_LLM_COMPLEX_PROVIDER: ollama
+          HECATE_LLM_COMPLEX_MODEL: ${{ github.event.inputs.model || 'qwen2.5:14b-instruct-q4_K_M' }}
+          HECATE_LLM_COMPLEX_BASE_URL: http://127.0.0.1:11434
+          HECATE_LLM_DEMOTION_GATES: ${{ github.workspace }}/.hecate/llm_demotion_gates.json
+        run: |
+          mkdir -p .hecate
+          if [ "$CAPABILITY" = "all" ]; then
+            caps="hypothesis sigma_draft sigma_review finding_triage research_synthesize"
+          else
+            caps="$CAPABILITY"
+          fi
+          status=0
+          for cap in $caps; do
+            echo "::group::eval --write-gate $cap"
+            if ! hecate-agent eval --tier simple --write-gate "$cap" --fail-under "$FAIL_UNDER" --output json; then
+              status=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $status
+
+      - name: Upload demotion gate stamps
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llm-demotion-gates
+          path: .hecate/llm_demotion_gates.json
+          if-no-files-found: ignore
+          retention-days: 30

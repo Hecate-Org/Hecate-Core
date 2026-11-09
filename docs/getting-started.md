@@ -270,7 +270,7 @@ YAML frontmatter is structured metadata placed at the top of hunt files, enablin
 hunt_id: H-0001
 title: Linux Crontab Persistence Detection
 status: completed
-date: 2025-11-19
+date: 2026-10-15
 hunter: Security Team
 platform: [Linux]
 tactics: [persistence]

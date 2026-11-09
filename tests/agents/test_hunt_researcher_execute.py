@@ -121,6 +121,9 @@ class TestExecuteHappyPath:
         assert result.data.llm_calls == 4  # skills 1, 2, 3, 5 each call the LLM once; skill 4 doesn't use the LLM
         assert result.data.related_work.sources[0]["url"] == "hunts/H-0001.md"
         assert result.metadata["research_id"] == "R-0099"
+        assert result.data.max_input_tokens == 10
+        assert result.data.input_token_samples == result.data.llm_calls
+        assert result.data.input_token_samples == len(provider.prompts)
 
     def test_execute_without_search_client_skips_web_search(self, monkeypatch: pytest.MonkeyPatch) -> None:
         provider = CapturingProvider()

@@ -21,12 +21,12 @@ import json
 import logging
 import re
 from dataclasses import asdict, dataclass, field
-from functools import partial
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 import httpx
 
+from hecate_agent.core.source_extraction import SourceBudgetExceeded, SourceExtractionSession
 from hecate_agent.core.provenance import (
     HASH_ROLES,
     NETWORK_ROLES,
@@ -51,6 +51,56 @@ EVIDENCE_WINDOW = 8
 _SKIP_HOSTS = ("localhost", "127.0.0.1", "0.0.0.0")
 _LINK_RE = re.compile(r"https?://[^\s<>\"')\]]+")
 _CONFIDENCE_RE = re.compile(r"(?i)\b(high|medium|low)\s+confidence\b")
+
+_REFERENCE_DOMAINS = frozenset({
+    "cve.org",
+    "first.org",
+    "mitre.org",
+    "nist.gov",
+    "cisa.gov",
+    "cert.org",
+    "sans.org",
+    "owasp.org",
+})
+
+
+def is_reference_url(val: str, source_url: str = "") -> bool:
+    """Return True if val represents a reference catalog, standards body,
+    vulnerability database, or advisory page rather than adversary observables.
+    """
+    if not val or not isinstance(val, str):
+        return False
+    cleaned = (
+        val.strip()
+        .replace("[.]", ".")
+        .replace("[dot]", ".")
+        .replace("hxxps://", "https://")
+        .replace("hxxp://", "http://")
+    )
+    if not (cleaned.startswith("http://") or cleaned.startswith("https://")):
+        if cleaned.startswith("/"):
+            return False
+        cleaned = "https://" + cleaned
+    try:
+        parsed = urlsplit(cleaned)
+        host = (parsed.hostname or "").lower()
+    except Exception:
+        return False
+    if not host:
+        return False
+    for ref_domain in _REFERENCE_DOMAINS:
+        if host == ref_domain or host.endswith("." + ref_domain):
+            return True
+    if source_url:
+        try:
+            source_parsed = urlsplit(source_url)
+            source_host = (source_parsed.hostname or "").lower()
+            if source_host and (host == source_host or host.endswith("." + source_host)):
+                return True
+        except Exception:
+            pass
+    return False
+
 
 _DISALLOWED_EXTENSIONS = {
     ".bin",
@@ -175,6 +225,8 @@ For each artifact return:
   text ties it to this campaign, else "unknown")
 - "evidence": one sentence copied word for word from the text that states the role or status.
 
+IMPORTANT FOR URLS AND DOMAINS: Do NOT extract documentation links, CVE catalog links (cve.org), CVSS calculators (first.org), CWE records (mitre.org), NVD links (nist.gov), or vendor advisory/knowledgebase articles as artifacts. Only extract URLs and domains that represent adversary infrastructure, malware staging/downloads, C2, or targeted vulnerable application endpoints.
+
 Return strict JSON: {{"artifacts": [ ... ]}}. Return {{"artifacts": []}} if there are none.
 """
 
@@ -201,6 +253,7 @@ class SourceEvidence:
     text: str = ""
     #: Running provider totals for every model call made about this source.
     usage: Dict[str, Any] = field(default_factory=dict)
+    extraction_metrics: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -209,19 +262,31 @@ class SourceEvidence:
     def usage_metadata(self) -> Dict[str, Any]:
         """Provider usage in the shape agents report it; empty when no call reported any."""
         if not self.usage:
+            if self.extraction_metrics.get("cache_hits") and not self.extraction_metrics.get("model_calls"):
+                return {
+                    "llm_calls": 0, "input_tokens": 0, "output_tokens": 0,
+                    "llm_duration_ms": 0, "models": [], "estimated_cost_usd": 0.0,
+                    "cost_basis": "no_model_calls",
+                }
             return {}
         from hecate_agent.core.cost_tracker import summarize_cost
 
-        snapshot = {key: self.usage[key] for key in ("llm_calls", "input_tokens", "output_tokens", "llm_duration_ms")}
-        snapshot["models"] = sorted(self.usage["models"])
+        snapshot = {key: self.usage.get(key, 0) for key in ("llm_calls", "input_tokens", "output_tokens", "llm_duration_ms")}
+        snapshot["models"] = sorted(self.usage.get("models", []))
+        snapshot["input_token_samples"] = self.usage.get("input_token_samples", snapshot["llm_calls"])
+        snapshot["max_input_tokens"] = self.usage.get("max_input_tokens")
         # Zero from a local model or from missing usage is unknown, not free.
         cost, basis = summarize_cost(
             snapshot["models"],
             snapshot["llm_calls"],
             snapshot["input_tokens"],
             snapshot["output_tokens"],
-            float(self.usage["cost_usd"]),
+            float(self.usage.get("cost_usd", 0.0)),
         )
+        if snapshot["input_token_samples"] < snapshot["llm_calls"]:
+            snapshot["input_tokens"] = None
+            snapshot["output_tokens"] = None
+            cost, basis = None, "incomplete_usage"
         snapshot["estimated_cost_usd"] = cost
         snapshot["cost_basis"] = basis
         return snapshot
@@ -565,6 +630,8 @@ def _checked(raw: Dict[str, Any], page: str, page_words: str) -> Tuple[Optional[
         value = trim_shell_tail(value)
     if not _valid_value(kind, value):
         return None, f"{value}: not a well-formed {kind}"
+    if kind in ("url", "domain", "hostname") and is_reference_url(value):
+        return None, f"{value}: reference/documentation URL or domain is not an intrusion observable"
     if kind == "ipv4" and normalise(value) not in page:
         # "188.245.99.156" / ":10000" on separate lines of a table is still that endpoint;
         # an address the page has with some other port, or none, keeps only the address.
@@ -1070,7 +1137,8 @@ def _contexts(text: str, value: str, limit: int = 2) -> List[str]:
 
 
 def classify_feed_indicators(
-    records: List[IndicatorRecord], evidence: "SourceEvidence", complete: Optional["Complete"] = None
+    records: List[IndicatorRecord], evidence: "SourceEvidence", complete: Optional["Complete"] = None,
+    *, session: Optional[SourceExtractionSession] = None,
 ) -> List[IndicatorRecord]:
     """Role and status for feed indicators the chunked pass did not classify.
 
@@ -1089,15 +1157,30 @@ def classify_feed_indicators(
                 passages.append(passage)
     listing = "\n".join(f"- {r.value} ({r.type})" for r in pending)
     prompt = f"Indicators:\n{listing}\n\nPassages:\n" + "\n---\n".join(passages)
+    if complete is None:
+        session = session or SourceExtractionSession()
+        session.bind_source(evidence.url, evidence.text)
+    page = normalise(evidence.text)
+    page_words = " ".join(_words(evidence.text))
+    messages = [{"role": "system", "content": CLASSIFY_PROMPT}, {"role": "user", "content": prompt[: CHUNK_CHARS * 2]}]
     try:
-        reply = (complete or partial(_default_complete, usage=evidence.usage))(
-            [{"role": "system", "content": CLASSIFY_PROMPT}, {"role": "user", "content": prompt[: CHUNK_CHARS * 2]}]
-        )
+        if complete is not None:
+            reply = complete(messages)
+        else:
+            assert session is not None
+            reply = session.complete(
+                messages, evidence.usage, phase="classification",
+                validate=lambda reply: _verified_response(reply, page, page_words),
+            )
+    except SourceBudgetExceeded as exc:
+        evidence.dropped.append(str(exc) + "; feed indicator roles remain unclassified")
+        return []
     except Exception as exc:  # the provider raises its SDK's own error types
         logger.warning("Feed indicator classification failed: %s", exc)
         return []
-    page = normalise(evidence.text)
-    page_words = " ".join(_words(evidence.text))
+    finally:
+        if session is not None:
+            evidence.extraction_metrics = session.snapshot()
     wanted = {normalise(r.value): r.type for r in pending}
     classified: List[IndicatorRecord] = []
     for raw in _parse(reply, evidence.dropped):
@@ -1119,23 +1202,24 @@ def classify_feed_indicators(
 Complete = Callable[[List[Dict[str, str]]], str]
 
 
-def _default_complete(messages: List[Dict[str, str]], usage: Optional[Dict[str, Any]] = None) -> str:
-    """One provider call; its token usage is added to ``usage`` when one is given."""
-    from hecate_agent.core.llm_provider import create_provider
-
-    response = create_provider().complete(messages, max_tokens=3000, temperature=0.0)
-    if usage is not None:
-        usage["llm_calls"] = usage.get("llm_calls", 0) + 1
-        usage["input_tokens"] = usage.get("input_tokens", 0) + response.input_tokens
-        usage["output_tokens"] = usage.get("output_tokens", 0) + response.output_tokens
-        usage["llm_duration_ms"] = usage.get("llm_duration_ms", 0) + response.duration_ms
-        usage["cost_usd"] = usage.get("cost_usd", 0.0) + response.cost_usd
-        usage["models"] = sorted({*usage.get("models", []), response.model})
-    return response.text
+def _verified_response(reply: str, page: str, page_words: str) -> bool:
+    """Only complete, source-grounded replies qualify for reuse; recheck on reads."""
+    diagnostics: List[str] = []
+    artifacts = _parse(reply, diagnostics)
+    match = re.search(r"\{.*\}", reply, re.DOTALL)
+    if diagnostics or match is None:
+        return False
+    data = json.loads(match.group(0))
+    return (
+        isinstance(data, dict) and isinstance(data.get("artifacts"), list)
+        and len(artifacts) == len(data["artifacts"])
+        and all(_checked(raw, page, page_words)[0] is not None for raw in artifacts)
+    )
 
 
 def extract_source_evidence(
-    url: str, *, page_text: Optional[str] = None, complete: Optional[Complete] = None
+    url: str, *, page_text: Optional[str] = None, complete: Optional[Complete] = None,
+    session: Optional[SourceExtractionSession] = None,
 ) -> SourceEvidence:
     """Fetch ``url`` (unless ``page_text`` is given) and extract verified artifacts from all of it.
 
@@ -1153,15 +1237,29 @@ def extract_source_evidence(
     page = normalise(text)
     page_words = " ".join(_words(text))
     merged: Dict[Tuple[str, str], SourceArtifact] = {}
-    call = complete or partial(_default_complete, usage=evidence.usage)
+    if complete is None:
+        session = session or SourceExtractionSession()
+        session.bind_source(url, text)
     chunks = chunk_text(text)
     evidence.chunks = len(chunks)
     extraction_incomplete = False
-    pending = [(chunk, 0) for chunk in chunks]
+    pending = [(chunk, index, 0) for index, chunk in enumerate(chunks)]
     while pending:
-        chunk, depth = pending.pop(0)
+        chunk, index, depth = pending.pop(0)
         try:
-            reply = call([{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": chunk}])
+            messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": chunk}]
+            if complete is not None:
+                reply = complete(messages)
+            else:
+                assert session is not None
+                reply = session.complete(
+                    messages, evidence.usage, phase="extraction", chunk=index, depth=depth,
+                    validate=lambda reply: _verified_response(reply, page, page_words),
+                )
+        except SourceBudgetExceeded as exc:
+            extraction_incomplete = True
+            evidence.dropped.append(str(exc) + "; source coverage is incomplete")
+            break
         except Exception as exc:  # the provider raises its SDK's own error types
             logger.warning("Source evidence extraction call failed: %s", exc)
             evidence.error = evidence.error or f"extraction failed: {exc}"
@@ -1177,7 +1275,9 @@ def extract_source_evidence(
                 midpoint = len(chunk) // 2
                 boundary = chunk.rfind("\n", len(chunk) // 3, midpoint)
                 boundary = boundary + 1 if boundary >= 0 else midpoint
-                pending[0:0] = [(chunk[:boundary], depth + 1), (chunk[boundary:], depth + 1)]
+                # Finish original source chunks before spending more calls on
+                # recovery, so malformed sections cannot starve later evidence.
+                pending.extend([(chunk[:boundary], index, depth + 1), (chunk[boundary:], index, depth + 1)])
         for raw in parsed:
             artifact, problem = _checked(raw, page, page_words)
             if artifact is None:
@@ -1193,16 +1293,23 @@ def extract_source_evidence(
     _mark_attacker_side(evidence.artifacts, text)
     _tie_observed_paths(evidence.artifacts, text)
     _tie_fuller_paths(evidence.artifacts)
-    evidence.indicators = [_to_record(a, url) for a in evidence.artifacts if a.kind in INDICATOR_KINDS]
+    evidence.indicators = [
+        _to_record(a, url)
+        for a in evidence.artifacts
+        if a.kind in INDICATOR_KINDS and not is_reference_url(a.value, url)
+    ]
     if evidence.artifacts:
         evidence.error = ""  # a partial failure still produced verified evidence
     elif extraction_incomplete:
         evidence.error = "source extraction incomplete: no verified artifacts recovered; see dropped diagnostics"
+    if session is not None:
+        evidence.extraction_metrics = session.snapshot()
     return evidence
 
 
 def build_indicator_records(
-    cti_indicators: Dict[str, List[str]], evidence: Optional[SourceEvidence], complete: Optional[Complete] = None
+    cti_indicators: Dict[str, List[str]], evidence: Optional[SourceEvidence], complete: Optional[Complete] = None,
+    *, session: Optional[SourceExtractionSession] = None,
 ) -> List[IndicatorRecord]:
     """The feed's indicators, typed with whatever the primary source says about them.
 
@@ -1222,7 +1329,7 @@ def build_indicator_records(
     if evidence is None or not evidence.text:
         mark_placeholders(cti)
         return cti
-    extra = classify_feed_indicators(cti, evidence, complete)
+    extra = classify_feed_indicators(cti, evidence, complete, session=session)
     records = merge_records(cti, [*evidence.indicators, *extra])
     _apply_text_roles(records, evidence.text, lambda r: str(r.type))
     for record in records:
@@ -1236,4 +1343,6 @@ def build_indicator_records(
     mark_placeholders(records)
     attach_url_ports(records)
     attach_text_ports(records, evidence.text)
+    ref_url = evidence.url if evidence is not None else ""
+    records = [r for r in records if not is_reference_url(r.value, ref_url)]
     return records

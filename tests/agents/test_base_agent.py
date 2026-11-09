@@ -54,6 +54,7 @@ def test_parse_json_raises_on_invalid():
 
 def test_call_llm_with_retry_truncates_huge_responses(monkeypatch):
     agent = DummyLLMAgent()
+    monkeypatch.setattr(agent, "_get_provider", lambda: object())
     prompts_received = []
 
     huge_hallucination = "A" * 5000
@@ -84,6 +85,7 @@ def test_call_llm_with_retry_truncates_huge_responses(monkeypatch):
 
 def test_call_llm_with_retry_jittered_backoff(monkeypatch):
     agent = DummyLLMAgent()
+    monkeypatch.setattr(agent, "_get_provider", lambda: object())
     sleep_calls = []
 
     monkeypatch.setattr("time.sleep", lambda s: sleep_calls.append(s))
@@ -100,4 +102,3 @@ def test_call_llm_with_retry_jittered_backoff(monkeypatch):
     assert 0.5 <= sleep_calls[0] <= 0.75
     # Second sleep: base=0.5 * 2^1 = 1.0 (+ jitter 0.05-0.2) -> between 1.05 and 1.25
     assert 1.0 <= sleep_calls[1] <= 1.25
-

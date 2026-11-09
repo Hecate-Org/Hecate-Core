@@ -15,7 +15,17 @@ from hecate_agent.core.telemetry_mapping import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-ENVIRONMENT = (ROOT / "knowledge" / "environment.md").read_text(encoding="utf-8")
+ENVIRONMENT = """## Security & Monitoring Tools
+### SIEM
+- **Product:** Verified test SIEM
+- **Coverage:** Process execution, file events and network connections
+- **Common Fields:**
+  - Endpoint: `process_name`, `parent_process`, `command_line`, `user`, `dest`
+  - Network: `src_ip`, `dest_ip`
+### EDR
+- **Product:** [To be configured - e.g., CrowdStrike Falcon, Microsoft Defender, Carbon Black]
+- **Telemetry:** Registry modifications
+"""
 
 #: R-0616's Key Fields, as the model wrote them; the validator flagged all six.
 R0616 = [
@@ -134,3 +144,26 @@ def test_a_class_prefix_before_a_bare_attribute_means_the_class_object() -> None
     """The A3 replay wrote file_activity.path for file.path."""
     assert normalize_field("file_activity.path") == "file.path"
     assert normalize_field("network_activity.path") is None  # no single object to assume
+
+
+def test_unverified_starter_does_not_claim_any_telemetry_or_fields() -> None:
+    starter = (ROOT / "knowledge" / "environment.md").read_text(encoding="utf-8")
+    assert not any(documented_data_sources(starter).values())
+    assert environment_fields(starter) == {}
+
+
+def test_contract_requires_verified_status_and_complete_metadata() -> None:
+    profile = """## Telemetry availability contract
+| Source / event family | Status | Index/table + provider/channel | Field mapping | Asset/tenant coverage | Retention + ingestion lag | Evidence / date / owner |
+|---|---|---|---|---|---|---|
+| Endpoint process and lineage | verified | test-events / test-provider | `process_name`, `command_line` | test hosts | 7d / 5m | known-event query Q1 / 2026-11-09 / test owner |
+| Registry events | verified | Unknown | `registry_value` | Unknown | Unknown | Not verified |
+| Network connections | unknown | test-net | `dest_ip` | all test hosts | 1d | query Q2 |
+"""
+    assert documented_data_sources(profile) == {
+        "process_execution": True,
+        "file_operations": False,
+        "network_connections": False,
+        "registry_events": False,
+    }
+    assert environment_fields(profile) == {"Endpoint process and lineage": ["process_name", "command_line"]}

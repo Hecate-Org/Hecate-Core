@@ -56,8 +56,9 @@ def register_agent_tools(mcp: "FastMCP") -> None:  # type: ignore[name-defined] 
         manager = HuntManager(hunts_dir=workspace / "hunts")
         past_hunts = manager.list_hunts()
 
-        env_file = workspace / "knowledge" / "environment.md"
-        environment = {"environment_md": env_file.read_text(encoding="utf-8")} if env_file.exists() else {}
+        from hecate_agent.core.hunting_knowledge import load_environment_context
+
+        environment = {"environment_md": load_environment_context(workspace=workspace)}
 
         agent = HypothesisGeneratorAgent(llm_enabled=use_llm)
         input_data = HypothesisGenerationInput(
@@ -65,6 +66,7 @@ def register_agent_tools(mcp: "FastMCP") -> None:  # type: ignore[name-defined] 
             past_hunts=past_hunts,
             environment=environment,
             research=research,
+            workspace=workspace,
         )
 
         result = agent.execute(input_data)

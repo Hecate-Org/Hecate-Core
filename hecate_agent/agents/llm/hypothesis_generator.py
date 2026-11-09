@@ -2,12 +2,14 @@
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from hecate_agent.agents.base import AgentResult, LLMAgent
-from hecate_agent.core.hunting_knowledge import HYPOTHESIS_SECTIONS, is_enabled, load_sections
+from hecate_agent.core.hunting_knowledge import EVIDENCE_RULES, load_stage_guidance
 from hecate_agent.core.telemetry_examples import render_examples
 
 logger = logging.getLogger(__name__)
@@ -49,6 +51,7 @@ class HypothesisGenerationInput:
     # Set by the caller, which knows its own source formats; defaults False
     # so callers passing free prose are unaffected.
     intel_is_indicator_only: bool = False
+    workspace: Optional[Path] = None
 
 
 @dataclass
@@ -205,7 +208,7 @@ def _bullet_block(heading: str, items: List[str]) -> List[str]:
 #: Character budget for the tradecraft excerpt. Sections 1, 2 and 5 total
 #: ~63 KB, which would crowd the CTI out of a local model's context; this
 #: keeps the framing without drowning the intel the hunt is actually about.
-_HUNTING_KNOWLEDGE_BUDGET = 12000
+_HUNTING_KNOWLEDGE_BUDGET = 4000
 
 
 class HypothesisGeneratorAgent(LLMAgent[HypothesisGenerationInput, HypothesisGenerationOutput]):
@@ -263,7 +266,13 @@ class HypothesisGeneratorAgent(LLMAgent[HypothesisGenerationInput, HypothesisGen
             # before the step-1 wording was sharpened, and still only 2/5
             # after, purely from sampling. The hypothesis text itself is
             # better for being less inventive here too.
-            output_text = self._call_llm_with_retry(prompt, validate_json, max_retries=2, temperature=0.2)
+            output_text = self._call_llm_with_retry(
+                prompt,
+                validate_json,
+                max_retries=2,
+                temperature=0.2,
+                capability="hypothesis",
+            )
             output_data = self._parse_json_response(output_text)
             # A caller that set the flag knows its own source formats; its
             # statement of fact outranks the model's self-assessment, which
@@ -332,8 +341,6 @@ class HypothesisGeneratorAgent(LLMAgent[HypothesisGenerationInput, HypothesisGen
 
     def _extract_techniques_from_text(self, text: str) -> List[str]:
         """Extract T-code strings from free text."""
-        import re
-
         return re.findall(r"\bT\d{4}(?:\.\d{3})?\b", text)
 
     def _apply_technique_validation(
@@ -614,12 +621,12 @@ class HypothesisGeneratorAgent(LLMAgent[HypothesisGenerationInput, HypothesisGen
             "Also provide ABLE scoping (Actor, Behavior, Location, Evidence) "
             "-- Hecate's standard hunt-scoping framework. Base every ABLE field "
             "strictly on the source text; research is context only and does not "
-            "establish what happened in this specific case; "
-            'leave a field empty ("") rather than invent specifics -- a '
-            "named actor, a specific system, a fabricated log field -- that "
-            "isn't actually supported by what you were given:\n"
-            "- Actor: The threat actor or malware family this hunt targets "
-            "(optional -- empty string if the intel doesn't name one).\n"
+            "establish what happened in this specific case:\n"
+            "- Actor: The threat actor, activity cluster, or malware family this hunt targets "
+            "(e.g. named APT, campaign, or malware family identified in the CTI or linked research). "
+            "If no specific threat actor is attributed, state 'Unattributed' or describe the threat cluster "
+            "(e.g. 'Unattributed / Opportunistic Threat Actors' or 'Unattributed (threat actors exploiting <vulnerability/campaign>)'). "
+            "Do NOT return an empty string or leave this blank.\n"
             "- Behavior: The specific TTP or behavior pattern to hunt for, "
             "more concrete/actionable than the hypothesis's own [behavior] "
             "clause.\n"
@@ -650,7 +657,7 @@ class HypothesisGeneratorAgent(LLMAgent[HypothesisGenerationInput, HypothesisGen
             '  "expected_benign": "string (normal/authorized baseline behavior)",\n'
             '  "falsification_criteria": "string (what negative finding or absence falsifies this hypothesis)",\n'
             '  "time_range_suggestion": "7 days (justification)",\n'
-            '  "actor": "string (or empty string if unknown)",\n'
+            '  "actor": "string (threat actor, malware cluster, or \'Unattributed\')",\n'
             '  "behavior": "string",\n'
             '  "location": "string",\n'
             '  "evidence": "string",\n'
@@ -677,24 +684,14 @@ class HypothesisGeneratorAgent(LLMAgent[HypothesisGenerationInput, HypothesisGen
             # A3: where the internals this intel names really appear in logs, so
             # observables name an event and field, not a syscall as a file name.
             telemetry_examples=render_examples(input_data.threat_intel),
-            hunting_knowledge=self._build_hunting_knowledge_section(),
+            hunting_knowledge=self._build_hunting_knowledge_section(input_data.workspace),
         )
 
     @staticmethod
-    def _build_hunting_knowledge_section() -> str:
-        """Tradecraft from `knowledge/hunting-knowledge.md`, if present.
-
-        Sections 1, 2 and 5 -- hypothesis patterns, TTP-to-observable
-        mapping, and the framework mental models -- are what the knowledge
-        base itself says to read before generating a hypothesis. Returns ""
-        when the file is absent so the prompt simply omits the block.
-        """
-        if not is_enabled():
-            return ""
-        body = load_sections(HYPOTHESIS_SECTIONS, _HUNTING_KNOWLEDGE_BUDGET)
-        if not body:
-            return ""
-        return f"**Hunting Tradecraft (apply this, do not merely cite it):**\n{body}\n\n"
+    def _build_hunting_knowledge_section(workspace: Optional[Path] = None) -> str:
+        """Compact workspace rules without copyable reference hypotheses."""
+        body = load_stage_guidance("hypothesis", _HUNTING_KNOWLEDGE_BUDGET, workspace=workspace)
+        return f"**Hunting Tradecraft:**\n{EVIDENCE_RULES}\n{body}\n\n"
 
     def _candidate_section(self, input_data: HypothesisGenerationInput) -> str:
         """Technique candidates found in the primary threat-intel text."""

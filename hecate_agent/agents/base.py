@@ -101,6 +101,8 @@ class LLMAgent(Agent[InputT, OutputT]):
         self._usage: Dict[str, Any] = {
             "llm_calls": 0,
             "input_tokens": 0,
+            "max_input_tokens": None,
+            "input_token_samples": 0,
             "output_tokens": 0,
             "llm_duration_ms": 0,
             "estimated_cost_usd": 0.0,
@@ -114,6 +116,8 @@ class LLMAgent(Agent[InputT, OutputT]):
             self._usage = {
                 "llm_calls": 0,
                 "input_tokens": 0,
+                "max_input_tokens": None,
+                "input_token_samples": 0,
                 "output_tokens": 0,
                 "llm_duration_ms": 0,
                 "estimated_cost_usd": 0.0,
@@ -138,13 +142,14 @@ class LLMAgent(Agent[InputT, OutputT]):
         return snapshot
 
     def _get_provider(self) -> Any:
-        """Get or create an LLM provider.
+        """Get or create an LLM router (or an injected provider).
 
-        Uses the provider abstraction layer which auto-detects the available
-        LLM backend from environment variables and configuration.
+        Uses the dual-backend router by default so callers can pass
+        ``capability`` / ``tier``. An explicit ``provider=`` in ``__init__``
+        is kept as-is for tests and offline stubs.
 
         Returns:
-            LLMProvider instance
+            LLMRouter or LLMProvider instance
 
         Raises:
             RuntimeError: If no provider can be determined
@@ -152,13 +157,21 @@ class LLMAgent(Agent[InputT, OutputT]):
         if self._provider is not None:
             return self._provider
 
-        from hecate_agent.core.llm_provider import create_provider
+        from hecate_agent.core.llm_router import create_router
 
         llm_config = self.config.get("llm", {})
-        self._provider = create_provider(llm_config if llm_config else None)
+        self._provider = create_router(llm_config if llm_config else None)
         return self._provider
 
-    def _call_llm(self, prompt: str, max_tokens: int = 4096, temperature: Optional[float] = None) -> str:
+    def _call_llm(
+        self,
+        prompt: str,
+        max_tokens: int = 4096,
+        temperature: Optional[float] = None,
+        *,
+        capability: Optional[str] = None,
+        tier: Optional[str] = None,
+    ) -> str:
         """Call the LLM and return response text.
 
         Provider-agnostic: works with any configured LLM backend.
@@ -173,10 +186,16 @@ class LLMAgent(Agent[InputT, OutputT]):
                 identical input, which reads as the model being unreliable
                 when it is really just being asked to be creative about a
                 question that has one right answer.
+            capability: Optional task name for tier routing / call-log tags
+                (e.g. ``hypothesis``, ``sigma_draft``). Defaults to complex.
+            tier: Optional explicit ``simple`` / ``complex`` override.
 
         Returns:
             The generated text content.
         """
+        from hecate_agent.core.llm_activity import call_meta
+        from hecate_agent.core.llm_router import LLMRouter
+
         provider = self._get_provider()
         complete_kwargs: Dict[str, Any] = {
             "messages": [{"role": "user", "content": prompt}],
@@ -184,7 +203,18 @@ class LLMAgent(Agent[InputT, OutputT]):
         }
         if temperature is not None:
             complete_kwargs["temperature"] = temperature
-        response = provider.complete(**complete_kwargs)
+
+        if isinstance(provider, LLMRouter):
+            if tier is not None:
+                complete_kwargs["tier"] = tier
+            if capability is not None:
+                complete_kwargs["capability"] = capability
+            response = provider.complete(**complete_kwargs)
+            resolved_tier = provider.resolve_tier(tier, capability)
+        else:
+            resolved_tier = (tier or "complex").strip().lower()
+            with call_meta(tier=resolved_tier, capability=capability or ""):
+                response = provider.complete(**complete_kwargs)
 
         self._log_llm_metrics(
             agent_name=self.__class__.__name__,
@@ -195,6 +225,20 @@ class LLMAgent(Agent[InputT, OutputT]):
             duration_ms=response.duration_ms,
         )
 
+        # The provider sees the fully assembled prompt, including skill/context
+        # text and retry feedback. Never log the prompt content itself.
+        logger.info(
+            "LLM request usage: agent=%s model=%s tier=%s capability=%s prompt_chars=%d "
+            "provider_input_tokens=%s provider_output_tokens=%s requested_max_output_tokens=%d",
+            self.__class__.__name__,
+            response.model,
+            resolved_tier,
+            capability or "",
+            len(prompt),
+            response.input_tokens if response.input_tokens > 0 else "unavailable",
+            response.output_tokens if response.output_tokens > 0 else "unavailable",
+            max_tokens,
+        )
         result: str = response.text
         return result
 
@@ -207,11 +251,17 @@ class LLMAgent(Agent[InputT, OutputT]):
         temperature: Optional[float] = None,
         max_feedback_chars: int = 1500,
         backoff_base_sec: float = 0.5,
+        *,
+        capability: Optional[str] = None,
+        tier: Optional[str] = None,
+        escalate: bool = True,
     ) -> str:
         """Call LLM with a validation-retry loop.
 
         If the response fails validation, appends bounded error feedback to the
         prompt and retries up to ``max_retries`` times with jittered backoff.
+        When the call was routed to the simple tier and still fails, one final
+        attempt is made on the complex tier (when backends differ).
 
         Args:
             prompt: The prompt to send to the LLM.
@@ -224,18 +274,32 @@ class LLMAgent(Agent[InputT, OutputT]):
                 in the retry prompt to prevent unbounded context inflation.
             backoff_base_sec: Base delay in seconds for exponential backoff.
                 Set to 0 to disable backoff.
+            escalate: When True (default), escalate simple→complex after retries.
 
         Returns:
             The generated text (last attempt, even if imperfect).
         """
+        from hecate_agent.core.llm_activity import call_meta
+        from hecate_agent.core.llm_escalate import can_escalate
+        from hecate_agent.core.llm_router import LLMRouter
+
         current_prompt = prompt
         result = ""
+        last_error: Optional[str] = None
+        provider = self._get_provider()
 
         for attempt in range(1 + max_retries):
-            result = self._call_llm(current_prompt, max_tokens=max_tokens, temperature=temperature)
+            result = self._call_llm(
+                current_prompt,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                capability=capability,
+                tier=tier,
+            )
             error = validate_fn(result)
             if error is None:
                 return result
+            last_error = error
             if attempt < max_retries:
                 logger.debug("LLM response validation failed (attempt %d): %s", attempt + 1, error)
 
@@ -255,6 +319,36 @@ class LLMAgent(Agent[InputT, OutputT]):
                 if backoff_base_sec > 0:
                     delay = (backoff_base_sec * (2**attempt)) + random.uniform(0.05, 0.2)
                     time.sleep(delay)
+
+        if (
+            escalate
+            and last_error is not None
+            and isinstance(provider, LLMRouter)
+            and can_escalate(provider, tier=tier, capability=capability)
+        ):
+            logger.info(
+                "Escalating %s to complex after simple validation failure: %s",
+                capability or "llm",
+                (last_error or "")[:160],
+            )
+            if len(result) > max_feedback_chars:
+                feedback_payload = result[:max_feedback_chars] + "\n... [truncated] ..."
+            else:
+                feedback_payload = result
+            clipped_error = (last_error or "")[:500]
+            escalate_prompt = (
+                f"{prompt}\n\nYour previous response:\n```json\n{feedback_payload}\n```\n\n"
+                f"Failed validation with error: {clipped_error}\n"
+                "Please fix the issue in the JSON and try again. Return valid JSON only."
+            )
+            with call_meta(escalated="true", escalate_from="simple"):
+                result = self._call_llm(
+                    escalate_prompt,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    capability=capability,
+                    tier="complex",
+                )
 
         return result
 
@@ -393,6 +487,9 @@ class LLMAgent(Agent[InputT, OutputT]):
         with self._usage_lock:
             self._usage["llm_calls"] += 1
             self._usage["input_tokens"] += input_tokens
+            if input_tokens > 0:
+                self._usage["max_input_tokens"] = max(self._usage["max_input_tokens"] or 0, input_tokens)
+                self._usage["input_token_samples"] += 1
             self._usage["output_tokens"] += output_tokens
             self._usage["llm_duration_ms"] += duration_ms
             self._usage["estimated_cost_usd"] += cost_usd
