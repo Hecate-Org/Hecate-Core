@@ -40,9 +40,9 @@ _LOGSOURCE_FIELDS = {
         "TargetUserName, SubjectUserName, LogonType, AuthenticationPackageName, WorkstationName, IpAddress, Status, SubStatus"
     ),
     "proxy": (
-        "c-uri, c-uri-stem, c-uri-query, c-uri-extension, c-useragent, cs-host, cs-method, cs-referrer, sc-status, src_ip, dst_ip"
+        "c-uri, c-uri-stem, c-uri-query, c-uri-extension, c-useragent, cs-cookie, cs-host, cs-method, cs-referrer, sc-status, src_ip, dst_ip"
     ),
-    "webserver": "cs-method, cs-uri-stem, cs-uri-query, cs-user-agent, cs-referrer, sc-status, c-ip",
+    "webserver": "cs-method, cs-uri-stem, cs-uri-query, cs-user-agent, cs-cookie, cs-referrer, sc-status, c-ip",
     "cloud_audit": ("eventSource, eventName, userIdentity, sourceIPAddress, userAgent, awsRegion, requestParameters, action"),
     "identity_audit": (
         "eventName, operationType, appId, appDisplayName, targetResources, initiatedBy, roles, permissions, status"

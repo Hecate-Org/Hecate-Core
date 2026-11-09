@@ -9,13 +9,18 @@ deployment-ready search queries for major enterprise EDRs and SIEMs:
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import stat
 import threading
+from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Callable, ClassVar, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Callable, ClassVar, Dict, Iterator, List, Optional
 
 import yaml
 
+from hecate_agent.core.atomic_write import DEFAULT_FILE_MODE, atomic_write_text
 from hecate_agent.core.query_validator import (
     QueryValidationResult,
     QueryValidator,
@@ -62,10 +67,17 @@ logger = logging.getLogger(__name__)
 
 _BACKEND_CACHE: Dict[str, Any] = {}
 _CACHE_LOCK = threading.Lock()
+# Only immutable query text is shared. Validation results and public result
+# objects are rebuilt per call. The cache lives no longer than loaded backends.
+_QUERY_CACHE: OrderedDict[tuple[Any, ...], str] = OrderedDict()
+_QUERY_CACHE_LOCK = threading.RLock()
+MAX_QUERY_CACHE_ENTRIES = 256
+MAX_CACHED_QUERY_BYTES = 262144
 
 _ELASTIC_PROXY_MAPPING: Dict[str, str] = {
     "c-useragent": "user_agent.original",
     "cs-user-agent": "user_agent.original",
+    "cs-cookie": "http.request.headers.cookie",
     "cs-referrer": "http.request.referrer",
     "cs-method": "http.request.method",
     "sc-status": "http.response.status_code",
@@ -97,6 +109,25 @@ _ELASTIC_LINUX_MAPPING: Dict[str, str] = {
 }
 
 
+_PATH_FIELDS = ("Image", "ParentImage", "TargetFilename", "CommandLine", "ParentCommandLine", "CurrentDirectory")
+
+
+def _has_unix_path(detection: Any) -> bool:
+    """Whether a process or file field in the detection holds a Unix path such as ``/bin/sh``."""
+    if not isinstance(detection, dict):
+        return False
+    for block in detection.values():
+        if not isinstance(block, dict):
+            continue
+        for key, value in block.items():
+            if str(key).split("|", 1)[0] not in _PATH_FIELDS:
+                continue
+            for item in value if isinstance(value, list) else [value]:
+                if isinstance(item, str) and item.lstrip("*").startswith("/"):
+                    return True
+    return False
+
+
 def _get_or_create_backend(key: str, builder: Callable[[], Any]) -> Any:
     """Thread-safe cached pySigma backend lookup to avoid re-compiling processing pipelines."""
     backend = _BACKEND_CACHE.get(key)
@@ -110,9 +141,35 @@ def _get_or_create_backend(key: str, builder: Callable[[], Any]) -> Any:
 
 
 def clear_backend_cache() -> None:
-    """Clear all cached pySigma backends and processing pipelines."""
-    with _CACHE_LOCK:
+    """Invalidate converted queries together with backend/pipeline instances."""
+    with _QUERY_CACHE_LOCK, _CACHE_LOCK:
+        _QUERY_CACHE.clear()
         _BACKEND_CACHE.clear()
+
+
+def write_query_if_changed(path: Path, query: str) -> bool:
+    """Persist canonical native query text without touching an unchanged file."""
+    content = query.strip() + "\n"
+    try:
+        if path.read_text(encoding="utf-8") == content:
+            return False
+    except (FileNotFoundError, UnicodeError):
+        pass
+    try:
+        mode = stat.S_IMODE(path.stat().st_mode)
+    except FileNotFoundError:
+        mode = DEFAULT_FILE_MODE
+    atomic_write_text(path, content, mode=mode)
+    return True
+
+
+def write_transpiled_queries(rule_path: Path, results: Dict[str, Any]) -> Iterator[Path]:
+    """Yield valid artifacts as they are materialized, including unchanged files."""
+    for result in results.values():
+        if getattr(result, "success", False) and getattr(result, "query", None):
+            path = rule_path.with_suffix(result.file_extension)
+            write_query_if_changed(path, result.query)
+            yield path
 
 
 def build_insight_idr_pipeline() -> Optional[Any]:
@@ -149,6 +206,7 @@ def build_insight_idr_pipeline() -> Optional[Any]:
                         "cs-method": "http_method",
                         "cs-uri-stem": "uri_path",
                         "cs-uri-query": "uri_query",
+                        "cs-cookie": "cookie",
                         "c-useragent": "user_agent",
                         "sc-status": "http_status",
                     }
@@ -293,7 +351,7 @@ class SigmaTranspiler:
 
     @classmethod
     def clear_cache(cls) -> None:
-        """Clear all cached pySigma backends and processing pipelines."""
+        """Clear converted queries, backend instances and processing pipelines."""
         clear_backend_cache()
 
     def validate_query(self, target: str, query: str) -> QueryValidationResult:
@@ -332,7 +390,11 @@ class SigmaTranspiler:
                     "dns_query",
                 }
                 detection_str = str(parsed.get("detection", ""))
-                if category in endpoint_cats or "\\" in detection_str or ".exe" in detection_str.lower():
+                windows_values = "\\" in detection_str or ".exe" in detection_str.lower()
+                if category in endpoint_cats and not windows_values and _has_unix_path(parsed.get("detection")):
+                    logsource["product"] = "linux"
+                    parsed["logsource"] = logsource
+                elif category in endpoint_cats or windows_values:
                     logsource["product"] = "windows"
                     parsed["logsource"] = logsource
 
@@ -373,12 +435,11 @@ class SigmaTranspiler:
                 )
             return results
 
+        rule_digest = hashlib.sha256(rule_yaml.encode("utf-8")).digest()
         for target in targets:
             meta = self.TARGET_METADATA.get(target, {"name": target, "dialect": "txt", "extension": ".txt"})
-            normalized_yaml = self.normalize_rule_for_backend(rule_yaml, target)
             try:
-                query = self._transpile_single_target(normalized_yaml, target)
-                val_res = self.validator.validate(target, query)
+                query, val_res = self._validated_conversion(rule_yaml, rule_digest, target)
                 if not val_res.is_valid:
                     results[target] = TranspiledQuery(
                         target=target,
@@ -413,6 +474,28 @@ class SigmaTranspiler:
                 )
 
         return results
+
+    def _validated_conversion(self, rule_yaml: str, digest: bytes, target: str) -> tuple[str, QueryValidationResult]:
+        converter = self._transpile_single_target
+        normalizer = self.normalize_rule_for_backend
+        key = (digest, target, getattr(converter, "__func__", converter), getattr(normalizer, "__func__", normalizer))
+        # Custom subclasses may have per-instance conversion settings. Do not
+        # share their output across instances without a declared settings key.
+        cacheable = type(self) is SigmaTranspiler
+        with _QUERY_CACHE_LOCK:
+            query = _QUERY_CACHE.get(key) if cacheable else None
+            if query is None:
+                query = converter(normalizer(rule_yaml, target), target)
+            validation = self.validator.validate(target, query)
+            if cacheable:
+                if validation.is_valid and query and len(query.encode("utf-8")) <= MAX_CACHED_QUERY_BYTES:
+                    _QUERY_CACHE[key] = query
+                    _QUERY_CACHE.move_to_end(key)
+                    while len(_QUERY_CACHE) > MAX_QUERY_CACHE_ENTRIES:
+                        _QUERY_CACHE.popitem(last=False)
+                else:
+                    _QUERY_CACHE.pop(key, None)
+            return query, validation
 
     def _transpile_single_target(self, rule_yaml: str, target: str) -> str:
         """Internal helper to convert a Sigma rule for a specific backend."""

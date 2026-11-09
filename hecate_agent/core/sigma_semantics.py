@@ -47,7 +47,7 @@ SIGMA_FIELDS: Dict[str, Tuple[str, ...]] = {
         "c-uri", "c-uri-extension", "c-uri-query", "c-uri-stem", "c-useragent", "cs-bytes", "cs-cookie",
         "cs-host", "cs-method", "cs-referrer", "cs-version", "r-dns", "sc-bytes", "sc-status", "src_ip", "dst_ip",
     ),
-    "webserver": ("cs-uri-query", "cs-uri-stem", "cs-method", "cs-referrer", "cs-user-agent", "sc-status", "c-ip"),
+    "webserver": ("cs-uri-query", "cs-uri-stem", "cs-method", "cs-referrer", "cs-user-agent", "cs-cookie", "sc-status", "c-ip"),
     "cloud_audit": (
         "eventSource", "eventName", "userIdentity", "sourceIPAddress", "userAgent",
         "awsRegion", "requestParameters", "responseElements", "errorCode", "errorMessage",
@@ -900,6 +900,7 @@ def semantic_problem(
         lambda: impossible_conjunction(detection),
         lambda: description_mismatch(detection, description),
         lambda: installer_tampering_without_evidence(detection, category, description),
+        lambda: shell_child_in_parent_fields(detection, category, description),
         lambda: filter_cancels_selection(detection),
         lambda: actor_only_selection(detection, category),
         lambda: filter_excludes_named_artifact(detection, named or []),
@@ -911,6 +912,33 @@ def semantic_problem(
         if problem:
             return problem
     return None
+
+
+_SHELL_NAME_RE = re.compile(r"(?:^|[\\/\s*])(?:(?:ba|da|z)?sh|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh)(?:$|[\s*])", re.I)
+_SPAWN_CLAIM_RE = re.compile(r"(?i)\b(spawn\w*|launch\w*|child|parent|starts? a shell)\b")
+
+
+def shell_child_in_parent_fields(detection: Dict[str, Any], category: str, description: str) -> Optional[str]:
+    """A rule for a program spawning a shell that describes one process, not two.
+
+    H-0025's "Node-RED Runtime Spawning Shell" matched ``Image|endswith:
+    /usr/bin/node-red`` with ``CommandLine|contains: /bin/sh``: the Node-RED
+    process itself, which never has /bin/sh in its own command line.
+    """
+    if category != "process_creation" or not _SPAWN_CLAIM_RE.search(description):
+        return None
+    if _field_values(detection, "parentimage") or _field_values(detection, "parentcommandline"):
+        return None
+    images = _field_values(detection, "image")
+    if not images or any(_SHELL_NAME_RE.search(image) for image in images):
+        return None
+    shells = [v for v in _field_values(detection, "commandline") if _SHELL_NAME_RE.search(v)]
+    if not shells:
+        return None
+    return (
+        f"Image matches {images[0]!r} and CommandLine matches the shell {shells[0]!r}, which describes one "
+        "process; a program spawning a shell is ParentImage (the program) with Image (the shell)"
+    )
 
 
 def installer_tampering_without_evidence(detection: Dict[str, Any], category: str, description: str) -> Optional[str]:
