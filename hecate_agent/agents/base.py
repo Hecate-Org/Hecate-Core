@@ -2,8 +2,10 @@
 
 import json
 import logging
+import random
 import re
 import threading
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Generic, List, Optional, TypeVar, cast
@@ -203,11 +205,13 @@ class LLMAgent(Agent[InputT, OutputT]):
         max_retries: int = 2,
         max_tokens: int = 4096,
         temperature: Optional[float] = None,
+        max_feedback_chars: int = 1500,
+        backoff_base_sec: float = 0.5,
     ) -> str:
         """Call LLM with a validation-retry loop.
 
-        If the response fails validation, appends the error feedback to the
-        prompt and retries up to ``max_retries`` times.
+        If the response fails validation, appends bounded error feedback to the
+        prompt and retries up to ``max_retries`` times with jittered backoff.
 
         Args:
             prompt: The prompt to send to the LLM.
@@ -215,6 +219,11 @@ class LLMAgent(Agent[InputT, OutputT]):
                 None if valid, or an error string if invalid.
             max_retries: Maximum number of retry attempts.
             max_tokens: Maximum tokens to generate.
+            temperature: Sampling temperature.
+            max_feedback_chars: Maximum characters of invalid response to embed
+                in the retry prompt to prevent unbounded context inflation.
+            backoff_base_sec: Base delay in seconds for exponential backoff.
+                Set to 0 to disable backoff.
 
         Returns:
             The generated text (last attempt, even if imperfect).
@@ -229,10 +238,23 @@ class LLMAgent(Agent[InputT, OutputT]):
                 return result
             if attempt < max_retries:
                 logger.debug("LLM response validation failed (attempt %d): %s", attempt + 1, error)
+
+                if len(result) > max_feedback_chars:
+                    feedback_payload = result[:max_feedback_chars] + "\n... [truncated] ..."
+                else:
+                    feedback_payload = result
+
+                clipped_error = error[:500] + (" ... [truncated]" if len(error) > 500 else "")
+
                 current_prompt = (
-                    "{}\n\nYour previous response:\n```json\n{}\n```\n\nFailed validation with error: {}\n"
-                    "Please fix the issue in the JSON and try again. Return valid JSON only.".format(prompt, result, error)
+                    f"{prompt}\n\nYour previous response:\n```json\n{feedback_payload}\n```\n\n"
+                    f"Failed validation with error: {clipped_error}\n"
+                    "Please fix the issue in the JSON and try again. Return valid JSON only."
                 )
+
+                if backoff_base_sec > 0:
+                    delay = (backoff_base_sec * (2**attempt)) + random.uniform(0.05, 0.2)
+                    time.sleep(delay)
 
         return result
 

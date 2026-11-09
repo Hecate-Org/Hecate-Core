@@ -50,3 +50,54 @@ def test_parse_json_raises_on_invalid():
     agent = DummyLLMAgent()
     with pytest.raises(ValueError, match="Failed to parse JSON"):
         agent._parse_json_response("This has no json at all.")
+
+
+def test_call_llm_with_retry_truncates_huge_responses(monkeypatch):
+    agent = DummyLLMAgent()
+    prompts_received = []
+
+    huge_hallucination = "A" * 5000
+
+    def mock_call_llm(prompt, **kwargs):
+        prompts_received.append(prompt)
+        if len(prompts_received) == 1:
+            return huge_hallucination
+        return '{"valid": true}'
+
+    monkeypatch.setattr(agent, "_call_llm", mock_call_llm)
+
+    def validate(resp):
+        if resp == huge_hallucination:
+            return "Too long and invalid JSON"
+        return None
+
+    result = agent._call_llm_with_retry("initial prompt", validate, max_retries=1, backoff_base_sec=0)
+    assert result == '{"valid": true}'
+    assert len(prompts_received) == 2
+
+    retry_prompt = prompts_received[1]
+    # Check that the 5000 character output was truncated in the prompt
+    assert "... [truncated] ..." in retry_prompt
+    assert huge_hallucination not in retry_prompt
+    assert "Too long and invalid JSON" in retry_prompt
+
+
+def test_call_llm_with_retry_jittered_backoff(monkeypatch):
+    agent = DummyLLMAgent()
+    sleep_calls = []
+
+    monkeypatch.setattr("time.sleep", lambda s: sleep_calls.append(s))
+    monkeypatch.setattr(agent, "_call_llm", lambda *a, **kw: "invalid")
+
+    def validate(resp):
+        return "always invalid"
+
+    res = agent._call_llm_with_retry("test prompt", validate, max_retries=2, backoff_base_sec=0.5)
+    assert res == "invalid"
+    # Should have retried 2 times, so 2 sleep calls
+    assert len(sleep_calls) == 2
+    # First sleep: base=0.5 * 2^0 = 0.5 (+ jitter 0.05-0.2) -> between 0.55 and 0.70
+    assert 0.5 <= sleep_calls[0] <= 0.75
+    # Second sleep: base=0.5 * 2^1 = 1.0 (+ jitter 0.05-0.2) -> between 1.05 and 1.25
+    assert 1.0 <= sleep_calls[1] <= 1.25
+
