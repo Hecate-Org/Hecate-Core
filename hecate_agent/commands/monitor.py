@@ -1390,24 +1390,6 @@ def _outbound_panel(
         sync_style = "dim"
     table.add_row("STATUS", Text(sync_txt, style=sync_style))
 
-    if not compact:
-        table.add_row(
-            "CHANNELS",
-            Text.assemble(
-                ("GitHub Public", "bright_white"),
-                (" · ", "dim"),
-                ("MISP Events", "bright_cyan"),
-            ),
-        )
-        table.add_row(
-            "DISTRIB",
-            Text.assemble(
-                ("Signed CTI packages", "bright_white"),
-                (" · ", "dim"),
-                ("public repo", "dim"),
-            ),
-        )
-
     return Panel(
         table,
         title="[bold bright_cyan]OUTBOUND[/]",
@@ -2557,7 +2539,7 @@ def _render_dashboard(
             Layout(_ingestion_funnel_panel(events, runner), ratio=1),
         )
         tab3_layout["feeds_right"].split_column(
-            Layout(_outbound_panel(workspace, runner), size=6),
+            Layout(_outbound_panel(workspace, runner), size=5),
             Layout(_github_outbox_panel(workspace), ratio=1),
             Layout(_misp_outbox_panel(workspace), ratio=1),
         )
