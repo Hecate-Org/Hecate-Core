@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import yaml
 
 from hecate_agent.commands.monitor_samplers import TrailEvent
+from hecate_agent.core.workspace import workspace_root
 
 logger = logging.getLogger(__name__)
 
@@ -119,22 +120,6 @@ def _collect_hunts_metrics(workspace: Optional[Path] = None) -> HuntsMetrics:
         return HuntsMetrics()
 
     hunts_dir = workspace / "hunts"
-    is_eval_or_special = (
-        "/tmp/eval_runs" in str(workspace.resolve())
-        or "eval" in workspace.name.lower()
-        or workspace == Path("/home/chemch/betas")
-    )
-    if not (hunts_dir.exists() and hunts_dir.is_dir()) and is_eval_or_special:
-        alt_candidates = [
-            Path("/home/chemch/betas/Hecate-Workspace/hunts"),
-            Path.home() / "betas" / "Hecate-Workspace" / "hunts",
-            workspace.parent / "Hecate-Workspace" / "hunts",
-        ]
-        for alt in alt_candidates:
-            if alt.exists() and alt.is_dir():
-                hunts_dir = alt
-                break
-
     if not hunts_dir or not hunts_dir.exists() or not hunts_dir.is_dir():
         return HuntsMetrics()
 
@@ -535,18 +520,9 @@ def _collect_purple_team_metrics(
             elif "purple" in ev.message.lower() and "validat" in ev.message.lower():
                 metrics.last_status = "ACTIVE"
 
-    if not workspace or not workspace.exists():
-        candidates = [
-            Path("/home/chemch/betas/Hecate-Public"),
-            Path("/home/chemch/betas/Hecate-Workspace"),
-            Path.cwd(),
-        ]
-        for c in candidates:
-            if c.is_dir() and ((c / ".hecate" / "bas").is_dir() or (c / "hunts").is_dir()):
-                workspace = c
-                break
-        if not workspace or not workspace.exists():
-            return metrics
+    workspace = workspace_root(workspace)
+    if not workspace.exists():
+        return metrics
 
     resolved_path = str(workspace.resolve())
     hunts_dir = workspace / "hunts"
@@ -776,28 +752,9 @@ _SIEM_METRICS_CACHE: Dict[str, Tuple[float, float, float, SiemDriftMetrics]] = {
 
 def _find_siem_dir(workspace: Optional[Path] = None) -> Optional[Path]:
     """Locate the .hecate/siem directory containing drift state and history."""
-    candidates: List[Path] = []
-    if workspace:
-        resolved = workspace.resolve()
-        candidates.extend([
-            resolved / ".hecate" / "siem",
-            resolved / "Hecate-Public" / ".hecate" / "siem",
-            resolved / "Hecate-Workspace" / ".hecate" / "siem",
-            resolved.parent / "Hecate-Public" / ".hecate" / "siem",
-            resolved.parent / "Hecate-Workspace" / ".hecate" / "siem",
-            resolved.parent / "Hecate-Runner" / ".hecate" / "siem",
-        ])
-    cwd = Path.cwd().resolve()
-    candidates.extend([
-        cwd / ".hecate" / "siem",
-        cwd / "Hecate-Public" / ".hecate" / "siem",
-        cwd.parent / "Hecate-Public" / ".hecate" / "siem",
-        Path("/home/chemch/betas/Hecate-Public/.hecate/siem"),
-        Path("/home/chemch/betas/Hecate-Workspace/.hecate/siem"),
-    ])
-    for candidate in candidates:
-        if candidate.is_dir() and ((candidate / "drift_state.json").exists() or (candidate / "drift_history.db").exists()):
-            return candidate
+    candidate = workspace_root(workspace) / ".hecate" / "siem"
+    if candidate.is_dir() and ((candidate / "drift_state.json").exists() or (candidate / "drift_history.db").exists()):
+        return candidate
     return None
 
 
@@ -926,8 +883,8 @@ def _collect_siem_drift_metrics(workspace: Optional[Path] = None) -> SiemDriftMe
             if conn is not None:
                 try:
                     conn.close()
-                except Exception:
-                    pass
+                except sqlite3.Error as exc:
+                    logger.debug("Error closing SIEM drift DB connection: %s", exc)
 
     if metrics.last_detection_latency_sec == 0.0 and siem_dir:
         bas_state_file = siem_dir.parent / "bas" / "state.json"
@@ -941,8 +898,8 @@ def _collect_siem_drift_metrics(workspace: Optional[Path] = None) -> SiemDriftMe
                     metrics.last_verified_hunt = str(b_state["last_verified_hunt"])
                 if "last_verified_technique" in b_state:
                     metrics.last_verified_technique = str(b_state["last_verified_technique"])
-            except Exception:
-                pass
+            except (json.JSONDecodeError, OSError, ValueError) as exc:
+                logger.debug("Failed reading BAS state file %s: %s", bas_state_file, exc)
 
     if metrics.total_queries > 0:
         active_q = max(1, metrics.total_queries - metrics.decommissioned_count)

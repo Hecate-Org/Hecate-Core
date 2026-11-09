@@ -8,6 +8,7 @@ import os
 import re
 import select
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -142,8 +143,6 @@ class RunnerStatusSampler:
         # Unified environment discovery: loads workspace .env first, then runner .env as local override
         candidate_files = [
             self.workspace / ".env",
-            self.workspace / "Hecate-Workspace" / ".env",
-            Path.home() / "betas" / "Hecate-Workspace" / ".env",
             runner_dir / ".env",
         ]
         seen_paths = set()
@@ -188,8 +187,8 @@ class RunnerStatusSampler:
                     else:
                         cat = reason.split()[0] if reason else "other"
                     parked_reasons[cat] = parked_reasons.get(cat, 0) + 1
-                except Exception:
-                    pass
+                except (json.JSONDecodeError, OSError, ValueError) as exc:
+                    logger.debug("Failed reading parked item %s: %s", pf, exc)
         except OSError:
             parked = None
 
@@ -231,8 +230,8 @@ class RunnerStatusSampler:
                             gh_pending += count
                 finally:
                     conn.close()
-            except Exception:
-                pass
+            except sqlite3.Error as exc:
+                logger.debug("Failed querying GitHub outbox %s: %s", gh_db, exc)
 
         misp_confirmed, misp_pending = 0, 0
         misp_db = target_ws / ".hecate" / "misp" / "outbox.sqlite3"
@@ -247,8 +246,8 @@ class RunnerStatusSampler:
                             misp_pending += count
                 finally:
                     conn.close()
-            except Exception:
-                pass
+            except sqlite3.Error as exc:
+                logger.debug("Failed querying MISP outbox %s: %s", misp_db, exc)
 
         return _HeavyRunnerData(
             drafts_today=(
@@ -687,8 +686,8 @@ def _is_runner_process_running(workspace: Optional[Path] = None) -> bool:
                         pass
             except (OSError, ValueError):
                 continue
-    except Exception:
-        pass
+    except (OSError, ValueError) as exc:
+        logger.debug("Process table scan error in _is_runner_process_running: %s", exc)
     return False
 
 
@@ -710,8 +709,8 @@ def find_eval_workspace(eval_base: Path = Path("/tmp/eval_runs"), check_procs: b
                                     return ws
                 except (OSError, ValueError):
                     continue
-        except Exception:
-            pass
+        except (OSError, ValueError) as exc:
+            logger.debug("Process table scan error in find_eval_workspace: %s", exc)
 
     candidates = [p for p in eval_base.iterdir() if p.is_dir() and (p / "logs" / "orchestrator.log").exists()]
     if candidates:
@@ -768,6 +767,6 @@ def _check_key(timeout: float = 0.0) -> Optional[str]:
                     seq = sys.stdin.read(2)
                     return f"\x1b{seq}"
             return ch
-    except Exception:
-        pass
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.debug("Stdin read error in _check_key: %s", exc)
     return None

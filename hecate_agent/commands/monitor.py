@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 import sys
@@ -79,6 +80,7 @@ from hecate_agent.commands.monitor_samplers import (
     find_eval_workspace,
 )
 
+logger = logging.getLogger(__name__)
 console = Console()
 
 _LOG_RE = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),\d+ \[(\w+)\] ([\w.]+): (.*)$")
@@ -1316,8 +1318,8 @@ def _collect_outbound_metrics(workspace: Optional[Path] = None, runner: Optional
                             res["github_latest_pr"] = f"PR #{rows[-1]['pr_number']}"
                 finally:
                     conn.close()
-            except Exception:
-                pass
+            except sqlite3.Error as exc:
+                logger.debug("Failed querying GitHub outbox in monitor: %s", exc)
 
         misp_db = workspace / ".hecate" / "misp" / "outbox.sqlite3"
         if misp_db.exists():
@@ -1337,8 +1339,8 @@ def _collect_outbound_metrics(workspace: Optional[Path] = None, runner: Optional
                         res["misp_target"] = rows[-1]["target"]
                 finally:
                     conn.close()
-            except Exception:
-                pass
+            except sqlite3.Error as exc:
+                logger.debug("Failed querying MISP outbox in monitor: %s", exc)
 
     return res
 
@@ -1775,8 +1777,8 @@ def _github_outbox_panel(workspace: Path) -> Panel:
                 rows = conn.execute("SELECT * FROM promotions ORDER BY id DESC LIMIT 8").fetchall()
             finally:
                 conn.close()
-        except Exception:
-            pass
+        except sqlite3.Error as exc:
+            logger.debug("Failed querying GitHub promotions outbox in monitor: %s", exc)
 
     for r in rows:
         st = str(r["status"]).lower()
@@ -1822,8 +1824,8 @@ def _misp_outbox_panel(workspace: Path) -> Panel:
                 rows = conn.execute("SELECT * FROM exports ORDER BY next_attempt DESC LIMIT 8").fetchall()
             finally:
                 conn.close()
-        except Exception:
-            pass
+        except sqlite3.Error as exc:
+            logger.debug("Failed querying MISP exports outbox in monitor: %s", exc)
 
     for r in rows:
         st = str(r["status"]).lower()
