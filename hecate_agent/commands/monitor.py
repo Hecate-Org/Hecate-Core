@@ -11,6 +11,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from hecate_agent.core.sqlite_utils import connect_sqlite_ro
+
 try:
     import termios as _termios
     import tty as _tty
@@ -1298,7 +1300,7 @@ def _collect_outbound_metrics(workspace: Optional[Path] = None, runner: Optional
             db_path = workspace / ".hecate" / "github" / "outbox.sqlite3"
         if db_path.exists():
             try:
-                conn = sqlite3.connect(db_path, timeout=1.0)
+                conn = connect_sqlite_ro(db_path, timeout=1.0)
                 conn.row_factory = sqlite3.Row
                 try:
                     rows = conn.execute("SELECT status, hunt_id, pr_number FROM promotions").fetchall()
@@ -1320,7 +1322,7 @@ def _collect_outbound_metrics(workspace: Optional[Path] = None, runner: Optional
         misp_db = workspace / ".hecate" / "misp" / "outbox.sqlite3"
         if misp_db.exists():
             try:
-                conn = sqlite3.connect(misp_db, timeout=1.0)
+                conn = connect_sqlite_ro(misp_db, timeout=1.0)
                 conn.row_factory = sqlite3.Row
                 try:
                     rows = conn.execute("SELECT status, hunt_id, event_id, target FROM exports").fetchall()
@@ -1767,7 +1769,7 @@ def _github_outbox_panel(workspace: Path) -> Panel:
     rows = []
     if db_path.exists():
         try:
-            conn = sqlite3.connect(db_path, timeout=2.0)
+            conn = connect_sqlite_ro(db_path, timeout=2.0)
             conn.row_factory = sqlite3.Row
             try:
                 rows = conn.execute("SELECT * FROM promotions ORDER BY id DESC LIMIT 8").fetchall()
@@ -1814,7 +1816,7 @@ def _misp_outbox_panel(workspace: Path) -> Panel:
     rows = []
     if db_path.exists():
         try:
-            conn = sqlite3.connect(db_path, timeout=2.0)
+            conn = connect_sqlite_ro(db_path, timeout=2.0)
             conn.row_factory = sqlite3.Row
             try:
                 rows = conn.execute("SELECT * FROM exports ORDER BY next_attempt DESC LIMIT 8").fetchall()
@@ -2007,12 +2009,11 @@ def _get_inbox_counts(workspace: Path) -> Tuple[int, int, int]:
         import importlib
 
         hecate_graph = importlib.import_module("hecate_agent.orchestrator.graph").hecate_graph
-        import sqlite3
 
         db_path = workspace / "hecate_checkpoints.sqlite"
         if not db_path.exists():
             return 0, 0, 0
-        conn = sqlite3.connect(db_path)
+        conn = connect_sqlite_ro(db_path, timeout=2.0)
         try:
             c = conn.cursor()
             c.execute("SELECT DISTINCT thread_id FROM checkpoints")

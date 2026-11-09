@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from hecate_agent.core.sqlite_utils import connect_sqlite
+from hecate_agent.core.sqlite_utils import connect_sqlite_ro
 
 logger = logging.getLogger(__name__)
 
@@ -222,7 +222,7 @@ class RunnerStatusSampler:
             gh_db = target_ws / ".hecate" / "github" / "outbox.sqlite3"
         if gh_db.exists():
             try:
-                conn = connect_sqlite(gh_db, timeout=2.0, wal=False, busy_timeout_ms=3000)
+                conn = connect_sqlite_ro(gh_db, timeout=2.0, busy_timeout_ms=3000)
                 try:
                     for s, count in conn.execute("SELECT status, count(*) FROM promotions GROUP BY status").fetchall():
                         if str(s).lower() in ("published", "merged", "closed"):
@@ -238,7 +238,7 @@ class RunnerStatusSampler:
         misp_db = target_ws / ".hecate" / "misp" / "outbox.sqlite3"
         if misp_db.exists():
             try:
-                conn = connect_sqlite(misp_db, timeout=2.0, wal=False, busy_timeout_ms=3000)
+                conn = connect_sqlite_ro(misp_db, timeout=2.0, busy_timeout_ms=3000)
                 try:
                     for s, count in conn.execute("SELECT status, count(*) FROM exports GROUP BY status").fetchall():
                         if str(s).lower() == "confirmed":

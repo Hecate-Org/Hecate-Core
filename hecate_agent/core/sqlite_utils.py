@@ -33,3 +33,26 @@ def connect_sqlite(
         except sqlite3.OperationalError:
             pass
     return conn
+
+
+def connect_sqlite_ro(
+    database: str | Path,
+    timeout: float = 5.0,
+    busy_timeout_ms: int = 5000,
+    **kwargs: Any,
+) -> sqlite3.Connection:
+    """Connect to SQLite database in read-only mode with busy timeout configured.
+
+    Does not attempt to modify journal mode or acquire write locks, preventing
+    lock contention against concurrent daemon writers.
+    """
+    db_path = Path(database).resolve()
+    uri = f"file:{db_path}?mode=ro"
+    conn: sqlite3.Connection = sqlite3.connect(uri, uri=True, timeout=timeout, **kwargs)
+    if busy_timeout_ms > 0:
+        try:
+            conn.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
+        except sqlite3.OperationalError:
+            pass
+    return conn
+
