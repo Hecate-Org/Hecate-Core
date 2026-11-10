@@ -175,6 +175,107 @@ _DATA_SOURCE_KEYWORDS: Dict[str, List[str]] = {
 }
 
 
+def _format_dict_finding(item: Dict[Any, Any]) -> str:
+    """Format a single finding dictionary into a human-readable string."""
+    if not item:
+        return ""
+    if len(item) == 1:
+        k, v = next(iter(item.items()))
+        if isinstance(v, (list, tuple)):
+            v_str = ", ".join(str(x) for x in v)
+        elif isinstance(v, dict):
+            v_str = ", ".join(f"{sub_k}: {sub_v}" for sub_k, sub_v in v.items())
+        else:
+            v_str = str(v)
+        return f"{k}: {v_str}"
+    # If standard keys exist
+    item_type = str(item.get("type", item.get("category", ""))).lower().strip()
+    val = item.get("description") or item.get("finding") or item.get("text") or item.get("value")
+    if item_type and val:
+        return f"{item_type.capitalize()}: {val}"
+
+    if "hypothesis" in item and isinstance(item["hypothesis"], str):
+        return f"Hypothesis: {item['hypothesis']}"
+    if "gap" in item and isinstance(item["gap"], str):
+        return f"Gap: {item['gap']}"
+    if "finding" in item and isinstance(item["finding"], str):
+        return item["finding"]
+    if "text" in item and isinstance(item["text"], str):
+        return item["text"]
+    if "description" in item and isinstance(item["description"], str):
+        if "title" in item:
+            return f"{item['title']}: {item['description']}"
+        return item["description"]
+    # Fallback: join key: value pairs
+    parts = []
+    for k, v in item.items():
+        if isinstance(v, (list, tuple)):
+            v_str = ", ".join(str(x) for x in v)
+        elif isinstance(v, dict):
+            v_str = ", ".join(f"{sub_k}: {sub_v}" for sub_k, sub_v in v.items())
+        else:
+            v_str = str(v)
+        parts.append(f"{k}: {v_str}")
+    return "; ".join(parts)
+
+
+def _normalize_summary(summary: Any) -> str:
+    """Ensure summary is always a clean string."""
+    if isinstance(summary, str):
+        return summary
+    if isinstance(summary, dict):
+        for key in ("summary", "text", "description", "overview"):
+            if key in summary and isinstance(summary[key], str):
+                return summary[key]
+        return " ".join(str(v) for v in summary.values() if v)
+    if isinstance(summary, (list, tuple)):
+        return " ".join(str(item) for item in summary if item)
+    return str(summary) if summary is not None else ""
+
+
+def _normalize_key_findings(findings: Any) -> List[str]:
+    """Ensure key_findings is always a List[str], converting dicts/structures gracefully."""
+    if findings is None:
+        return []
+
+    if isinstance(findings, dict):
+        result = []
+        for k, v in findings.items():
+            k_str = str(k).strip()
+            if isinstance(v, list):
+                for item in v:
+                    if isinstance(item, dict):
+                        result.append(f"{k_str}: {_format_dict_finding(item)}")
+                    else:
+                        result.append(f"{k_str}: {item}")
+            elif isinstance(v, dict):
+                result.append(f"{k_str}: {_format_dict_finding(v)}")
+            else:
+                result.append(f"{k_str}: {v}")
+        return [r for r in result if r.strip()]
+
+    if isinstance(findings, str):
+        lines = [line.strip().lstrip("-* \t") for line in findings.splitlines() if line.strip()]
+        return lines if lines else [findings.strip()]
+
+    if isinstance(findings, (list, tuple)):
+        result = []
+        for item in findings:
+            if isinstance(item, str):
+                result.append(item)
+            elif isinstance(item, dict):
+                formatted = _format_dict_finding(item)
+                if formatted:
+                    result.append(formatted)
+            elif isinstance(item, (list, tuple)):
+                result.append(" ".join(str(sub) for sub in item))
+            else:
+                result.append(str(item))
+        return [r for r in result if r.strip()]
+
+    return [str(findings)]
+
+
 @dataclass
 class ResearchInput:
     """Input for hunt research."""
@@ -214,6 +315,10 @@ class ResearchSkillOutput:
     #: Telemetry mapping only: fields the model proposed that are not OCSF
     #: paths even after normalization, listed apart from the mapping.
     removed_fields: List[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        self.summary = _normalize_summary(self.summary)
+        self.key_findings = _normalize_key_findings(self.key_findings)
 
 
 @dataclass
@@ -1009,7 +1114,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
                 capability="research_summarize",
             )
             data = self._parse_json_response(response)
-            return data["summary"], data["key_findings"]
+            return _normalize_summary(data.get("summary")), _normalize_key_findings(data.get("key_findings"))
 
         except Exception as e:
             return (
@@ -1123,7 +1228,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
                 capability="research_summarize",
             )
             data = self._parse_json_response(response)
-            return data["summary"], data["key_findings"]
+            return _normalize_summary(data.get("summary")), _normalize_key_findings(data.get("key_findings"))
 
         except Exception as e:
             return (
@@ -1206,7 +1311,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
                 capability="research_summarize",
             )
             data = self._parse_json_response(response)
-            return data["summary"], data["key_findings"]
+            return _normalize_summary(data.get("summary")), _normalize_key_findings(data.get("key_findings"))
 
         except Exception as e:
             return (
@@ -1289,7 +1394,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
                 capability="research_synthesize",
             )
             data = self._parse_json_response(response)
-            return data["summary"], data["key_findings"]
+            return _normalize_summary(data.get("summary")), _normalize_key_findings(data.get("key_findings"))
 
         except Exception as e:
             return (
@@ -1335,6 +1440,8 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
         slightly noisier warning log.
         """
         for finding in synthesis.key_findings:
+            if not isinstance(finding, str):
+                finding = str(finding)
             match = _HYPOTHESIS_PREFIX_RE.match(finding)
             if match:
                 extracted = finding[match.end() :].strip()
@@ -1360,11 +1467,16 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
         """
         corpus_parts = [topic]
         for source in skill.sources or []:
-            corpus_parts.extend(str(source.get(key, "")) for key in ("title", "url", "snippet"))
+            if isinstance(source, dict):
+                corpus_parts.extend(str(source.get(key, "")) for key in ("title", "url", "snippet"))
+            else:
+                corpus_parts.append(str(source))
         corpus_cves: Set[str] = {c.upper() for c in _CVE_RE.findall(" ".join(corpus_parts))}
 
         kept: List[str] = []
         for finding in skill.key_findings:
+            if not isinstance(finding, str):
+                finding = str(finding)
             unsupported = sorted({c.upper() for c in _CVE_RE.findall(finding)} - corpus_cves)
             if unsupported:
                 logger.warning(
@@ -1393,6 +1505,8 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
         the surrounding analysis stays, and a marker records that something
         was removed so the gap is visible rather than silent.
         """
+        if not isinstance(summary, str):
+            summary = _normalize_summary(summary)
         if not summary.strip():
             return summary
 
@@ -1476,6 +1590,8 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
         than only an exact "gap:" prefix."""
         gaps = []
         for finding in synthesis.key_findings:
+            if not isinstance(finding, str):
+                finding = str(finding)
             match = _GAP_PREFIX_RE.match(finding)
             if match:
                 extracted = finding[match.end() :].strip()

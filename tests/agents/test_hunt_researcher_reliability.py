@@ -237,3 +237,61 @@ class TestExtractGaps:
             ]
         )
         assert agent._extract_gaps(synthesis) == ["No macro execution telemetry."]
+
+    def test_extract_gaps_from_dict_findings(self) -> None:
+        agent = HuntResearcherAgent(llm_enabled=False)
+        synthesis = ResearchSkillOutput(
+            skill_name="synthesis",
+            summary="test",
+            key_findings=[{"Gap": "No driver load auditing"}, {"type": "gap", "description": "RPC telemetry missing"}],  # type: ignore
+            sources=[],
+            confidence=0.8,
+        )
+        gaps = agent._extract_gaps(synthesis)
+        assert len(gaps) == 2
+        assert "No driver load auditing" in gaps[0]
+        assert "RPC telemetry missing" in gaps[1]
+
+
+@pytest.mark.unit
+class TestDictFindingsNormalization:
+    def test_extract_hypothesis_from_dict_findings(self) -> None:
+        agent = HuntResearcherAgent(llm_enabled=False)
+        synthesis = ResearchSkillOutput(
+            skill_name="synthesis",
+            summary={"overview": "A test summary"},  # type: ignore
+            key_findings=[{"hypothesis": "Adversaries use phq110-root to elevate privileges."}],  # type: ignore
+            sources=[],
+            confidence=0.8,
+        )
+        assert synthesis.summary == "A test summary"
+        assert agent._extract_hypothesis(synthesis) == "Adversaries use phq110-root to elevate privileges."
+
+    def test_extract_from_top_level_dict_key_findings(self) -> None:
+        agent = HuntResearcherAgent(llm_enabled=False)
+        synthesis = ResearchSkillOutput(
+            skill_name="synthesis",
+            summary="s",
+            key_findings={  # type: ignore
+                "hypothesis": "Adversaries abuse CVE-2026-43499 to bypass auth.",
+                "gaps": ["No driver logging", "No RPC telemetry"],
+            },
+            sources=[],
+            confidence=0.8,
+        )
+        assert agent._extract_hypothesis(synthesis) == "Adversaries abuse CVE-2026-43499 to bypass auth."
+        assert agent._extract_gaps(synthesis) == ["No driver logging", "No RPC telemetry"]
+
+    def test_drop_unsupported_cve_does_not_crash_on_dict_findings(self) -> None:
+        agent = HuntResearcherAgent(llm_enabled=False)
+        skill = ResearchSkillOutput(
+            skill_name="adversary_tradecraft",
+            summary={"text": "Adversaries exploit CVE-2026-43499."},  # type: ignore
+            key_findings=[{"finding": "Exploiting CVE-2026-43499 via IOCTL"}, {"finding": "Fake CVE-2099-0001"}],  # type: ignore
+            sources=[{"title": "CVE-2026-43499 Advisory", "url": "https://example.com", "snippet": "CVE-2026-43499"}],
+            confidence=0.8,
+        )
+        agent._drop_unsupported_cve_findings(skill, topic="CVE-2026-43499 exploitation")
+        assert len(skill.key_findings) == 1
+        assert "CVE-2026-43499" in skill.key_findings[0]
+
