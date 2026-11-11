@@ -586,3 +586,21 @@ def test_dict_event_value_matches_on_values_not_repr_syntax():
     # Key / dictionary syntax repr match should fail
     assert SigmaEvaluator(rule_syntax).matches(ev_dict) is False
 
+
+def test_base64_and_utf16_modifiers():
+    # base64 modifier matching
+    rule_b64 = {"detection": {"selection": {"CommandLine|base64": "whoami"}, "condition": "selection"}}
+    ev_b64 = {"CommandLine": "powershell.exe -enc d2hvYW1p"}
+    assert SigmaEvaluator(rule_b64).matches(ev_b64) is True
+
+    # base64offset modifier matching
+    rule_b64offset = {"detection": {"selection": {"CommandLine|base64offset": "whoami"}, "condition": "selection"}}
+    ev_offset = {"CommandLine": "cmd.exe /c echo   dob2FtaQ"}
+    assert SigmaEvaluator(rule_b64offset).matches(ev_offset) is True
+
+    # wide / utf16 modifier matching
+    rule_wide = {"detection": {"selection": {"CommandLine|wide": "calc"}, "condition": "selection"}}
+    ev_wide = {"CommandLine": "c\x00a\x00l\x00c\x00.exe"}
+    assert SigmaEvaluator(rule_wide).matches(ev_wide) is True
+
+

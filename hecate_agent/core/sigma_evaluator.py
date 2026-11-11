@@ -296,11 +296,53 @@ def _match_scalar_value(needle: Any, haystack: Any, modifiers: List[str]) -> boo
         except ValueError:
             return False
 
+    # Base64 and Base64Offset evaluation
+    if "base64" in modifiers or "base64offset" in modifiers:
+        s_needle_str = str(needle)
+        s_hay_str = str(haystack)
+        import base64
+
+        b_needle = s_needle_str.encode("utf-8")
+        b64_targets = []
+        if "base64offset" in modifiers:
+            for pad in (b"", b" ", b"  "):
+                enc = base64.b64encode(pad + b_needle).decode("ascii")
+                if pad == b"":
+                    b64_targets.append(enc.rstrip("="))
+                elif pad == b" ":
+                    b64_targets.append(enc[2:].rstrip("="))
+                elif pad == b"  ":
+                    b64_targets.append(enc[3:].rstrip("="))
+        else:
+            b64_targets.append(base64.b64encode(b_needle).decode("ascii").rstrip("="))
+
+        if any(target in s_hay_str for target in b64_targets if target):
+            return True
+        try:
+            cleaned_hay = re.sub(r"[^A-Za-z0-9+/=]", "", s_hay_str)
+            if len(cleaned_hay) >= 4:
+                padded = cleaned_hay + "=" * ((4 - len(cleaned_hay) % 4) % 4)
+                decoded = base64.b64decode(padded).decode("utf-8", errors="ignore")
+                if s_needle_str.lower() in decoded.lower():
+                    return True
+        except Exception:
+            pass
+
+    # UTF16 / Wide string evaluation
+    if "utf16" in modifiers or "wide" in modifiers:
+        wide_needle = "".join(c + "\x00" for c in str(needle))
+        if wide_needle in str(haystack):
+            return True
+
     s_needle = str(needle)
     if isinstance(haystack, bool):
         s_haystack = "true" if haystack else "false"
     else:
         s_haystack = str(haystack)
+
+    if "strip" in modifiers:
+        s_needle = s_needle.strip()
+        s_haystack = s_haystack.strip()
 
     # windash normalization: normalize Windows command line / and - switches
     if "windash" in modifiers:

