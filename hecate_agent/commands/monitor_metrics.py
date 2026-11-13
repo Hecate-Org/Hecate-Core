@@ -566,6 +566,12 @@ def _collect_purple_team_metrics(
     def include_bas(record: Dict[str, Any], mtime: float) -> None:
         nonlocal last_bas_mtime
         status = str(record.get("status") or "")
+        provider = str(record.get("provider") or record.get("bas_provider") or "unknown").lower()
+        # Normalize legacy labels without rewriting their historical evidence.
+        if status == "verified_true_positive" and provider == "mock":
+            status = "simulation_match"
+        elif status == "verified_true_positive" and record.get("fidelity_scope") == "smoke_check":
+            status = "smoke_check_match"
         if status == "skipped":
             metrics.bas_skipped += 1
             metrics.bas_last_skip_reason = str(record.get("reason") or "No approved procedure")
@@ -574,7 +580,6 @@ def _collect_purple_team_metrics(
             return
         metrics.bas_runs += 1
         metrics.bas_control_runs += int(record.get("purpose") == "sensor_control" or record.get("hunt_id") == "LAB-CHECK")
-        provider = str(record.get("provider") or record.get("bas_provider") or "unknown").lower()
         live = provider in {"caldera", "stratus", "local_sandbox", "live_lab"}
         behavioral = record.get("fidelity_scope") == "behavioral"
         control = record.get("purpose") == "sensor_control" or record.get("hunt_id") == "LAB-CHECK"
