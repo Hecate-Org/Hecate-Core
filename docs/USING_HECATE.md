@@ -180,7 +180,7 @@ Trigger automated hunts from playbooks using generated hypotheses.
 
 ### Extend with Tools
 
-**Built-in CLI:** See [README](README.md#-cli-commands) for complete command reference including:
+**Built-in CLI:** See [README](CLI_REFERENCE.md) for complete command reference including:
 - Hunt management (`hecate-agent hunt new/list/search/validate/stats/coverage`)
 - Research agent (`hecate-agent research new`) - Deep pre-hunt research with 5-skill methodology
 - Hypothesis generator (`hecate-agent agent run hypothesis-generator`) - AI-generated hunt hypotheses

@@ -81,7 +81,8 @@ hecate-agent hunt new \
   --technique T1110.001 \
   --title "SSH Brute Force Detection" \
   --platform linux \
-  --tactic initial-access
+  --tactic credential-access \
+  --non-interactive
 
 # Validate the hunt structure
 hecate-agent hunt validate
@@ -184,17 +185,20 @@ The repository includes [knowledge/hunting-knowledge.md](../knowledge/hunting-kn
 - Observable-to-TTP mapping patterns
 - Analytical rigor best practices
 
-**No changes needed** - this file provides universal hunting expertise that AI assistants will apply to your environment.
+Use the selected workspace's copy for local hunting guidance. Generic guidance
+does not establish measured telemetry coverage; verify `knowledge/environment.md`.
 
 ### Configure an LLM Provider (Optional)
 
-Hecate agents and research commands can use any LLM provider. Without one, they fall back to template-based output — still useful, but without AI-enhanced analysis.
+Research and model-assisted agents require a configured supported provider. Some
+agents offer an explicit `--no-llm` heuristic mode; do not assume every command
+automatically falls back when a model is missing.
 
 Set **one** of the following environment variables and Hecate auto-detects your provider:
 
 | Provider | Environment Variable | Install Extra |
 |----------|---------------------|---------------|
-| Anthropic (Claude) | `ANTHROPIC_API_KEY` | `pip install -e ".[anthropic]"` |
+| Anthropic (Claude) | `ANTHROPIC_API_KEY` | `pip install -e ".[litellm]"` |
 | OpenAI (GPT) | `OPENAI_API_KEY` | `pip install -e ".[openai]"` |
 | AWS Bedrock | `AWS_PROFILE` or `AWS_ACCESS_KEY_ID` | `pip install -e ".[bedrock]"` |
 | Ollama (local) | `OLLAMA_HOST` (default: `localhost:11434`) | `pip install -e ".[ollama]"` |
@@ -212,7 +216,7 @@ To override auto-detection and explicitly set a provider and model:
 
 ```bash
 export HECATE_LLM_PROVIDER=openai
-export HECATE_LLM_MODEL=gpt-4o
+export HECATE_LLM_MODEL=replace-with-your-available-model-id
 ```
 
 See [`.env.example`](https://github.com/Hecate-Org/Hecate-Core/blob/main/.env.example) for all supported variables.
@@ -287,7 +291,7 @@ tags: [linux, cron, persistence]
 
 1. Keep the existing markdown metadata section below the title for human readability
 
-**Full documentation:** See [hunts/FORMAT_GUIDELINES.md](https://github.com/Hecate-Org/Hecate-Core/blob/main/hunts/FORMAT_GUIDELINES.md#yaml-frontmatter-optional-at-level-0-1-recommended-at-level-2)
+**Full documentation:** See [hunts/FORMAT_GUIDELINES.md](https://github.com/Hecate-Org/Hecate-Core/blob/main/docs/CLI_REFERENCE.md#hecate-agent-hunt-validate)
 
 **Why Both YAML and Markdown Metadata?**
 

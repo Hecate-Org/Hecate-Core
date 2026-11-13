@@ -427,8 +427,9 @@ hecate-agent hunt new --research R-0001 --non-interactive
 
 **Environment:**
 
-- Requires `TAVILY_API_KEY` for web search (get from <https://tavily.com>)
-- Configure via `.env` file: `AWS_PROFILE=default` or AWS credentials
+- Configure the chosen model with `HECATE_LLM_PROVIDER` / `HECATE_LLM_MODEL` and its required credentials.
+- Tavily web search requires `TAVILY_API_KEY` when enabled; `--no-web-search` disables that lookup.
+- AWS profile/role credentials are required only for a chosen AWS-backed feature, not every provider.
 
 ---
 
@@ -713,5 +714,5 @@ AI: 1. hecate-agent similar "kerberoasting" --format json
 - New integrations or MCP servers added (update "Memory and Search")
 - Team practices change (update CLI workflow or hunt execution steps)
 
-**Last reviewed:** 2026-11-09
+**Last reviewed:** 2026-11-13
 **Maintained By:** Hecate Framework Team

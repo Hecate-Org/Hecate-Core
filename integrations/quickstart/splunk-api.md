@@ -462,7 +462,7 @@ See [`hecate_agent/core/splunk_client.py`](../../hecate_agent/core/splunk_client
 
 - **Splunk REST API Docs:** <https://docs.splunk.com/Documentation/Splunk/latest/RESTREF>
 - **SPL Reference:** <https://docs.splunk.com/Documentation/Splunk/latest/SearchReference>
-- **Hecate Documentation:** <https://github.com/BrizoSec/Hecate-Core>
+- **Hecate Documentation:** <https://github.com/Hecate-Org/Hecate-Core>
 - **SPL Query Examples:** See `hunts/` directory for real-world queries
 
 ## Comparison: API vs MCP

@@ -9,6 +9,8 @@ import yaml
 from rich.console import Console
 from rich.prompt import Prompt
 
+from hecate_agent.core.atomic_write import atomic_write_text
+from hecate_agent.core.workspace import workspace_root
 from hecate_agent.utils.validation import validate_investigation_id
 
 console = Console()
@@ -26,7 +28,7 @@ def _load_investigation(investigation_id: str, parser_cls: type) -> Optional[Tup
         console.print("[yellow]Expected format: I-0001[/yellow]")
         return None
 
-    investigations_dir = Path("investigations")
+    investigations_dir = workspace_root() / "investigations"
     investigation_file = investigations_dir / f"{investigation_id}.md"
 
     # Containment check: a crafted ID must not reach outside investigations/.
@@ -117,7 +119,7 @@ def _record_hunt_on_investigation(investigation_file: Path, hunt_id: str) -> Non
             frontmatter["related_hunts"].append(hunt_id)
 
         updated_yaml = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False)
-        investigation_file.write_text(f"---\n{updated_yaml}---{'---'.join(parts[2:])}", encoding="utf-8")
+        atomic_write_text(investigation_file, f"---\n{updated_yaml}---{'---'.join(parts[2:])}")
         console.print(f"[dim]Updated {investigation_file} with hunt reference in related_hunts[/dim]")
     except Exception as e:  # noqa: BLE001 - the promotion itself already succeeded
         console.print(f"[yellow]Warning: Could not update investigation frontmatter: {e}[/yellow]")
@@ -232,18 +234,17 @@ def promote(
 {inv_content}
 """
 
-    hunt_dir = get_hunt_directory()
+    hunt_dir = workspace_root() / get_hunt_directory()
     hunt_dir.mkdir(parents=True, exist_ok=True)
     hunt_file = hunt_dir / f"{hunt_id}.md"
 
     try:
-        hunt_file.resolve().relative_to(Path("hunts").resolve())
+        hunt_file.resolve().relative_to((workspace_root() / "hunts").resolve())
     except (ValueError, OSError):
         console.print("[red]Error: Invalid hunt file path[/red]")
         return
 
-    with open(hunt_file, "w", encoding="utf-8") as f:
-        f.write(hunt_content)
+    atomic_write_text(hunt_file, hunt_content)
 
     console.print(f"\n[bold green]Promoted {investigation_id} to {hunt_id}[/bold green]")
 

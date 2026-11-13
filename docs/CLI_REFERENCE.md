@@ -31,7 +31,7 @@ version's complete, authoritative command and option list.
 | [`hecate-agent hunt new-baseline`](#hecate-agent-hunt-new-baseline) | Hunt Management | Create a hypothesis-free baseline (EDA) hunt |
 | [`hecate-agent hunt new-model-assisted`](#hecate-agent-hunt-new-model-assisted) | Hunt Management | Create a model-assisted (M-ATH) hunt |
 | [`hecate-agent hunt update`](#hecate-agent-hunt-update) | Hunt Management | Patch hunt frontmatter fields in place |
-| [`hecate-agent hunt promote`](#hecate-agent-hunt-promote) | Hunt Management | Promote a hunt from test to production |
+| [`hecate-agent hunt promote`](#hecate-agent-hunt-promote) | Hunt Management | Export detection content or promote a test hunt |
 | [`hecate-agent hunt operationalize`](#hecate-agent-hunt-operationalize) | Hunt Management | Generate a Sigma rule stub from a hunt |
 | [`hecate-agent hunt brief`](#hecate-agent-hunt-brief) | Hunt Management | Render a stakeholder-facing hunt summary |
 | [`hecate-agent hunt export`](#hecate-agent-hunt-export) | Hunt Management | Export hunt data as structured JSON |
@@ -1451,49 +1451,54 @@ hecate-agent hunt update H-0042 --platform Windows
 
 ## hecate-agent hunt promote
 
-Promote a hunt from test to production.
+Export hunt detection content, or move a test hunt into the production content directory.
+Neither operation deploys a live SIEM detection or proves that an alert fired.
 
 ### Synopsis
 
 ```bash
-hecate-agent hunt promote HUNT_ID [OPTIONS]
+hecate-agent hunt promote [HUNT_ID] [OPTIONS]
 ```
 
-### Description
+### Detection export
 
-Moves a hunt file out of `hunts/test/{YYYY}/{QX}/` into the production directory
-`hunts/{YYYY}/{QX}/`, preserving the hunt ID — there is no renumbering.
-
-The destination year and quarter come from **today's date, not the hunt's
-original ones**, so a hunt created in Q1 and promoted in Q3 lands under `Q3`.
-The command refuses rather than overwrites if the destination file already
-exists.
-
-### Arguments
-
-| Argument | Type | Description |
-|----------|------|-------------|
-| `HUNT_ID` | String | Hunt ID (e.g., H-0042) |
-
-### Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `-y`, `--yes` | Flag | False | Skip the confirmation prompt |
-
-### Examples
+Use `--hunt` and `--output` to export a hunt's CHECK query to `sigma`, `spl`,
+`kql` or `detection`. These are hunt-export modes, not pySigma backend names.
+Use Core's `transpile_sigma_rule(rule_yaml, targets=[...])` Python API for
+native Sigma conversion with target IDs such as `splunk_spl` and `sentinel_kql`.
 
 ```bash
-# Promote a test hunt, with confirmation
-hecate-agent hunt promote H-0042
+hecate-agent hunt promote --hunt H-0001 --output sigma
+hecate-agent hunt promote --hunt H-0001 --output spl
+hecate-agent hunt promote --hunt H-0001 --output kql --out /path/to/reviewed-query.kql
+```
 
-# Skip the prompt
+Use a hunt ID and output location from your selected workspace. Exported content
+still needs verified data mappings, operational review and explicit deployment.
+
+### Test-hunt promotion
+
+Without an export format, the positional form moves a test hunt from
+`hunts/test/{YYYY}/{QX}/` to `hunts/{YYYY}/{QX}/`, keeping its ID. The destination
+uses the current year/quarter and refuses an existing destination rather than
+overwriting it. This is a content lifecycle transition.
+
+```bash
+hecate-agent hunt promote H-0042
 hecate-agent hunt promote H-0042 --yes
 ```
 
-### Exit Codes
+### Options
 
-- `0`: Promoted, cancelled at the prompt, or refused because the destination exists
+| Option | Purpose |
+| --- | --- |
+| `-h`, `--hunt` | Hunt ID for export |
+| `-f`, `-o`, `--format`, `--output` | Export mode: `sigma`, `spl`, `kql`, `detection` |
+| `--query-index` | One-based CHECK query index; default `1` |
+| `--out`, `--output-file` | Destination output path |
+| `-y`, `--yes` | Skip the test-hunt promotion confirmation prompt |
+
+Run `hecate-agent hunt promote --help` for the installed command's contract.
 
 ---
 
@@ -3212,7 +3217,7 @@ done
 
 - [Getting Started Guide](getting-started.md)
 - [Installation Guide](https://github.com/Hecate-Org/Hecate-Core/blob/main/docs/INSTALL.md)
-- [Hunt Format Guidelines](https://github.com/Hecate-Org/Hecate-Core/blob/main/hunts/FORMAT_GUIDELINES.md)
+- [Hunt Format Guidelines](https://github.com/Hecate-Org/Hecate-Core/blob/main/docs/CLI_REFERENCE.md#hecate-agent-hunt-validate)
 - [MITRE ATT&CK Framework](https://attack.mitre.org/)
 
 ---

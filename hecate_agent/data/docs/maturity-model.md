@@ -133,7 +133,7 @@ At Level 2, you add context files to your repository that provide AI assistants 
 
 ### Required Context Files
 
-#### [AGENTS.md](https://github.com/BrizoSec/Hecate-Core/blob/main/AGENTS.md)
+#### [AGENTS.md](https://github.com/Hecate-Org/Hecate-Core/blob/main/AGENTS.md)
 
 Provides environmental and structural context:
 
@@ -176,7 +176,7 @@ flowchart LR
 
 ### Getting Started at Level 2
 
-1. Review the included [AGENTS.md](https://github.com/BrizoSec/Hecate-Core/blob/main/AGENTS.md) template
+1. Review the included [AGENTS.md](https://github.com/Hecate-Org/Hecate-Core/blob/main/AGENTS.md) template
 2. Customize it with your environment details
 3. Review [knowledge/hunting-knowledge.md](../knowledge/hunting-knowledge.md) (already included)
 4. Open your repo in Claude Code or similar AI assistant

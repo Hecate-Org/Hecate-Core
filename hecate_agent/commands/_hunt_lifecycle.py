@@ -11,7 +11,9 @@ import yaml
 from rich.console import Console
 from rich.prompt import Prompt
 
+from hecate_agent.core.atomic_write import atomic_write_text
 from hecate_agent.core.hunt_manager import HuntManager, get_hunt_directory
+from hecate_agent.core.workspace import workspace_root
 from hecate_agent.utils.validation import validate_hunt_id
 
 console = Console()
@@ -596,8 +598,7 @@ def update_hunt(
     new_fm = yaml.dump(fm, default_flow_style=None, sort_keys=False, width=4096)
     updated = f"---\n{new_fm}---{body}"
 
-    with open(hunt_file, "w", encoding="utf-8") as f:
-        f.write(updated)
+    atomic_write_text(hunt_file, updated)
 
     console.print(f"\n[bold green]✅ Updated {hunt_id}[/bold green]")
     for change in changed:
@@ -697,7 +698,7 @@ def _patch_detection_rule(hunt_file: Path, hunt_id: str, dest: Path) -> None:
     fm["detection_rule"] = str(dest)
     # Same formatting-preservation as update_hunt above.
     new_fm = yaml.dump(fm, default_flow_style=None, sort_keys=False, width=4096)
-    hunt_file.write_text(f"---\n{new_fm}---{parts[2]}", encoding="utf-8")
+    atomic_write_text(hunt_file, f"---\n{new_fm}---{parts[2]}")
     console.print(f"[dim]Updated {hunt_id} frontmatter: detection_rule → {dest}[/dim]")
 
 
@@ -1040,7 +1041,7 @@ level: medium
         return
 
     # Calculate production destination
-    prod_dir = get_hunt_directory(is_test=False)
+    prod_dir = workspace_root() / get_hunt_directory(is_test=False)
     prod_file = prod_dir / f"{effective_hunt_id}.md"
 
     console.print(f"\n[bold cyan]🔄 Promoting {effective_hunt_id} to production[/bold cyan]\n")

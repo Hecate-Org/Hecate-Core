@@ -4,7 +4,7 @@ This guide walks you through setting up Hecate, from your first documented hunt 
 
 **This framework is meant to be flexible.** Adapt it to your environment, data sources, and team structure. Use what works for you, modify what doesn't, and skip what isn't relevant.
 
-> **Configuration reference:** For a complete list of API keys, environment variables, `.hecateconfig.yaml` format, and the hunt template, see [CONFIGURATION.md](https://github.com/BrizoSec/Hecate-Core/blob/main/docs/CONFIGURATION.md).
+> **Configuration reference:** For a complete list of API keys, environment variables, `.hecateconfig.yaml` format, and the hunt template, see [CONFIGURATION.md](https://github.com/Hecate-Org/Hecate-Core/blob/main/docs/CONFIGURATION.md).
 
 ## Step 1: Choose Your Setup Path
 
@@ -16,7 +16,7 @@ Install the Python CLI for convenience commands:
 
 ```bash
 # Clone and install
-git clone https://github.com/BrizoSec/Hecate-Core
+git clone https://github.com/Hecate-Org/Hecate-Core
 cd Hecate-Core
 pip install -e .
 
@@ -32,7 +32,7 @@ Use the framework structure without CLI tools:
 
 ```bash
 # Clone only
-git clone https://github.com/BrizoSec/Hecate-Core
+git clone https://github.com/Hecate-Org/Hecate-Core
 cd Hecate-Core
 ```
 
@@ -62,7 +62,7 @@ workspace. Exact folders vary with the commands and templates you use.
 
 - [templates/](../templates/) - Ready-to-use LOCK hunt templates
 - [hunts/](../hunts/) - Example hunts showing the LOCK pattern
-- [AGENTS.md](https://github.com/BrizoSec/Hecate-Core/blob/main/AGENTS.md) - Template for AI context (customize later)
+- [AGENTS.md](https://github.com/Hecate-Org/Hecate-Core/blob/main/AGENTS.md) - Template for AI context (customize later)
 
 ## Step 3: Document Your First Hunt (Level 1)
 
@@ -81,7 +81,8 @@ hecate-agent hunt new \
   --technique T1110.001 \
   --title "SSH Brute Force Detection" \
   --platform linux \
-  --tactic initial-access
+  --tactic credential-access \
+  --non-interactive
 
 # Validate the hunt structure
 hecate-agent hunt validate
@@ -115,7 +116,7 @@ hecate-agent hunt list
 
 ### Example Structure
 
-See [hunts/H-0001.md](https://github.com/BrizoSec/Hecate-Core/blob/main/hecate_agent/data/hunts/2026/Q1/H-0001.md) for a complete example. Here's a simplified structure:
+See [hunts/H-0001.md](https://github.com/Hecate-Org/Hecate-Core/blob/main/hecate_agent/data/hunts/2026/Q1/H-0001.md) for a complete example. Here's a simplified structure:
 
 ```markdown
 # H-0001: SSH Brute Force Detection
@@ -150,7 +151,7 @@ To make your hunts AI-accessible, add context files that describe your environme
 
 ### Customize AGENTS.md
 
-1. Open [AGENTS.md](https://github.com/BrizoSec/Hecate-Core/blob/main/AGENTS.md)
+1. Open [AGENTS.md](https://github.com/Hecate-Org/Hecate-Core/blob/main/AGENTS.md)
 2. Update the following sections:
    - **Data Sources:** Replace placeholders with your actual SIEM indexes, EDR platforms, etc.
    - **Technology Stack:** List your security tools
@@ -184,17 +185,20 @@ The repository includes [knowledge/hunting-knowledge.md](../knowledge/hunting-kn
 - Observable-to-TTP mapping patterns
 - Analytical rigor best practices
 
-**No changes needed** - this file provides universal hunting expertise that AI assistants will apply to your environment.
+Use the selected workspace's copy for local hunting guidance. Generic guidance
+does not establish measured telemetry coverage; verify `knowledge/environment.md`.
 
 ### Configure an LLM Provider (Optional)
 
-Hecate agents and research commands can use any LLM provider. Without one, they fall back to template-based output — still useful, but without AI-enhanced analysis.
+Research and model-assisted agents require a configured supported provider. Some
+agents offer an explicit `--no-llm` heuristic mode; do not assume every command
+automatically falls back when a model is missing.
 
 Set **one** of the following environment variables and Hecate auto-detects your provider:
 
 | Provider | Environment Variable | Install Extra |
 |----------|---------------------|---------------|
-| Anthropic (Claude) | `ANTHROPIC_API_KEY` | `pip install -e ".[anthropic]"` |
+| Anthropic (Claude) | `ANTHROPIC_API_KEY` | `pip install -e ".[litellm]"` |
 | OpenAI (GPT) | `OPENAI_API_KEY` | `pip install -e ".[openai]"` |
 | AWS Bedrock | `AWS_PROFILE` or `AWS_ACCESS_KEY_ID` | `pip install -e ".[bedrock]"` |
 | Ollama (local) | `OLLAMA_HOST` (default: `localhost:11434`) | `pip install -e ".[ollama]"` |
@@ -212,10 +216,10 @@ To override auto-detection and explicitly set a provider and model:
 
 ```bash
 export HECATE_LLM_PROVIDER=openai
-export HECATE_LLM_MODEL=gpt-4o
+export HECATE_LLM_MODEL=replace-with-your-available-model-id
 ```
 
-See [`.env.example`](https://github.com/BrizoSec/Hecate-Core/blob/main/.env.example) for all supported variables.
+See [`.env.example`](https://github.com/Hecate-Org/Hecate-Core/blob/main/.env.example) for all supported variables.
 
 ### Try AI-Assisted Features
 
@@ -270,7 +274,7 @@ YAML frontmatter is structured metadata placed at the top of hunt files, enablin
 hunt_id: H-0001
 title: Linux Crontab Persistence Detection
 status: completed
-date: 2025-11-19
+date: 2026-10-15
 hunter: Security Team
 platform: [Linux]
 tactics: [persistence]
@@ -287,7 +291,7 @@ tags: [linux, cron, persistence]
 
 1. Keep the existing markdown metadata section below the title for human readability
 
-**Full documentation:** See [hunts/FORMAT_GUIDELINES.md](https://github.com/BrizoSec/Hecate-Core/blob/main/hunts/FORMAT_GUIDELINES.md#yaml-frontmatter-optional-at-level-0-1-recommended-at-level-2)
+**Full documentation:** See [hunts/FORMAT_GUIDELINES.md](https://github.com/Hecate-Org/Hecate-Core/blob/main/docs/CLI_REFERENCE.md#hecate-agent-hunt-validate)
 
 **Why Both YAML and Markdown Metadata?**
 
@@ -484,6 +488,6 @@ A: Yes! The CLI commands (`hecate-agent hunt list`, `hecate-agent hunt search`, 
 - Browse [docs/](.) for detailed guides
 - Check [integrations/](../integrations/) for tool-specific setup
 - Review [hunts/](../hunts/) for example hunts
-- Open an issue on [GitHub](https://github.com/BrizoSec/Hecate-Core/issues)
+- Open an issue on [GitHub](https://github.com/Hecate-Org/Hecate-Core/issues)
 
 Happy thrunting!

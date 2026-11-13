@@ -102,13 +102,52 @@ Return {{"gaps": []}} when every such behaviour is covered."""
 
 
 def _json(text: str) -> Dict[str, Any]:
-    match = re.search(r"\{.*\}", text or "", re.S)
-    if not match:
+    raw = (text or "").strip()
+    if not raw:
         raise ValueError("no JSON object in the reply")
-    data = json.loads(match.group(0))
-    if not isinstance(data, dict):
-        raise ValueError("reply is not a JSON object")
-    return data
+
+    # 1. Direct parse if whole text is JSON
+    if raw.startswith("{") and raw.endswith("}"):
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                return data
+        except json.JSONDecodeError:
+            pass
+
+    # 2. Extract from markdown code fence ```json ... ```
+    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
+    if fence_match:
+        try:
+            data = json.loads(fence_match.group(1))
+            if isinstance(data, dict):
+                return data
+        except json.JSONDecodeError:
+            pass
+
+    # 3. Scan for JSON object at each opening brace with raw_decode
+    decoder = json.JSONDecoder()
+    start_idx = 0
+    while True:
+        idx = raw.find("{", start_idx)
+        if idx == -1:
+            break
+        try:
+            obj, _ = decoder.raw_decode(raw[idx:])
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            pass
+        start_idx = idx + 1
+
+    # 4. Fallback: greedy regex match
+    match = re.search(r"\{.*\}", raw, re.DOTALL)
+    if match:
+        data = json.loads(match.group(0))
+        if isinstance(data, dict):
+            return data
+
+    raise ValueError("no JSON object in the reply")
 
 
 def validate_review(text: str) -> Optional[str]:

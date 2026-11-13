@@ -6,7 +6,7 @@ import logging
 import re
 import sqlite3
 import textwrap
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -180,9 +180,9 @@ def _pipeline_state(
     """
     if not events:
         return None, False, None
-    now = now or datetime.now()
+    now = now or datetime.now(timezone.utc).replace(tzinfo=None)
     if now.tzinfo is not None:
-        now = now.replace(tzinfo=None)
+        now = now.astimezone(timezone.utc).replace(tzinfo=None)
     latest = events[-1]
     current_events = [event for event in events if event.cycle_id == latest.cycle_id]
     last_update = _parse_time(latest.timestamp)
@@ -244,7 +244,8 @@ def _stage_table(
     for index, (key, label) in enumerate(_STAGES):
         if current and current.stage == "done":
             ev_time = _parse_time(current.timestamp) if current.timestamp else None
-            is_fresh = ev_time and (datetime.now() - ev_time).total_seconds() < _QUIET_SECONDS
+            now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+            is_fresh = ev_time and (now_utc - ev_time).total_seconds() < _QUIET_SECONDS
             if is_fresh:
                 state, style = "DONE", "bright_green"
             else:
@@ -532,7 +533,7 @@ def _usage_panel(
 ) -> Panel:
     if (active or (live and live.get("in_flight", 0) > 0)) and current and live:
         # The running cycle's own calls, not the totals of the last one to finish.
-        return _live_usage_panel(live, current, events, compact, workspace, now or datetime.now(), narrow)
+        return _live_usage_panel(live, current, events, compact, workspace, now or datetime.now(timezone.utc).replace(tzinfo=None), narrow)
 
     stages = metrics.get("stages") or []
     llm_stages = [stage for stage in stages if isinstance(stage, dict) and stage.get("llm_calls") is not None]
@@ -1959,7 +1960,7 @@ def _runner_panel(status: RunnerStatus, events: List[TrailEvent]) -> Panel:
         Text.assemble((schedule_label, "dim"), (schedule_text, schedule_style), no_wrap=True),
     ]
 
-    cooldown_str = _get_cooldown_str(events, datetime.now())
+    cooldown_str = _get_cooldown_str(events, datetime.now(timezone.utc).replace(tzinfo=None))
     if cooldown_str:
         rows.append(Text.assemble(("COOLDOWN ", "dim"), (f"next draft in {cooldown_str}", "bright_yellow"), no_wrap=True))
 

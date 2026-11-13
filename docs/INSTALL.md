@@ -2,88 +2,47 @@
 
 This guide covers installation methods and development setup for Hecate.
 
-## Quick Start
+## Source installation
 
-The fastest way to get started:
+The supported setup in this guide uses a source checkout, so it does not depend
+on package-registry availability or an assumed GitHub release filename.
 
-```bash
-# Install from PyPI
-pip install hecate-agent
-
-# Quick-start a demo workspace with an end-to-end hunt
-hecate-agent demo init
-
-# Assess workspace maturity
-hecate-agent maturity assess
-```
-
-Hecate is distributed via PyPI (`pip install hecate-agent`), pre-built wheels on GitHub Releases, or from source. Optional features are installed as extras (e.g. `pip install "hecate-agent[all]"`).
-
----
-
-## Installation Options
-
-### Option 1: Install from PyPI (Recommended for Users)
-
-**Best for**: Fast setup without checking out source code.
-
-```bash
-# Standard installation
-pip install hecate-agent
-
-# With all optional capabilities (AI, STIX, MCP, Splunk)
-pip install "hecate-agent[all]"
-
-# Verify installation
-hecate-agent --version
-```
-
-### Option 2: Install from GitHub Releases
-
-**Best for**: Environments without direct PyPI access or requiring fixed release artifacts.
-
-Download the latest `.whl` from [GitHub Releases](https://github.com/Hecate-Org/Hecate-Core/releases):
-
-```bash
-pip install https://github.com/Hecate-Org/Hecate-Core/releases/latest/download/hecate_agent-latest-py3-none-any.whl
-```
-
----
-
-### Option 3: Install from a clone (Recommended for Contributors)
-
-**Best for**: Developers contributing to Hecate or dogfooding locally.
+Requirements: Python 3.11+, Git, and uv or Python's venv/pip tooling.
 
 ```bash
 git clone https://github.com/Hecate-Org/Hecate-Core.git
 cd Hecate-Core
-pip install -e .
-
-# Verify installation
+uv venv .venv
+source .venv/bin/activate
+uv pip install -e '.[all,dev]'
 hecate-agent --version
 ```
 
-**Requirements**:
-- Python 3.11 or higher
-- pip (comes with Python)
+For Core and Runner together, use the single shared environment described in
+[onboarding](ONBOARDING.md). Core and Runner must resolve compatible packages in
+the same interpreter for in-process integration. Basic management works without
+LLM keys; model/search/SIEM features need their own configuration.
 
-**Virtual Environment (Recommended)**:
+With standard Python instead of uv:
 
 ```bash
-# Create a virtual environment
-python3 -m venv hecate-env
-
-# Activate it
-source hecate-env/bin/activate  # On macOS/Linux
-hecate-env\Scripts\activate     # On Windows
-
-# Install Hecate from your clone
-pip install -e /path/to/Hecate-Core
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[all,dev]'
 ```
 
----
+On Windows PowerShell activate with `.venv\Scripts\Activate.ps1`. For published
+wheels, use a reviewed versioned artifact that actually exists; this guide does
+not assume a PyPI release or a `hecate_agent-latest-py3-none-any.whl` asset.
 
-### Option 2: Install with optional features
+## Installation options
+
+### Optional features
+
+`[all]` is a curated set, not every extra. Add `[bedrock]` when selecting the
+direct Bedrock adapter, and install only the other SDK extras your workflow needs.
+The current direct Ollama adapter uses standard-library HTTP and needs a running
+Ollama server, not the optional Ollama Python SDK.
 
 **Best for**: Running the AI agents, web research, ATT&CK validation or the MCP server.
 
@@ -104,7 +63,7 @@ hecate-agent --version
 
 ---
 
-### Option 3: No Installation (Pure Markdown)
+### No installation (pure Markdown)
 
 **Best for**: Users who prefer a documentation-only approach or don't want to install Python packages.
 

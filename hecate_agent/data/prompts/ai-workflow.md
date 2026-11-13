@@ -574,8 +574,8 @@ Before finalizing any AI-generated content:
 ## Resources
 
 - **Basic Prompts:** [basic-prompts.md](basic-prompts.md) for Level 0-1
-- **Hunt Template:** [../templates/HUNT_LOCK.md](https://github.com/BrizoSec/Hecate-Core/blob/main/templates/HUNT_LOCK.md)
-- **Real Examples:** [../hunts/H-0001.md](https://github.com/BrizoSec/Hecate-Core/blob/main/hecate_agent/data/hunts/2026/Q1/H-0001.md), [../hunts/H-0002.md](https://github.com/BrizoSec/Hecate-Core/blob/main/hecate_agent/data/hunts/2026/Q1/H-0002.md)
+- **Hunt Template:** [../templates/HUNT_LOCK.md](https://github.com/Hecate-Org/Hecate-Core/blob/main/templates/HUNT_LOCK.md)
+- **Real Examples:** [../hunts/H-0001.md](https://github.com/Hecate-Org/Hecate-Core/blob/main/hecate_agent/data/hunts/2026/Q1/H-0001.md), [../hunts/H-0002.md](https://github.com/Hecate-Org/Hecate-Core/blob/main/hecate_agent/data/hunts/2026/Q1/H-0002.md)
 - **Repository Context:** [AGENTS.md](../../../AGENTS.md)
 
 **Remember: AI augments, doesn't replace. Always validate, always learn, always improve.**

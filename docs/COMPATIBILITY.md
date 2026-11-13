@@ -1,67 +1,49 @@
-# Hecate Compatibility Policy
+# Compatibility and workspace contracts
 
-This document establishes the version compatibility, workspace format guarantees, and coupling policy between **Hecate-Core** (`hecate-agent`) and **Hecate-Runner**.
+## Core and Runner coupling
 
----
+Runner imports Core in-process and declares `hecate-agent[all]` as a dependency.
+That declaration is not a tested compatibility matrix for every historical Core
+release. Use Core and Runner revisions tested together in one environment; record
+commit IDs and resolved dependency versions for deployment. Current metadata is in
+`pyproject.toml` and `hecate_agent/__version__.py`, not a manually maintained version
+table. Installation does not require assuming that matching wheels are published.
 
-## 1. Version Compatibility Policy
+For development, use the shared editable installation in [onboarding](ONBOARDING.md).
+For reproducible deployment, pin reviewed source/artifact revisions and retain the
+resolved environment. Verify your selected workflows before upgrading.
 
-Hecate-Core and Hecate-Runner follow Semantic Versioning (`MAJOR.MINOR.PATCH`):
+## Responsibility boundaries
 
-* **MAJOR (`X.0.0`)**: Incompatible workspace format changes, major architectural redesigns, or breaking API/CLI modifications.
-* **MINOR (`0.Y.0`)**: Backwards-compatible additions to CLI commands, new MCP tools, new agents, or additive fields in frontmatter/LOCK schema.
-* **PATCH (`0.0.Z`)**: Backwards-compatible bug fixes, performance optimizations, and documentation updates.
+| Workflow | Component |
+| --- | --- |
+| Hunt/research management, grounding, Sigma tools, monitor | Core |
+| CTI generation cycle | Runner `run` / `daemon` plus Core |
+| Existing-hunt sweeps without generation | Runner `sweep` plus a configured backend |
+| BAS, Slack, publication and maintenance | Runner |
+| Enterprise knowledge, credentials, content and private results | Selected workspace |
 
-### Core and Runner Compatibility Matrix
+## Workspace format
 
-| Hecate-Core (`hecate-agent`) | Supported Hecate-Runner | Workspace Format Version | Status |
-|---|---|---|---|
-| `>= 0.17.0, < 0.18.0` | `0.1.x` | `v1` (LOCK + YAML Frontmatter) | Current |
-| `>= 0.16.0, < 0.17.0` | `0.1.x` | `v1` (LOCK + YAML Frontmatter) | Supported |
-| `< 0.16.0` | Not supported | Pre-standard | Deprecated |
+Hunts use YAML frontmatter and LOCK sections. `hunt_id` is the canonical hunt ID
+field. Validation depends on the command and document type; use
+`hecate-agent hunt validate H-0001` rather than assuming a short field list covers
+all requirements. Research IDs are `R-XXXX`; native queries and Sigma rules live
+under the selected workspace's `queries/` layout. Current parsers discover dated
+and flat hunt layouts; newly created paths depend on workspace configuration.
 
-> **Recommendation**: Always run Hecate-Runner with a matching minor branch of Hecate-Core (`pip install "hecate-agent[all]"`).
+Optional/additive metadata is common. Do not remove unknown fields when updating
+a document. Old verification labels are not proof of current alert firing;
+readers require the relevant provider, fidelity and correlated evidence.
 
----
+## Upgrade verification
 
-## 2. Division of Labor: Core vs. Runner
+- Review source/CLI changes and configuration stubs before updating.
+- Run the default offline suites from each repo and check packaged docs with
+  `python scripts/sync_docs.py --check` in Core.
+- Revalidate provider/backend support and destination policies for enabled features.
+- Restart long-running services and reopen terminal monitors after updates.
+- Keep private runtime state and backups outside public release artifacts.
 
-| Scenario | Recommended Component |
-|---|---|
-| **Manually write hunts and conduct research** | **Hecate-Core** (`hecate-agent hunt new`, `hecate-agent research new`) |
-| **Automatically pull CTI and draft hunts** | **Hecate-Runner + Core** (`hecate-runner cycle run`) |
-| **Want a live monitoring dashboard** | **Core's monitor command** (`hecate-agent monitor`) |
-| **Export hunts to detection rules** | **Core's promote command** (`hecate-agent hunt promote --output sigma`) |
-| **Assess program maturity level** | **Core's maturity assess** (`hecate-agent maturity assess`) |
-
----
-
-## 3. Workspace Format Stability Guarantees
-
-Hecate treats workspace content as human-and-machine-readable source of truth. The following guarantees apply:
-
-### 1. Directory Structure
-* `hunts/`: Hunt files stored in dated folders `hunts/{YYYY}/{QX}/H-XXXX.md` or flat `hunts/H-XXXX.md`. Both formats are supported for discovery.
-* `research/`: Research documents stored as `research/R-XXXX.md`.
-* `queries/`: SIEM/EDR query files (`.spl`, `.kql`, `.eql`, `.cql`) and candidate Sigma rules (`sigma.yml`).
-
-### 2. Hunt Document Format (LOCK Pattern)
-* **YAML Frontmatter**: Delimited by `---`. Additive fields are permitted without breaking compatibility. Mandatory fields: `id`, `title`, `status`, `tactics`, `techniques`.
-* **LOCK Sections**: Markdown headings (`## Learn`, `## Observe`, `## Check`, `## Keep`) must remain present for parser compatibility.
-* **Queries in Check**: Extracted from fenced code blocks (```` ```spl ... ``` ```` or ```` ```kql ... ``` ````).
-
----
-
-## 4. Release Annotation Policy
-
-To avoid silent breakage across independent checkouts and Runner pipelines:
-
-1. **Tagging Breaking Changes**:
-   * Any change affecting hunt discovery, frontmatter keys, or LOCK parsing will be prominently tagged in release notes with `[BREAKING: WORKSPACE]`.
-   * Any CLI argument signature change or MCP tool schema change will be tagged with `[BREAKING: CLI]` or `[BREAKING: MCP]`.
-
-2. **Deprecation Windows**:
-   * Deprecated CLI flags and functions will emit warnings for at least one minor release cycle before removal.
-
-3. **Release Artifacts**:
-   * Every GitHub Release attaches tested wheels (`.whl`) and source tarballs (`.tar.gz`) verified via `twine check`.
+A GitHub release or wheel should be used only when that exact artifact exists
+and has been reviewed; do not assume an unversioned `latest` wheel filename.

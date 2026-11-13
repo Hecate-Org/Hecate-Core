@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 
 import yaml
 
-from hecate_agent.agents.llm.rule_reviewer import RuleReviewer, verbatim_in
+from hecate_agent.agents.llm.rule_reviewer import RuleReviewer, _json, validate_review, verbatim_in
 from hecate_agent.agents.llm.sigma_generator import SigmaGenerationInput, SigmaGeneratorAgent, SigmaRule
 
 GUIDANCE = "Resume-themed executables launching cmd.exe and then Word"
@@ -206,3 +206,37 @@ def test_generation_keeps_unverified_review_advice() -> None:
         rule, problems, _ = agent._generate_for_logsource(_input(), "process_creation")
         assert rule is not None
         assert problems == []
+
+
+def test_json_extraction_from_markdown_code_fence_and_noise() -> None:
+    # 1. Standard markdown code block
+    markdown_wrapped = """Here is the review result:
+```json
+{
+  "verdict": "keep",
+  "issues": []
+}
+```
+Hope this helps!"""
+    data = _json(markdown_wrapped)
+    assert data["verdict"] == "keep"
+    assert validate_review(markdown_wrapped) is None
+
+    # 2. Text with braces before and after
+    noisy = """Note: {debug: 123}
+```json
+{
+  "verdict": "reject",
+  "issues": ["bad rule"]
+}
+```
+closing {extra: true}"""
+    data = _json(noisy)
+    assert data["verdict"] == "reject"
+    assert validate_review(noisy) is None
+
+    # 3. Raw decode without fences but leading commentary
+    commentary = 'The analysis concluded with the following payload:\n{"verdict": "keep", "issues": []}\nDone.'
+    data = _json(commentary)
+    assert data["verdict"] == "keep"
+

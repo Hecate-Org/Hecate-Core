@@ -1,6 +1,16 @@
 # Hecate Configuration Reference
 
-This document is the single source of truth for configuring Hecate: environment variables, the `.hecateconfig.yaml` workspace config, LLM provider setup, API keys, and the hunt template.
+This guide describes Core configuration, workspace YAML and model setup. The
+feature stubs in [Core `.env.example`](../.env.example) and
+[Runner `.env.example`](https://github.com/Hecate-Org/Hecate-Runner/blob/main/.env.example)
+are companion references for current integrations. Runner scheduling, BAS,
+publication and services are documented in its operating guides.
+
+Export `HECATE_WORKSPACE` before launching either application. Both read its
+ignored `.env`; process environment values win, and a cwd `.env` can override
+workspace values. Local `.env` settings do not configure GitHub Actions, which
+uses repository secrets/variables and workflow inputs. No repository supplies
+working credentials or measured enterprise knowledge.
 
 ---
 
@@ -84,7 +94,7 @@ Each LLM call is grounded with real data where possible:
 ### Minimum viable (no AI, no web search)
 
 ```bash
-pip install -e .        # from your Hecate-Core clone; the package is not on PyPI
+pip install -e .        # from your Hecate-Core clone; no registry release is required
 hecate-agent hunt new --technique T1003.001 --title "LSASS Dumping" --non-interactive
 ```
 
@@ -153,18 +163,15 @@ hecate-agent attack update   # Downloads ~50 MB STIX bundle once
 
 ### Auto-detection order
 
-When no provider is explicitly configured, Hecate checks in this order:
+Prefer explicit `HECATE_LLM_PROVIDER` and `HECATE_LLM_MODEL`, using a model
+available in your account or local server. Auto-detection can select a different
+provider when several credentials are present. Its exact defaults live in
+`hecate_agent/core/llm_provider.py`; they are implementation choices, not
+guarantees of provider model availability.
 
-```
-1. ANTHROPIC_API_KEY set?  → LiteLLM + anthropic/claude-sonnet-4-5-20250514
-2. OPENAI_API_KEY set?     → OpenAI-compatible + gpt-4o
-3. AWS_PROFILE or
-   AWS_ACCESS_KEY_ID set?  → Bedrock + us.anthropic.claude-sonnet-4-5-20250929-v1:0
-4. Ollama reachable at
-   OLLAMA_HOST (or
-   localhost:11434)?        → Ollama + llama3
-5. None of the above       → RuntimeError (no provider found)
-```
+Supported adapters include OpenAI-compatible, LiteLLM, Bedrock and Ollama.
+Anthropic uses LiteLLM with its appropriate model ID/key. Basic hunt management
+remains offline; model-assisted generation and web search have separate prerequisites.
 
 ### Config file override (`.hecateconfig.yaml`)
 

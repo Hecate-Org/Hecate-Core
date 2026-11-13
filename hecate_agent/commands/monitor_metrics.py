@@ -570,6 +570,8 @@ def _collect_purple_team_metrics(
         # Normalize legacy labels without rewriting their historical evidence.
         if status == "verified_true_positive" and provider == "mock":
             status = "simulation_match"
+        elif status == "detection_miss" and provider == "mock":
+            status = "simulation_no_match"
         elif status == "verified_true_positive" and record.get("fidelity_scope") == "smoke_check":
             status = "smoke_check_match"
         if status == "skipped":
@@ -604,8 +606,8 @@ def _collect_purple_team_metrics(
         metrics.bas_simulation_matches += int(status == "simulation_match" or (provider == "mock" and record.get("rule_triggered") is True))
         metrics.bas_query_matches += int(status == "query_match")
         metrics.bas_smoke_matches += int(status == "smoke_check_match")
-        metrics.bas_detection_misses += int(status == "detection_miss")
-        metrics.bas_telemetry_missing += int(status == "telemetry_missing")
+        metrics.bas_detection_misses += int(live and status == "detection_miss")
+        metrics.bas_telemetry_missing += int(live and status == "telemetry_missing")
         metrics.bas_failures += int(status in {"detonation_failed", "error"})
         metrics.bas_detections += int(live and record.get("rule_triggered") is True)
         metrics.bas_telemetry_runs += int(live and record.get("telemetry_arrived") is True)

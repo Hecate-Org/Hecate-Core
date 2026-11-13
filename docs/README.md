@@ -27,7 +27,7 @@ differ from the defaults bundled under `hecate_agent/data/`.
 Files here are GitHub/developer-facing and are not deployed into workspaces:
 
 - [Onboarding](ONBOARDING.md) — What Hecate is for, how the two repositories fit, and a first run
-- [Architecture](https://github.com/Hecate-Org/Hecate-Runner/blob/main/docs/ARCHITECTURE.md) — Design diagrams for the whole pipeline (lives in Hecate-Runner)
+- [Core architecture](ARCHITECTURE.md) and [system architecture](https://github.com/Hecate-Org/Hecate-Runner/blob/main/docs/ARCHITECTURE.md) — Engine boundaries and Runner operating paths
 - [Installation](INSTALL.md) — Install options and requirements
 - [Configuration Reference](CONFIGURATION.md) — All config keys and environment variables
 - [Using Hecate](USING_HECATE.md) — Adoption guide for teams

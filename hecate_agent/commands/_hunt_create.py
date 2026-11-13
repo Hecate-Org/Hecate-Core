@@ -8,9 +8,11 @@ import yaml
 from rich.console import Console
 from rich.prompt import Prompt
 
+from hecate_agent.core.atomic_write import atomic_write_text
 from hecate_agent.core.attack_matrix import get_technique
 from hecate_agent.core.hunt_manager import HuntManager, get_hunt_directory
 from hecate_agent.core.template_engine import render_baseline_template, render_hunt_template, render_math_template
+from hecate_agent.core.workspace import workspace_root
 from hecate_agent.utils.validation import validate_research_id
 
 console = Console()
@@ -317,19 +319,18 @@ def new(
     )
 
     # Write hunt file using hierarchical directory structure
-    hunt_dir = get_hunt_directory(is_test=test)
+    hunt_dir = workspace_root() / get_hunt_directory(is_test=test)
     hunt_dir.mkdir(parents=True, exist_ok=True)
     hunt_file = hunt_dir / f"{hunt_id}.md"
 
     # Validate path is within hunts directory (Python 3.8 compatible)
     try:
-        hunt_file.resolve().relative_to(Path("hunts").resolve())
+        hunt_file.resolve().relative_to((workspace_root() / "hunts").resolve())
     except (ValueError, OSError):
         console.print("[red]Error: Invalid hunt file path[/red]")
         return
 
-    with open(hunt_file, "w", encoding="utf-8") as f:
-        f.write(hunt_content)
+    atomic_write_text(hunt_file, hunt_content)
 
     console.print(f"\n[bold green]✅ Created {hunt_id}: {hunt_title}[/bold green]")
 
@@ -450,18 +451,17 @@ def new_baseline(
         objective=objective,
     )
 
-    hunt_dir = get_hunt_directory(is_test=test)
+    hunt_dir = workspace_root() / get_hunt_directory(is_test=test)
     hunt_dir.mkdir(parents=True, exist_ok=True)
     hunt_file = hunt_dir / f"{hunt_id}.md"
 
     try:
-        hunt_file.resolve().relative_to(Path("hunts").resolve())
+        hunt_file.resolve().relative_to((workspace_root() / "hunts").resolve())
     except (ValueError, OSError):
         console.print("[red]Error: Invalid hunt file path[/red]")
         return
 
-    with open(hunt_file, "w", encoding="utf-8") as f:
-        f.write(baseline_content)
+    atomic_write_text(hunt_file, baseline_content)
 
     console.print(f"\n[bold green]✅ Created {hunt_id}: {baseline_title}[/bold green]")
     console.print("\n[bold]Next steps:[/bold]")
@@ -595,18 +595,17 @@ def new_model_assisted(
         objective=objective,
     )
 
-    hunt_dir = get_hunt_directory(is_test=test)
+    hunt_dir = workspace_root() / get_hunt_directory(is_test=test)
     hunt_dir.mkdir(parents=True, exist_ok=True)
     hunt_file = hunt_dir / f"{hunt_id}.md"
 
     try:
-        hunt_file.resolve().relative_to(Path("hunts").resolve())
+        hunt_file.resolve().relative_to((workspace_root() / "hunts").resolve())
     except (ValueError, OSError):
         console.print("[red]Error: Invalid hunt file path[/red]")
         return
 
-    with open(hunt_file, "w", encoding="utf-8") as f:
-        f.write(math_content)
+    atomic_write_text(hunt_file, math_content)
 
     console.print(f"\n[bold green]✅ Created {hunt_id}: {math_title}[/bold green]")
     console.print("\n[bold]Next steps:[/bold]")

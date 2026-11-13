@@ -300,9 +300,9 @@ Avoid vague lessons:
 
 Once you're comfortable with these basic prompts:
 
-1. **Build your hunt repository** - Document hunts using [templates/HUNT_LOCK.md](https://github.com/BrizoSec/Hecate-Core/blob/main/templates/HUNT_LOCK.md)
+1. **Build your hunt repository** - Document hunts using [templates/HUNT_LOCK.md](https://github.com/Hecate-Org/Hecate-Core/blob/main/templates/HUNT_LOCK.md)
 2. **Progress to Level 2** - Use [ai-workflow.md](ai-workflow.md) for AI tools with repository access
-3. **See real examples** - Review [H-0001.md](https://github.com/BrizoSec/Hecate-Core/blob/main/hecate_agent/data/hunts/2026/Q1/H-0001.md) and [H-0002.md](https://github.com/BrizoSec/Hecate-Core/blob/main/hecate_agent/data/hunts/2026/Q1/H-0002.md)
+3. **See real examples** - Review [H-0001.md](https://github.com/Hecate-Org/Hecate-Core/blob/main/hecate_agent/data/hunts/2026/Q1/H-0001.md) and [H-0002.md](https://github.com/Hecate-Org/Hecate-Core/blob/main/hecate_agent/data/hunts/2026/Q1/H-0002.md)
 
 ---
 

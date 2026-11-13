@@ -1,5 +1,11 @@
 # Level 4: Agentic Workflows
 
+> This is a conceptual maturity/workflow guide. Example roles, events and YAML
+> describe patterns, not an automatically installed multi-agent service or proof
+> that any listed attack was executed. Use [Runner onboarding](https://github.com/Hecate-Org/Hecate-Runner/blob/main/docs/ONBOARDING.md)
+> and [BAS boundaries](https://github.com/Hecate-Org/Hecate-Runner/blob/main/docs/BAS_AUTOMATION.md)
+> for the implemented operating paths, opt-ins and verification limits.
+
 At Level 4, you move from **reactive assistance** to **proactive automation**. Instead of asking your AI for help with each task, you deploy autonomous agents that monitor, reason, and act based on objectives you define.
 
 **The key difference from Level 3:** Agents operate autonomously rather than waiting for your prompts. They detect events, make decisions within guardrails, and coordinate with each other through shared memory (your LOCK-structured hunts).

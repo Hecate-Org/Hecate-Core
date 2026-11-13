@@ -139,19 +139,19 @@ Always maintain human oversight:
 ## Level 4: Agentic
 
 Level 3 gives Claude the **tools**. Level 4 gives it **agency** — and it is built,
-not a preview: [Hecate-Runner](https://github.com/BrizoSec/Hecate-Runner) runs on a
+not a preview: [Hecate-Runner](https://github.com/Hecate-Org/Hecate-Runner) runs on a
 systemd timer, polls CTI (OTX, RSS, MISP, CISA KEV, abuse.ch), grounds each item
 with web research, and writes draft hunts into this workspace.
 
 Note what it deliberately does not do. Drafts land as `status: planning` for human
 review, and no query it writes is ever executed unattended — query execution stays
 behind an explicit human propose/approve step. See
-[level4-agentic-workflows.md](https://github.com/BrizoSec/Hecate-Core/blob/main/hecate_agent/data/docs/level4-agentic-workflows.md).
+[level4-agentic-workflows.md](https://github.com/Hecate-Org/Hecate-Core/blob/main/hecate_agent/data/docs/level4-agentic-workflows.md).
 
 ## Support
 
 - **MCP Documentation:** <https://modelcontextprotocol.io>
 - **Claude Code MCP Guide:** <https://docs.claude.com/claude-code/mcp>
-- **Hecate Issues:** <https://github.com/BrizoSec/Hecate-Core/issues>
+- **Hecate Issues:** <https://github.com/Hecate-Org/Hecate-Core/issues>
 
 Happy hunting!

@@ -181,7 +181,9 @@ Note that this workspace sets `HECATE_LLM_PROVIDER=ollama` in `.env`, so auto-de
 
 `[all]` is **not** every extra: it deliberately omits the direct provider SDKs
 (`[anthropic]`, `[openai]`, `[bedrock]`, `[ollama]`) and `[docs]`, since LiteLLM
-already covers the providers. An Ollama workspace still needs `[ollama]`.
+covers many provider APIs. The direct `bedrock` adapter requires `[bedrock]`
+(`boto3`). Core's current `OllamaProvider` uses the standard-library HTTP client
+and a running local server; the optional `[ollama]` SDK is not required by it.
 
 ### Code Style
 
