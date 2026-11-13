@@ -191,6 +191,22 @@ def test_lab_harness_and_setup_commands_are_filtered() -> None:
     assert any("bash" in cl for cl in cmd_lines)
 
 
+def test_unittest_and_benchmarks_are_filtered() -> None:
+    """python3 -m unittest, benchmark scripts, and test verifiers must not become rules."""
+    text = (
+        "Run unit tests: python3 -m unittest discover -s tests -v. "
+        "Run benchmarks: ./scripts/reproduce-benchmark.sh. "
+        "Verify sandbox: ./bin/kshield verify-sandbox --iterations 100000. "
+        "Attacker ran: python3 /tmp/backdoor.py --c2 10.0.0.1."
+    )
+    cmds = observed_commands(text, platforms=["Linux"])
+    cmd_lines = [c.command for c in cmds]
+    assert not any("unittest" in cl for cl in cmd_lines)
+    assert not any("benchmark" in cl for cl in cmd_lines)
+    assert not any("verify-sandbox" in cl for cl in cmd_lines)
+    assert any("backdoor.py" in cl for cl in cmd_lines)
+
+
 def test_documented_reference_candidates_keep_exact_request_and_reference_wording() -> None:
     import yaml
 

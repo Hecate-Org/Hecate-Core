@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from hecate_agent.orchestrator.enrichment import (
     _CRTSH_CACHE,
     _IPINFO_CACHE,
@@ -33,6 +35,18 @@ from hecate_agent.orchestrator.enrichment import (
     query_vt_hash,
     submit_urlscan_detonation,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_summary_providers(request, monkeypatch):
+    """Aggregation tests opt into their own providers instead of calling every API."""
+    if not request.node.name.startswith("test_generate_enrichment_summary_includes_"):
+        return
+    from hecate_agent.orchestrator import enrichment
+
+    for name, value in vars(enrichment).copy().items():
+        if name.startswith("query_") and callable(value):
+            monkeypatch.setattr(enrichment, name, MagicMock(return_value={} if name.endswith("_batch") else ""))
 
 
 def test_extract_indicators():

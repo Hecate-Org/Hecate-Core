@@ -53,7 +53,8 @@ _LAB_HARNESS_RE = re.compile(
     r"\b(localhost|127\.0\.0\.1|0\.0\.0\.0|::1)\b"
     r"|/__lab/|/__test/|/lab/status"
     r"|\b(?:docker-compose|docker\s+compose|podman-compose|docker\s+build|podman\s+build)\b"
-    r"|\b(?:npm\s+install|pip\s+install\s+-r|mvn\s+clean|gradle\s+build|cargo\s+build|npm\s+test|pytest)\b",
+    r"|\b(?:npm\s+install|pip\s+install\s+-r|mvn\s+clean|gradle\s+build|cargo\s+build|npm\s+test|pytest|python3?\s+-m\s+unittest)\b"
+    r"|\b(?:benchmark|reproduce-benchmark|verify-sandbox)\b",
     re.IGNORECASE,
 )
 #: Explicit indicators of Linux / Unix tools or paths in CTI text, used for multi-platform fallback.

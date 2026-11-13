@@ -1247,6 +1247,11 @@ def _purple_team_panel(
         "BAS RESULTS",
         Text(f"{measured.bas_verified} verified · {measured.bas_detection_misses} missed", style="bright_white" if measured.bas_runs else "dim"),
     )
+    if measured.bas_simulation_matches or measured.bas_query_matches or measured.bas_smoke_matches:
+        table.add_row(
+            "OTHER MATCHES",
+            Text(f"{measured.bas_simulation_matches} synthetic · {measured.bas_query_matches} query · {measured.bas_smoke_matches} smoke", style="bright_yellow"),
+        )
     if measured.bas_last_detection_latency_sec > 0.0 or measured.bas_siem_verified > 0:
         table.add_row(
             "SIEM ALERTS",

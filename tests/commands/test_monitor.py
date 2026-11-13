@@ -1136,7 +1136,7 @@ def test_validation_reads_private_sensor_runs_and_deduplicates_hunt_results(tmp_
         "run_id": "run-1", "hunt_id": "H-0001", "provider": "caldera",
         "status": "verified_true_positive", "technique_id": "T1033",
         "telemetry_arrived": True, "rule_triggered": True, "sensor_events_count": 3,
-        "matched_events_count": 1,
+        "matched_events_count": 1, "cleanup_success": True, "fidelity_scope": "behavioral",
     }
     (root / "runs/one.json").write_text(json.dumps(record))
     hunts = tmp_path / "hunts"
@@ -1164,6 +1164,41 @@ def test_validation_reads_private_sensor_runs_and_deduplicates_hunt_results(tmp_
     assert "1 rule matches" in text
 
 
+def test_validation_separates_simulation_query_and_smoke_from_live_alerts(tmp_path: Path) -> None:
+    runs = tmp_path / ".hecate/bas/runs"
+    runs.mkdir(parents=True)
+    live = {
+        "bas_provider": "caldera", "status": "verified_true_positive",
+        "fidelity_scope": "behavioral", "cleanup_success": True,
+        "rule_triggered": True, "telemetry_arrived": True,
+        "siem_backend": "splunk", "verification_scope": "siem_alert",
+        "siem_alert_fired": True, "alert_search_id": "alert-job-1",
+        "alert_name": "Example alert", "alert_time_utc": "2026-11-13T00:00:00Z",
+        "detection_latency_sec": 2.0,
+    }
+    records = [
+        live,
+        {**live, "provider": "mock"},
+        {**live, "status": "query_match", "verification_scope": "siem_query"},
+        {**live, "status": "smoke_check_match", "fidelity_scope": "smoke_check"},
+        {**live, "status": "simulation_match", "provider": "mock"},
+        {**live, "alert_search_id": ""},
+        {**live, "siem_backend": "lab_process", "verification_scope": "local_sensor_sigma"},
+        {**live, "cleanup_success": False},
+        {**live, "purpose": "sensor_control"},
+    ]
+    for index, record in enumerate(records):
+        (runs / f"{index}.json").write_text(json.dumps({**record, "run_id": str(index)}))
+    metrics = m._collect_purple_team_metrics(tmp_path)
+    assert metrics.bas_runs == len(records)
+    assert metrics.bas_mock_runs == 2 and metrics.bas_live_runs == 7
+    assert metrics.bas_siem_verified == 1
+    assert metrics.bas_avg_detection_latency_sec == 2.0
+    assert metrics.bas_simulation_matches == 2
+    assert metrics.bas_query_matches == 1 and metrics.bas_smoke_matches == 1
+    assert metrics.bas_verified == 3
+
+
 def test_validation_combines_rule_replay_and_bas_outcomes(tmp_path: Path) -> None:
     hunts = tmp_path / "hunts/2026/Q4"
     hunts.mkdir(parents=True)
@@ -1178,6 +1213,7 @@ def test_validation_combines_rule_replay_and_bas_outcomes(tmp_path: Path) -> Non
         text = (
             f"---\nhunt_id: H-{index:04}\nbas_provider: {provider}\nbas_status: {status}\n"
             f"bas_detection_triggered: {str(triggered).lower()}\n"
+            "bas_cleanup_success: true\nbas_fidelity_scope: behavioral\n"
             "purple_team_validated: true\npurple_team_rules_evaluated: 2\n---\n"
             f"> - **Target Technique:** `{technique}`\n"
             f"> - **Detection Triggered:** {'Yes' if triggered else 'No'} ({hits} hit(s))\n"
@@ -1188,19 +1224,19 @@ def test_validation_combines_rule_replay_and_bas_outcomes(tmp_path: Path) -> Non
     assert metrics.validated_rules == 10 and metrics.hunts_validated == 5
     assert metrics.bas_runs == 5
     assert metrics.bas_live_runs == 4 and metrics.bas_mock_runs == 1
-    assert metrics.bas_verified == 2 and metrics.bas_detection_misses == 1
+    assert metrics.bas_verified == 1 and metrics.bas_detection_misses == 1
     assert metrics.bas_telemetry_missing == 1 and metrics.bas_failures == 1
-    assert metrics.bas_detections == 2 and metrics.bas_matched_events == 6
-    assert metrics.bas_telemetry_runs == 3 and metrics.bas_techniques == 3
+    assert metrics.bas_detections == 1 and metrics.bas_matched_events == 5
+    assert metrics.bas_telemetry_runs == 2 and metrics.bas_techniques == 3
     console = Console(width=80, record=True, force_terminal=False)
     console.print(m._purple_team_panel(metrics=metrics, narrow=False))
     text = console.export_text()
     assert "VALIDATION" in text and "PURPLE TEAM ENGINE" not in text
     assert "5 runs · 4 live, 1 mock" in text
-    assert "3 techniques · 2 detections" in text
-    assert "2 verified · 1 missed" in text
+    assert "3 techniques · 1 detections" in text
+    assert "1 verified · 1 missed" in text
     assert "1 sensor gaps · 1 failed" in text
-    assert "3/5 observed · 6 events" in text
+    assert "2/5 observed · 5 events" in text
 
 
 @pytest.mark.parametrize("width", [48, 60, 80])
@@ -1621,3 +1657,53 @@ def test_tab_nav_bar_supports_tab_5() -> None:
     assert "5: SIEM & Drift" in text
     assert "1: Overview" in text
 
+
+
+
+def test_siem_dashboard_requires_alert_proof_and_ignores_latency_snapshots(tmp_path: Path):
+    import sqlite3
+
+    siem = tmp_path / ".hecate/siem"
+    siem.mkdir(parents=True)
+    (siem / "drift_state.json").write_text("{}")
+    bas = tmp_path / ".hecate/bas"
+    bas.mkdir()
+    (bas / "state.json").write_text(json.dumps({"last_detection_latency_sec": 999.0}))
+    with sqlite3.connect(siem / "drift_history.db") as conn:
+        conn.executescript("""
+            CREATE TABLE audit_sweeps (timestamp TEXT);
+            CREATE TABLE query_versions (id, hunt_id, target, file_name, remote_id,
+                version, query_hash, deployed_at, deployed_by, status);
+            CREATE TABLE drift_events (id, timestamp, hunt_id, target, file_name, remote_id,
+                event_type, previous_status, new_status, drift_diff, detail, actor);
+            CREATE TABLE detection_validations (id INTEGER PRIMARY KEY, hunt_id TEXT,
+                technique_id TEXT, status TEXT, bas_provider TEXT, siem_backend TEXT,
+                siem_alert_fired INTEGER, alert_search_id TEXT, alert_name TEXT,
+                alert_time_utc TEXT, detection_latency_sec REAL);
+        """)
+        rows = [
+            (1, "H-0001", "T1033", "verified_true_positive", "caldera", "splunk", 1,
+             "alert-job", "Rule", "2026-11-13T00:00:00Z", 2.0),
+            (2, "H-0002", "T1033", "verified_true_positive", "mock", "splunk", 1,
+             "fake-job", "Rule", "2026-11-13T00:00:00Z", 888.0),
+            (3, "H-0003", "T1033", "verified_true_positive", "caldera", "lab_process", 0,
+             "", "", "", 777.0),
+        ]
+        conn.executemany("INSERT INTO detection_validations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+    metrics = m._collect_siem_drift_metrics(tmp_path)
+    assert metrics.bas_verified_alerts_count == 1
+    assert metrics.last_verified_hunt == "H-0001"
+    assert metrics.avg_detection_latency_sec == 2.0
+    assert metrics.last_detection_latency_sec == 2.0
+
+
+def test_siem_dashboard_state_latency_alone_does_not_prove_an_alert(tmp_path: Path):
+    siem = tmp_path / ".hecate/siem"
+    siem.mkdir(parents=True)
+    (siem / "drift_state.json").write_text("{}")
+    bas = tmp_path / ".hecate/bas"
+    bas.mkdir()
+    (bas / "state.json").write_text(json.dumps({"last_detection_latency_sec": 999.0}))
+    metrics = m._collect_siem_drift_metrics(tmp_path)
+    assert metrics.bas_verified_alerts_count == 0
+    assert metrics.last_detection_latency_sec == 0.0

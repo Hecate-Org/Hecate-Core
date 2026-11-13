@@ -469,6 +469,9 @@ class PurpleTeamMetrics:
     bas_runs: int = 0
     bas_live_runs: int = 0
     bas_mock_runs: int = 0
+    bas_simulation_matches: int = 0
+    bas_query_matches: int = 0
+    bas_smoke_matches: int = 0
     bas_verified: int = 0
     bas_detection_misses: int = 0
     bas_telemetry_missing: int = 0
@@ -567,40 +570,61 @@ def _collect_purple_team_metrics(
             metrics.bas_skipped += 1
             metrics.bas_last_skip_reason = str(record.get("reason") or "No approved procedure")
             return
-        if status not in {"verified_true_positive", "detection_miss", "telemetry_missing", "detonation_failed", "error"}:
+        if status not in {"verified_true_positive", "detection_miss", "telemetry_missing", "detonation_failed", "error", "simulation_match", "simulation_no_match", "simulation_unsupported", "query_match", "smoke_check_match"}:
             return
         metrics.bas_runs += 1
         metrics.bas_control_runs += int(record.get("purpose") == "sensor_control" or record.get("hunt_id") == "LAB-CHECK")
-        provider = str(record.get("provider") or "unknown").lower()
+        provider = str(record.get("provider") or record.get("bas_provider") or "unknown").lower()
+        live = provider in {"caldera", "stratus", "local_sandbox", "live_lab"}
+        behavioral = record.get("fidelity_scope") == "behavioral"
+        control = record.get("purpose") == "sensor_control" or record.get("hunt_id") == "LAB-CHECK"
+        verified = (
+            live and behavioral and not control
+            and record.get("cleanup_success") is True
+            and record.get("telemetry_arrived") is True
+            and record.get("rule_triggered") is True
+            and status == "verified_true_positive"
+        )
+        siem_bk = str(record.get("siem_backend") or "")
+        siem_verified = (
+            verified and siem_bk.lower() in {"splunk", "sentinel", "elastic", "crowdstrike", "rapid7", "sentinelone"}
+            and record.get("verification_scope") == "siem_alert"
+            and record.get("siem_alert_fired") is True
+            and all(record.get(key) for key in ("alert_search_id", "alert_name", "alert_time_utc"))
+        )
         metrics.bas_providers[provider] = metrics.bas_providers.get(provider, 0) + 1
         metrics.bas_mock_runs += int(provider == "mock")
-        metrics.bas_live_runs += int(provider in {"caldera", "stratus", "local_sandbox", "live_lab"})
-        metrics.bas_verified += int(status == "verified_true_positive")
+        metrics.bas_live_runs += int(live)
+        metrics.bas_verified += int(verified)
+        metrics.bas_simulation_matches += int(status == "simulation_match" or (provider == "mock" and record.get("rule_triggered") is True))
+        metrics.bas_query_matches += int(status == "query_match")
+        metrics.bas_smoke_matches += int(status == "smoke_check_match")
         metrics.bas_detection_misses += int(status == "detection_miss")
         metrics.bas_telemetry_missing += int(status == "telemetry_missing")
         metrics.bas_failures += int(status in {"detonation_failed", "error"})
-        metrics.bas_detections += int(record.get("rule_triggered") is True)
-        metrics.bas_telemetry_runs += int(record.get("telemetry_arrived") is True)
-        metrics.bas_matched_events += int(record.get("sensor_events_count", record.get("matched_events_count", 0)))
+        metrics.bas_detections += int(live and record.get("rule_triggered") is True)
+        metrics.bas_telemetry_runs += int(live and record.get("telemetry_arrived") is True)
+        if live:
+            metrics.bas_matched_events += int(record.get("sensor_events_count", record.get("matched_events_count", 0)))
         technique = str(record.get("technique_id") or "")
         if _RE_TECHNIQUE.fullmatch(technique):
             bas_techniques.add(technique)
         lat_val = record.get("detection_latency_sec")
-        if lat_val is not None:
+        if siem_verified and lat_val is not None:
             try:
                 lat_float = float(lat_val)
                 if lat_float > 0.0:
                     latencies.append(lat_float)
             except (ValueError, TypeError):
                 pass
-        siem_bk = str(record.get("siem_backend") or "")
-        if record.get("siem_verified") or (siem_bk and status == "verified_true_positive"):
+        if siem_verified:
             metrics.bas_siem_verified += 1
         if mtime >= last_bas_mtime:
             last_bas_mtime = mtime
             metrics.bas_last_status = status
             metrics.bas_last_duration_sec = float(record.get("duration_seconds", 0.0))
-            if lat_val is not None:
+            metrics.bas_last_detection_latency_sec = 0.0
+            if siem_verified and lat_val is not None:
                 try:
                     metrics.bas_last_detection_latency_sec = float(lat_val)
                 except (ValueError, TypeError):
@@ -630,11 +654,6 @@ def _collect_purple_team_metrics(
         )
         if state.get("telemetry") == "lab_process":
             metrics.bas_scope_label = "Local process sensor + Sigma"
-        if "last_detection_latency_sec" in state and not metrics.bas_last_detection_latency_sec:
-            try:
-                metrics.bas_last_detection_latency_sec = float(state.get("last_detection_latency_sec") or 0.0)
-            except (ValueError, TypeError):
-                pass
         if "last_siem_backend" in state and not metrics.bas_last_siem_backend:
             metrics.bas_last_siem_backend = str(state.get("last_siem_backend") or "")
         if "last_search_job_id" in state and not metrics.bas_last_job_id:
@@ -687,7 +706,13 @@ def _collect_purple_team_metrics(
                     "detection_latency_sec": metadata.get("bas_detection_latency_sec"),
                     "siem_backend": metadata.get("bas_backend"),
                     "search_job_id": metadata.get("bas_search_job_id"),
-                    "siem_verified": metadata.get("bas_siem_alert_fired") or metadata.get("bas_verified"),
+                    "siem_alert_fired": metadata.get("bas_siem_alert_fired"),
+                    "verification_scope": metadata.get("bas_verification_scope"),
+                    "fidelity_scope": metadata.get("bas_fidelity_scope"),
+                    "cleanup_success": metadata.get("bas_cleanup_success"),
+                    "alert_search_id": metadata.get("bas_alert_search_id"),
+                    "alert_name": metadata.get("bas_alert_name"),
+                    "alert_time_utc": metadata.get("bas_alert_time_utc"),
                 }, hf.stat().st_mtime)
         except (OSError, ValueError, yaml.YAMLError):
             continue
@@ -859,8 +884,15 @@ def _collect_siem_drift_metrics(workspace: Optional[Path] = None) -> SiemDriftMe
             metrics.recent_versions = [dict(r) for r in cur_v.fetchall()]
 
             try:
+                # Legacy rows and state snapshots do not prove a fired SIEM alert.
+                alert_predicate = (
+                    "status = 'verified_true_positive' AND siem_alert_fired = 1 "
+                    "AND bas_provider IN ('caldera', 'stratus', 'local_sandbox', 'live_lab') "
+                    "AND siem_backend IN ('splunk', 'sentinel', 'elastic', 'crowdstrike', 'rapid7', 'sentinelone') "
+                    "AND alert_search_id != '' AND alert_name != '' AND alert_time_utc != ''"
+                )
                 val_row = conn.execute(
-                    "SELECT COUNT(*), AVG(detection_latency_sec) FROM detection_validations WHERE status = 'verified_true_positive'"
+                    "SELECT COUNT(*), AVG(detection_latency_sec) FROM detection_validations WHERE " + alert_predicate
                 ).fetchone()
                 if val_row and val_row[0] is not None:
                     metrics.bas_verified_alerts_count = int(val_row[0])
@@ -868,7 +900,7 @@ def _collect_siem_drift_metrics(workspace: Optional[Path] = None) -> SiemDriftMe
                         metrics.avg_detection_latency_sec = round(float(val_row[1]), 3)
 
                 last_val = conn.execute(
-                    "SELECT hunt_id, technique_id, detection_latency_sec FROM detection_validations ORDER BY id DESC LIMIT 1"
+                    "SELECT hunt_id, technique_id, detection_latency_sec FROM detection_validations WHERE " + alert_predicate + " ORDER BY id DESC LIMIT 1"
                 ).fetchone()
                 if last_val:
                     metrics.last_verified_hunt = str(last_val[0])
@@ -885,21 +917,6 @@ def _collect_siem_drift_metrics(workspace: Optional[Path] = None) -> SiemDriftMe
                     conn.close()
                 except sqlite3.Error as exc:
                     logger.debug("Error closing SIEM drift DB connection: %s", exc)
-
-    if metrics.last_detection_latency_sec == 0.0 and siem_dir:
-        bas_state_file = siem_dir.parent / "bas" / "state.json"
-        if bas_state_file.exists():
-            try:
-                b_state = json.loads(bas_state_file.read_text(encoding="utf-8"))
-                if "last_detection_latency_sec" in b_state and b_state["last_detection_latency_sec"]:
-                    metrics.last_detection_latency_sec = float(b_state["last_detection_latency_sec"])
-                    metrics.bas_verified_alerts_count = max(metrics.bas_verified_alerts_count, 1)
-                if "last_verified_hunt" in b_state:
-                    metrics.last_verified_hunt = str(b_state["last_verified_hunt"])
-                if "last_verified_technique" in b_state:
-                    metrics.last_verified_technique = str(b_state["last_verified_technique"])
-            except (json.JSONDecodeError, OSError, ValueError) as exc:
-                logger.debug("Failed reading BAS state file %s: %s", bas_state_file, exc)
 
     if metrics.total_queries > 0:
         active_q = max(1, metrics.total_queries - metrics.decommissioned_count)

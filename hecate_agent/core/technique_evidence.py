@@ -269,7 +269,8 @@ _DEFENDER_ADVICE_RE = re.compile(
     r"\b(to mitigate|as a mitigation|mitigation steps?|remediation|workarounds?|we recommend"
     r"|(is|are) (strongly )?recommended|(defenders|administrators|admins) should"
     r"|if (it is|it's|they are) not (needed|required|in use)|enable authentication"
-    r"|upgrade to (version |v)?\d|apply the (vendor )?(patch|update|fix))\b"
+    r"|upgrade to (version |v)?\d|apply the (vendor )?(patch|update|fix)"
+    r"|deploy (?:fleet-wide|across|via|using))\b"
 )
 #: Segments longer than this are judged, and quoted, by a window around the
 #: match: scraped headings carry no punctuation, so unrelated sections can

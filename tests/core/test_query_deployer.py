@@ -2,6 +2,8 @@
 
 import unittest.mock as mock
 
+import pytest
+
 from hecate_agent.api import (
     deploy_transpiled_query,
     sync_transpiled_query,
@@ -619,3 +621,33 @@ class TestQueryDeployer:
         assert res_sync["ok"] is True
         assert res_sync["status"] == "dry_run"
         assert res_sync["remote_id"].startswith("Hecate_H-0868_")
+
+
+@pytest.mark.parametrize("target", QueryDeployer.SUPPORTED_TARGETS)
+@pytest.mark.parametrize("operation", ["deploy", "undeploy", "sync"])
+def test_live_operations_without_credentials_fail_instead_of_simulating(target, operation):
+    with mock.patch.dict("os.environ", {"SPLUNK_HOST": "https://splunk.example.test"}, clear=True):
+        deployer = QueryDeployer()
+        if operation == "deploy":
+            payload = DeploymentPayload("H-0001", "Example", target, "", "search example")
+        else:
+            payload = UndeploymentPayload("H-0001", "Example", target,
+                                          remote_id="example", query="search example")
+        result = getattr(deployer, operation)(payload, dry_run=False)
+    assert result.status == "error"
+    assert result.dry_run is False
+    assert result.ok is False
+    assert "missing" in result.detail.lower()
+
+
+@pytest.mark.parametrize("operation", ["deploy", "undeploy", "sync"])
+def test_live_splunk_operations_require_an_explicit_endpoint(operation):
+    with mock.patch.dict("os.environ", {"SPLUNK_TOKEN": "fixture-only"}, clear=True):
+        deployer = QueryDeployer()
+        if operation == "deploy":
+            payload = DeploymentPayload("H-0001", "Example", "splunk_spl", "spl", "example")
+        else:
+            payload = UndeploymentPayload("H-0001", "Example", "splunk_spl", remote_id="example")
+        result = getattr(deployer, operation)(payload, dry_run=False)
+    assert result.status == "error" and not result.ok and not result.dry_run
+    assert "SPLUNK_URL or SPLUNK_HOST" in result.detail

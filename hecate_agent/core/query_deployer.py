@@ -394,11 +394,13 @@ class QueryDeployer:
             reason = "dry_run mode" if dry_run else "missing Sentinel credentials (WORKSPACE_ID/SUB_ID/RG/TOKEN)"
             return DeploymentResult(
                 target=payload.target,
-                status="dry_run",
+                status="dry_run" if dry_run else "error",
                 remote_id=search_id,
-                detail=f"Validated Sentinel Saved Search payload ({reason})",
+                detail=f"Validated Sentinel Saved Search payload ({reason})"
+                if dry_run
+                else f"Live operation refused: {reason}",
                 request_summary=req_summary,
-                dry_run=True,
+                dry_run=dry_run,
             )
 
         with httpx.Client(timeout=self.timeout_sec) as client:
@@ -437,13 +439,15 @@ class QueryDeployer:
             reason = "dry_run mode" if dry_run else "missing FALCON_API_TOKEN credentials"
             return DeploymentResult(
                 target=payload.target,
-                status="dry_run",
+                status="dry_run" if dry_run else "error",
                 remote_id=self.compute_remote_id(
                     self.TARGET_CROWDSTRIKE, payload.hunt_id, payload.rule_title, payload.query
                 ),
-                detail=f"Validated Falcon LogScale Query payload ({reason})",
+                detail=f"Validated Falcon LogScale Query payload ({reason})"
+                if dry_run
+                else f"Live operation refused: {reason}",
                 request_summary=req_summary,
-                dry_run=True,
+                dry_run=dry_run,
             )
 
         with httpx.Client(timeout=self.timeout_sec) as client:
@@ -484,13 +488,15 @@ class QueryDeployer:
             reason = "dry_run mode" if dry_run else "missing RAPID7_API_KEY credentials"
             return DeploymentResult(
                 target=payload.target,
-                status="dry_run",
+                status="dry_run" if dry_run else "error",
                 remote_id=self.compute_remote_id(
                     self.TARGET_RAPID7, payload.hunt_id, payload.rule_title, payload.query
                 ),
-                detail=f"Validated Rapid7 InsightIDR LEQL payload ({reason})",
+                detail=f"Validated Rapid7 InsightIDR LEQL payload ({reason})"
+                if dry_run
+                else f"Live operation refused: {reason}",
                 request_summary=req_summary,
-                dry_run=True,
+                dry_run=dry_run,
             )
 
         with httpx.Client(timeout=self.timeout_sec) as client:
@@ -532,13 +538,15 @@ class QueryDeployer:
             reason = "dry_run mode" if dry_run else "missing SENTINELONE_API_TOKEN credentials"
             return DeploymentResult(
                 target=payload.target,
-                status="dry_run",
+                status="dry_run" if dry_run else "error",
                 remote_id=self.compute_remote_id(
                     self.TARGET_SENTINELONE, payload.hunt_id, payload.rule_title, payload.query
                 ),
-                detail=f"Validated SentinelOne Deep Visibility payload ({reason})",
+                detail=f"Validated SentinelOne Deep Visibility payload ({reason})"
+                if dry_run
+                else f"Live operation refused: {reason}",
                 request_summary=req_summary,
-                dry_run=True,
+                dry_run=dry_run,
             )
 
         with httpx.Client(timeout=self.timeout_sec) as client:
@@ -557,6 +565,13 @@ class QueryDeployer:
 
     def _deploy_splunk(self, payload: DeploymentPayload, dry_run: bool) -> DeploymentResult:
         """Deploy to Splunk Enterprise / Cloud REST Saved Searches API."""
+        if not dry_run and not (os.getenv("SPLUNK_URL") or os.getenv("SPLUNK_HOST")):
+            return DeploymentResult(
+                target=payload.target,
+                status="error",
+                dry_run=False,
+                detail="Live operation refused: configure SPLUNK_URL or SPLUNK_HOST",
+            )
         splunk_url = (os.getenv("SPLUNK_URL") or os.getenv("SPLUNK_HOST") or "https://localhost:8089").rstrip("/")
         if not splunk_url.startswith(("http://", "https://")):
             splunk_url = f"https://{splunk_url}"
@@ -608,11 +623,13 @@ class QueryDeployer:
             reason = "dry_run mode" if dry_run else "missing SPLUNK_TOKEN or SPLUNK_PASSWORD credentials"
             return DeploymentResult(
                 target=payload.target,
-                status="dry_run",
+                status="dry_run" if dry_run else "error",
                 remote_id=search_name,
-                detail=f"Validated Splunk Saved Search payload ({reason})",
+                detail=f"Validated Splunk Saved Search payload ({reason})"
+                if dry_run
+                else f"Live operation refused: {reason}",
                 request_summary=req_summary,
-                dry_run=True,
+                dry_run=dry_run,
             )
 
         verify_ssl = os.getenv("SPLUNK_VERIFY_SSL", "true").lower() in ("true", "1", "yes")
@@ -673,11 +690,13 @@ class QueryDeployer:
             reason = "dry_run mode" if dry_run else "missing ELASTIC_API_KEY credentials"
             return DeploymentResult(
                 target=payload.target,
-                status="dry_run",
+                status="dry_run" if dry_run else "error",
                 remote_id=rule_id,
-                detail=f"Validated Elastic Detection Engine Rule payload ({reason})",
+                detail=f"Validated Elastic Detection Engine Rule payload ({reason})"
+                if dry_run
+                else f"Live operation refused: {reason}",
                 request_summary=req_summary,
-                dry_run=True,
+                dry_run=dry_run,
             )
 
         with httpx.Client(timeout=self.timeout_sec) as client:
@@ -722,11 +741,13 @@ class QueryDeployer:
             reason = "dry_run mode" if dry_run else "missing Sentinel credentials"
             return UndeploymentResult(
                 target=payload.target,
-                status="dry_run",
+                status="dry_run" if dry_run else "error",
                 remote_id=search_id,
-                detail=f"Validated Sentinel Saved Search undeploy contract ({reason})",
+                detail=f"Validated Sentinel Saved Search undeploy contract ({reason})"
+                if dry_run
+                else f"Live operation refused: {reason}",
                 request_summary=req_summary,
-                dry_run=True,
+                dry_run=dry_run,
             )
 
         with httpx.Client(timeout=self.timeout_sec) as client:
@@ -769,12 +790,14 @@ class QueryDeployer:
             reason = "dry_run mode" if dry_run else "missing Sentinel credentials"
             return SyncResult(
                 target=payload.target,
-                status="dry_run",
+                status="dry_run" if dry_run else "error",
                 remote_id=search_id,
                 local_query=payload.query,
-                detail=f"Validated Sentinel sync check contract ({reason})",
+                detail=f"Validated Sentinel sync check contract ({reason})"
+                if dry_run
+                else f"Live operation refused: {reason}",
                 request_summary=req_summary,
-                dry_run=True,
+                dry_run=dry_run,
             )
 
         with httpx.Client(timeout=self.timeout_sec) as client:
@@ -831,11 +854,13 @@ class QueryDeployer:
             reason = "dry_run mode" if dry_run else "missing FALCON_API_TOKEN credentials"
             return UndeploymentResult(
                 target=payload.target,
-                status="dry_run",
+                status="dry_run" if dry_run else "error",
                 remote_id=remote_id,
-                detail=f"Validated Falcon LogScale undeploy contract ({reason})",
+                detail=f"Validated Falcon LogScale undeploy contract ({reason})"
+                if dry_run
+                else f"Live operation refused: {reason}",
                 request_summary=req_summary,
-                dry_run=True,
+                dry_run=dry_run,
             )
 
         with httpx.Client(timeout=self.timeout_sec) as client:
@@ -873,12 +898,14 @@ class QueryDeployer:
             reason = "dry_run mode" if dry_run else "missing FALCON_API_TOKEN credentials"
             return SyncResult(
                 target=payload.target,
-                status="dry_run",
+                status="dry_run" if dry_run else "error",
                 remote_id=remote_id,
                 local_query=payload.query,
-                detail=f"Validated Falcon LogScale sync check contract ({reason})",
+                detail=f"Validated Falcon LogScale sync check contract ({reason})"
+                if dry_run
+                else f"Live operation refused: {reason}",
                 request_summary=req_summary,
-                dry_run=True,
+                dry_run=dry_run,
             )
 
         with httpx.Client(timeout=self.timeout_sec) as client:
@@ -934,11 +961,13 @@ class QueryDeployer:
             reason = "dry_run mode" if dry_run else "missing RAPID7_API_KEY credentials"
             return UndeploymentResult(
                 target=payload.target,
-                status="dry_run",
+                status="dry_run" if dry_run else "error",
                 remote_id=remote_id,
-                detail=f"Validated Rapid7 InsightIDR undeploy contract ({reason})",
+                detail=f"Validated Rapid7 InsightIDR undeploy contract ({reason})"
+                if dry_run
+                else f"Live operation refused: {reason}",
                 request_summary=req_summary,
-                dry_run=True,
+                dry_run=dry_run,
             )
 
         with httpx.Client(timeout=self.timeout_sec) as client:
@@ -975,12 +1004,14 @@ class QueryDeployer:
             reason = "dry_run mode" if dry_run else "missing RAPID7_API_KEY credentials"
             return SyncResult(
                 target=payload.target,
-                status="dry_run",
+                status="dry_run" if dry_run else "error",
                 remote_id=remote_id,
                 local_query=payload.query,
-                detail=f"Validated Rapid7 sync check contract ({reason})",
+                detail=f"Validated Rapid7 sync check contract ({reason})"
+                if dry_run
+                else f"Live operation refused: {reason}",
                 request_summary=req_summary,
-                dry_run=True,
+                dry_run=dry_run,
             )
 
         with httpx.Client(timeout=self.timeout_sec) as client:
@@ -1036,11 +1067,13 @@ class QueryDeployer:
             reason = "dry_run mode" if dry_run else "missing SENTINELONE_API_TOKEN credentials"
             return UndeploymentResult(
                 target=payload.target,
-                status="dry_run",
+                status="dry_run" if dry_run else "error",
                 remote_id=remote_id,
-                detail=f"Validated SentinelOne Deep Visibility undeploy contract ({reason})",
+                detail=f"Validated SentinelOne Deep Visibility undeploy contract ({reason})"
+                if dry_run
+                else f"Live operation refused: {reason}",
                 request_summary=req_summary,
-                dry_run=True,
+                dry_run=dry_run,
             )
 
         with httpx.Client(timeout=self.timeout_sec) as client:
@@ -1077,12 +1110,14 @@ class QueryDeployer:
             reason = "dry_run mode" if dry_run else "missing SENTINELONE_API_TOKEN credentials"
             return SyncResult(
                 target=payload.target,
-                status="dry_run",
+                status="dry_run" if dry_run else "error",
                 remote_id=remote_id,
                 local_query=payload.query,
-                detail=f"Validated SentinelOne sync check contract ({reason})",
+                detail=f"Validated SentinelOne sync check contract ({reason})"
+                if dry_run
+                else f"Live operation refused: {reason}",
                 request_summary=req_summary,
-                dry_run=True,
+                dry_run=dry_run,
             )
 
         with httpx.Client(timeout=self.timeout_sec) as client:
@@ -1125,6 +1160,13 @@ class QueryDeployer:
 
     def _undeploy_splunk(self, payload: UndeploymentPayload, dry_run: bool) -> UndeploymentResult:
         """Teardown/delete Saved Search from Splunk REST API."""
+        if not dry_run and not (os.getenv("SPLUNK_URL") or os.getenv("SPLUNK_HOST")):
+            return UndeploymentResult(
+                target=payload.target,
+                status="error",
+                dry_run=False,
+                detail="Live operation refused: configure SPLUNK_URL or SPLUNK_HOST",
+            )
         splunk_url = (os.getenv("SPLUNK_URL") or os.getenv("SPLUNK_HOST") or "https://localhost:8089").rstrip("/")
         if not splunk_url.startswith(("http://", "https://")):
             splunk_url = f"https://{splunk_url}"
@@ -1160,11 +1202,13 @@ class QueryDeployer:
             reason = "dry_run mode" if dry_run else "missing SPLUNK_TOKEN or SPLUNK_PASSWORD credentials"
             return UndeploymentResult(
                 target=payload.target,
-                status="dry_run",
+                status="dry_run" if dry_run else "error",
                 remote_id=search_name,
-                detail=f"Validated Splunk Saved Search undeploy contract ({reason})",
+                detail=f"Validated Splunk Saved Search undeploy contract ({reason})"
+                if dry_run
+                else f"Live operation refused: {reason}",
                 request_summary=req_summary,
-                dry_run=True,
+                dry_run=dry_run,
             )
 
         verify_ssl = os.getenv("SPLUNK_VERIFY_SSL", "true").lower() in ("true", "1", "yes")
@@ -1191,6 +1235,13 @@ class QueryDeployer:
 
     def _sync_splunk(self, payload: DeploymentPayload, dry_run: bool) -> SyncResult:
         """Verify synchronization and drift against Splunk REST API."""
+        if not dry_run and not (os.getenv("SPLUNK_URL") or os.getenv("SPLUNK_HOST")):
+            return SyncResult(
+                target=payload.target,
+                status="error",
+                dry_run=False,
+                detail="Live operation refused: configure SPLUNK_URL or SPLUNK_HOST",
+            )
         splunk_url = (os.getenv("SPLUNK_URL") or os.getenv("SPLUNK_HOST") or "https://localhost:8089").rstrip("/")
         if not splunk_url.startswith(("http://", "https://")):
             splunk_url = f"https://{splunk_url}"
@@ -1226,12 +1277,14 @@ class QueryDeployer:
             reason = "dry_run mode" if dry_run else "missing SPLUNK_TOKEN or SPLUNK_PASSWORD credentials"
             return SyncResult(
                 target=payload.target,
-                status="dry_run",
+                status="dry_run" if dry_run else "error",
                 remote_id=search_name,
                 local_query=payload.query,
-                detail=f"Validated Splunk sync check contract ({reason})",
+                detail=f"Validated Splunk sync check contract ({reason})"
+                if dry_run
+                else f"Live operation refused: {reason}",
                 request_summary=req_summary,
-                dry_run=True,
+                dry_run=dry_run,
             )
 
         verify_ssl = os.getenv("SPLUNK_VERIFY_SSL", "true").lower() in ("true", "1", "yes")
@@ -1310,11 +1363,13 @@ class QueryDeployer:
             reason = "dry_run mode" if dry_run else "missing ELASTIC_API_KEY credentials"
             return UndeploymentResult(
                 target=payload.target,
-                status="dry_run",
+                status="dry_run" if dry_run else "error",
                 remote_id=rule_id,
-                detail=f"Validated Elastic Detection Engine Rule undeploy contract ({reason})",
+                detail=f"Validated Elastic Detection Engine Rule undeploy contract ({reason})"
+                if dry_run
+                else f"Live operation refused: {reason}",
                 request_summary=req_summary,
-                dry_run=True,
+                dry_run=dry_run,
             )
 
         with httpx.Client(timeout=self.timeout_sec) as client:
@@ -1351,12 +1406,14 @@ class QueryDeployer:
             reason = "dry_run mode" if dry_run else "missing ELASTIC_API_KEY credentials"
             return SyncResult(
                 target=payload.target,
-                status="dry_run",
+                status="dry_run" if dry_run else "error",
                 remote_id=rule_id,
                 local_query=payload.query,
-                detail=f"Validated Elastic sync check contract ({reason})",
+                detail=f"Validated Elastic sync check contract ({reason})"
+                if dry_run
+                else f"Live operation refused: {reason}",
                 request_summary=req_summary,
-                dry_run=True,
+                dry_run=dry_run,
             )
 
         with httpx.Client(timeout=self.timeout_sec) as client:

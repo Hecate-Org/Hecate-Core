@@ -69,3 +69,23 @@ def test_a_credential_in_the_hunt_blocks_even_without_rules() -> None:
 def test_a_rule_fenced_in_the_hunt_is_checked_when_no_files_are_passed() -> None:
     report = evaluate_hunt(f"## Rule\n```yaml\n{_AUTH}```")
     assert any(item.check == "auth_claim" for item in report.blocking())
+
+
+def test_a_rule_with_rejected_review_verdict_blocks() -> None:
+    rejected_rule = """
+title: Contradicted HTTP2 rule
+description: attempts to detect network traffic despite guidance saying no signature exists
+logsource:
+  category: webserver
+detection:
+  selection:
+    cs-method: GET
+  condition: selection
+hecate_review:
+  verdict: reject
+  unverified_contradiction: The rule attempts to detect exploitation through network signatures
+"""
+    report = evaluate_hunt("Some hunt text", [("contradicted_rule.yml", rejected_rule)])
+    assert report.verdict == "block"
+    blocking_checks = [item.check for item in report.blocking()]
+    assert "rule_review_rejected" in blocking_checks
