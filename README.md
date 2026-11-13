@@ -99,7 +99,7 @@ python -m pytest tests/ -q
 python scripts/sync_docs.py --check
 ```
 
-Tests block operator dotenv files and unmocked network traffic. Explicit external
+Unit test suites run offline with isolated operator environments. Explicit external
 checks use `-m network`. Mock transports remain available for unit tests.
 
 - [Onboarding](docs/ONBOARDING.md)

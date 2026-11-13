@@ -103,74 +103,30 @@ Hecate is designed to be forked and customized for your organization. This secti
 
 ```bash
 # Fork and clone your repository
-git clone https://github.com/YOUR-ORG/hecate-agent
-cd hecate-agent
+git clone https://github.com/YOUR-ORG/Hecate-Core.git
+cd Hecate-Core
 
 # Install with development dependencies
 pip install -e ".[dev]"
 
-# Set up pre-commit hooks (recommended)
-pre-commit install
-
 # Run tests
 pytest tests/ -v
 
+# Run linting and formatting checks
+ruff check .
+ruff format --check .
+
 # Run type checking
-mypy hecate_agent --ignore-missing-imports
-
-# Run linting
-flake8 hecate_agent
-black hecate_agent --check
-isort hecate_agent --check-only
-```
-
-### Pre-commit Hooks (Optional)
-
-Pre-commit hooks help maintain code quality as you customize Hecate for your organization. Once installed, they run automatically on every commit and check:
-
-- **Code formatting** (black, isort)
-- **Linting** (flake8)
-- **Security** (bandit)
-- **Type checking** (mypy)
-- **File hygiene** (trailing whitespace, end-of-file fixes, etc.)
-
-**Installing Pre-commit Hooks**:
-
-```bash
-# Install pre-commit (included in dev dependencies)
-pip install -e ".[dev]"
-
-# Set up the git hook
-pre-commit install
-
-# Run manually on all files (optional)
-pre-commit run --all-files
-```
-
-**Running Individual Tools**:
-
-```bash
-# Format code
-black hecate_agent
-isort hecate_agent
-
-# Check formatting without changes
-black hecate_agent --check
-isort hecate_agent --check-only
-
-# Lint code
-flake8 hecate_agent
-
-# Check security issues
-bandit -r hecate_agent -c pyproject.toml
-
-# Type check
 mypy hecate_agent --ignore-missing-imports
 ```
 
 ### Code Quality Standards
 
 When customizing Hecate for your team:
+
+- **Linting & Formatting**: Ruff is the standard linter and formatter (`ruff check .`, `ruff format .`).
+- **Type Checking**: Mypy enforces type hints (`mypy hecate_agent --ignore-missing-imports`).
+- **Tests**: Pytest runs unit and integration tests (`pytest tests/ -v`).
 
 **Type Hints**: Maintain type annotations for better IDE support and catch errors early:
 
@@ -213,36 +169,20 @@ Tests use Click's `CliRunner` to test actual CLI commands rather than mocks. See
 - **Hunt files** - Use LOCK pattern consistently across all hunts
 - **Custom features** - Document any custom commands or extensions you build
 
-**Security**: Run bandit to check for security issues in custom code:
-
-```bash
-# Check all Python files
-bandit -r hecate_agent -c pyproject.toml
-
-# Check specific file
-bandit hecate_agent/commands/hunt.py
-```
-
 ### Testing Your Changes
 
-Before committing significant customizations:
+Before committing customizations:
 
 ```bash
-# 1. Run all tests
+# 1. Run tests
 pytest tests/ -v
 
 # 2. Check types
 mypy hecate_agent --ignore-missing-imports
 
-# 3. Format code
-black hecate_agent
-isort hecate_agent
-
-# 4. Check security
-bandit -r hecate_agent -c pyproject.toml
-
-# 5. Or run pre-commit on everything
-pre-commit run --all-files
+# 3. Lint and format code
+ruff check .
+ruff format --check .
 ```
 
 ### Customization Examples
@@ -327,8 +267,8 @@ python3 --version
 # If not installed, get it from homebrew
 brew install python3
 
-# Install Hecate
-pip3 install hecate-agent
+# Install Hecate from your local clone
+pip3 install -e /path/to/Hecate-Core
 
 # Add to PATH if needed (check installation output)
 export PATH="$HOME/Library/Python/3.x/bin:$PATH"
@@ -343,8 +283,8 @@ Add the PATH export to your `~/.zshrc` or `~/.bash_profile` to make it permanent
 sudo apt update
 sudo apt install python3 python3-pip python3-venv
 
-# Install Hecate
-pip3 install hecate-agent
+# Install Hecate from your local clone
+pip3 install -e /path/to/Hecate-Core
 
 # Add to PATH if needed
 export PATH="$HOME/.local/bin:$PATH"
