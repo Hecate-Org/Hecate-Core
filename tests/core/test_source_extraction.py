@@ -82,6 +82,7 @@ def test_cache_invalidation(tmp_path, provider, monkeypatch, change):
 
 
 def test_source_is_refetched_before_cache_lookup(tmp_path, provider, monkeypatch):
+    monkeypatch.setattr(se, "assert_safe_fetch_url", lambda u: u)
     fetch = Mock(side_effect=[PAGE, PAGE, PAGE + " Updated."])
     monkeypatch.setattr(se, "fetch_page_text", fetch)
     for _ in range(3):

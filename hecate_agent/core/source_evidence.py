@@ -20,9 +20,10 @@ import ipaddress
 import json
 import logging
 import re
+import socket
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
@@ -146,6 +147,10 @@ _DISALLOWED_PATHS = {
 }
 
 
+#: Cap redirect hops so a malicious Location chain cannot loop forever.
+MAX_FETCH_REDIRECTS = 5
+
+
 def is_safe_report_url(url: str) -> bool:
     """True if ``url`` looks like a public advisory/article and not adversary infra or a payload drop."""
     if not url or not isinstance(url, str):
@@ -182,6 +187,70 @@ def is_safe_report_url(url: str) -> bool:
         if path.endswith(bad_path) or bad_path in path:
             return False
     return True
+
+
+def _hostname_resolves_publicly(host: str) -> bool:
+    """True when every resolved address for ``host`` is globally routable (blocks SSRF to LAN/metadata)."""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return False
+    if not infos:
+        return False
+    for info in infos:
+        try:
+            addr = ipaddress.ip_address(info[4][0])
+        except (ValueError, IndexError, TypeError):
+            return False
+        if not addr.is_global:
+            return False
+    return True
+
+
+def assert_safe_fetch_url(url: str) -> str:
+    """Return a normalized public report URL or raise ``ValueError`` if fetching it would be unsafe.
+
+    Checks scheme/host/path heuristics and that DNS resolution does not point at
+    private, loopback, link-local, or otherwise non-global addresses.
+    """
+    cleaned = (url or "").strip()
+    if not is_safe_report_url(cleaned):
+        raise ValueError(f"refusing to fetch unsafe report URL: {cleaned!r}")
+    host = urlsplit(cleaned).hostname
+    if not host or not _hostname_resolves_publicly(host):
+        raise ValueError(f"refusing to fetch URL with non-public DNS resolution: {cleaned!r}")
+    return cleaned
+
+
+def _safe_get_following_redirects(
+    url: str,
+    *,
+    timeout: float,
+    headers: Dict[str, str],
+) -> httpx.Response:
+    """GET ``url`` while re-validating every redirect target before following it."""
+    from hecate_agent.core.http_pool import pooled_get
+
+    current = assert_safe_fetch_url(url)
+    response: Optional[httpx.Response] = None
+    for _ in range(MAX_FETCH_REDIRECTS + 1):
+        response = pooled_get(
+            current,
+            pool_name="source_evidence",
+            timeout=timeout,
+            headers=headers,
+            follow_redirects=False,
+        )
+        if response.is_redirect:
+            location = response.headers.get("location")
+            if not location:
+                response.raise_for_status()
+                return response
+            current = assert_safe_fetch_url(urljoin(str(response.url), location))
+            continue
+        response.raise_for_status()
+        return response
+    raise ValueError(f"too many redirects while fetching report URL (limit {MAX_FETCH_REDIRECTS})")
 
 
 INDICATOR_KINDS = {
@@ -372,12 +441,17 @@ def github_readme_text(url: str, timeout: float = 20.0) -> str:
 
 
 def fetch_page_text(url: str, timeout: float = 20.0) -> str:
-    """Visible text of a report page, or raise on any failure."""
+    """Visible text of a report page, or raise on any failure.
+
+    Refuses private/non-public targets and re-validates every redirect hop.
+    Does not shell out to ``curl`` (which previously followed redirects unchecked).
+    """
     import os
-    import subprocess
     from bs4 import BeautifulSoup
 
-    readme = github_readme_text(url, timeout)
+    safe_url = assert_safe_fetch_url(url)
+
+    readme = github_readme_text(safe_url, timeout)
     if readme:
         return readme[:MAX_PAGE_CHARS]
 
@@ -389,7 +463,7 @@ def fetch_page_text(url: str, timeout: float = 20.0) -> str:
             r = pooled_post(
                 "https://api.tavily.com/extract",
                 pool_name="source_evidence",
-                json={"urls": [url], "api_key": tavily_key},
+                json={"urls": [safe_url], "api_key": tavily_key},
                 timeout=min(timeout, 15.0),
             )
             if r.status_code == 200:
@@ -415,31 +489,8 @@ def fetch_page_text(url: str, timeout: float = 20.0) -> str:
         "Sec-Fetch-User": "?1",
         "Upgrade-Insecure-Requests": "1",
     }
-    try:
-        from hecate_agent.core.http_pool import pooled_get
-
-        response = pooled_get(
-            url,
-            pool_name="source_evidence",
-            timeout=timeout,
-            headers=headers,
-            follow_redirects=True,
-        )
-        response.raise_for_status()
-        html = response.text
-    except Exception as exc:
-        try:
-            res = subprocess.run(
-                ["curl", "-sL", "-m", str(int(timeout)), url],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            html = res.stdout
-            if not html.strip():
-                raise exc
-        except Exception:
-            raise exc
+    response = _safe_get_following_redirects(safe_url, timeout=timeout, headers=headers)
+    html = response.text
 
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
@@ -1265,7 +1316,11 @@ def extract_source_evidence(
     """
     evidence = SourceEvidence(url=url)
     try:
-        text = page_text if page_text is not None else fetch_page_text(url)
+        if page_text is None:
+            assert_safe_fetch_url(url)
+            text = fetch_page_text(url)
+        else:
+            text = page_text
     except (httpx.HTTPError, ValueError) as exc:
         evidence.error = f"fetch failed: {exc}"
         return evidence

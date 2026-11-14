@@ -10,6 +10,7 @@ from hecate_agent.core.emulation_runner import (
     BwrapBackend,
     EmulationRunner,
     MockBackend,
+    SimulationBackend,
     SubprocessBackend,
 )
 
@@ -82,6 +83,20 @@ def test_bwrap_sandbox_execution_and_isolation() -> None:
     # Verify filesystem isolation: file written inside sandbox MUST NOT exist on host!
     assert not Path(test_marker).exists(), "Sandbox isolation violated: file leaked to host filesystem"
 
+    # /home is an empty tmpfs — the real host username must not appear.
+    host_user = Path.home().name
+    home_list = runner.run_command("ls -A /home 2>/dev/null; echo HOME_OK")
+    assert home_list.success is True
+    assert "HOME_OK" in home_list.stdout
+    assert host_user not in home_list.stdout
+
+    # Network must be disabled inside the sandbox.
+    net = runner.run_command(
+        "python3 -c 'import socket; socket.create_connection((\"1.1.1.1\", 80), 1)' "
+        ">/dev/null 2>&1 || echo net_blocked"
+    )
+    assert "net_blocked" in net.stdout
+
     # Verify telemetry harvesting
     proc_events = [e for e in result.events if e.get("category") == "process_creation"]
     file_events = [e for e in result.events if e.get("category") == "file_event"]
@@ -91,11 +106,34 @@ def test_bwrap_sandbox_execution_and_isolation() -> None:
     assert any(test_marker in e.get("TargetFilename", "") for e in file_events)
 
 
-def test_subprocess_backend_fallback() -> None:
-    runner = EmulationRunner(backend=SubprocessBackend())
+def test_subprocess_backend_disabled_by_default() -> None:
+    backend = SubprocessBackend()
+    assert backend.is_available() is False
+    with pytest.raises(RuntimeError, match="Unsandboxed"):
+        backend.run("echo should_not_run")
+
+
+def test_subprocess_backend_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HECATE_ALLOW_UNSANDBOXED_EMULATION", "1")
+    runner = EmulationRunner(backend=SubprocessBackend(allow_unsandboxed=True))
     result = runner.run_command("echo 'subprocess_fallback'")
     assert result.success is True
     assert "subprocess_fallback" in result.stdout
+
+
+def test_auto_backend_never_selects_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(BwrapBackend, "is_available", lambda self: False)
+    from hecate_agent.core import emulation_runner as er
+
+    monkeypatch.setattr(er.DockerBackend, "is_available", lambda self: False)
+    runner = EmulationRunner(backend=None)
+    assert isinstance(runner.backend, SimulationBackend)
+
+
+def test_requested_subprocess_without_opt_in_uses_simulation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("HECATE_ALLOW_UNSANDBOXED_EMULATION", raising=False)
+    runner = EmulationRunner(backend="subprocess")
+    assert isinstance(runner.backend, SimulationBackend)
 
 
 def test_emulation_runner_run_atomic_test() -> None:
@@ -128,12 +166,12 @@ def test_emulation_runner_run_technique() -> None:
 
 
 @pytest.mark.skipif(
-    shutil.which("sh") is None or not _strace_can_trace(),
-    reason="sh and working ptrace support are required for telemetry harvesting",
+    shutil.which("bwrap") is None or not _strace_can_trace(),
+    reason="bwrap and working ptrace support are required for telemetry harvesting",
 )
 def test_closed_loop_detonation_and_detection_self_evaluation() -> None:
     """Full closed-loop evaluation: command execution -> harvested telemetry -> Sigma rule evaluation."""
-    runner = EmulationRunner(backend="bwrap" if BwrapBackend().is_available() else "subprocess")
+    runner = EmulationRunner(backend="bwrap")
 
     cmd = "sh -c 'echo detonation_test > /tmp/art_signal.tmp && cat /tmp/art_signal.tmp'"
     result = runner.run_command(cmd)

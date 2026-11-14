@@ -516,3 +516,64 @@ def test_reference_urls_and_domains_are_excluded_from_indicators() -> None:
     assert artifact is None
     assert "reference/documentation URL" in problem
 
+
+def test_assert_safe_fetch_url_rejects_private_and_metadata_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert se.is_safe_report_url("http://127.0.0.1/report") is False
+    assert se.is_safe_report_url("http://169.254.169.254/latest/meta-data/") is False
+    assert se.is_safe_report_url("https://evil.local/advisory") is False
+
+    with pytest.raises(ValueError, match="unsafe report URL"):
+        se.assert_safe_fetch_url("http://127.0.0.1/report")
+
+    # Hostname looks public but DNS returns a link-local / private address.
+    monkeypatch.setattr(
+        se.socket,
+        "getaddrinfo",
+        lambda *a, **k: [(0, 0, 0, "", ("169.254.169.254", 0))],
+    )
+    with pytest.raises(ValueError, match="non-public DNS"):
+        se.assert_safe_fetch_url("https://evil.example/advisory")
+
+
+def test_fetch_page_text_blocks_redirect_to_private_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(se, "github_readme_text", lambda *a, **k: "")
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+
+    def guarded(url: str) -> str:
+        if "169.254" in url:
+            raise ValueError(f"refusing to fetch unsafe report URL: {url!r}")
+        return url
+
+    monkeypatch.setattr(se, "assert_safe_fetch_url", guarded)
+
+    calls: List[str] = []
+
+    def fake_get(url: str, **kwargs: Any) -> httpx.Response:
+        calls.append(url)
+        if url.endswith("/start"):
+            return httpx.Response(
+                302,
+                headers={"location": "http://169.254.169.254/"},
+                request=httpx.Request("GET", url),
+            )
+        return httpx.Response(200, text="should not fetch", request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    with pytest.raises(ValueError, match="unsafe report URL"):
+        se.fetch_page_text("https://reports.example/start")
+    assert calls == ["https://reports.example/start"]
+
+
+def test_extract_source_evidence_refuses_unsafe_url_before_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+    called = {"fetch": False}
+
+    def boom(_url: str) -> str:
+        called["fetch"] = True
+        raise AssertionError("fetch_page_text must not run for unsafe URLs")
+
+    monkeypatch.setattr(se, "fetch_page_text", boom)
+    ev = se.extract_source_evidence("http://127.0.0.1/secret")
+    assert called["fetch"] is False
+    assert ev.error and "unsafe" in ev.error
+
