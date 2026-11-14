@@ -14,7 +14,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
 from hecate_agent.agents.base import AgentResult, LLMAgent
 from hecate_agent.core.telemetry_examples import render_examples
@@ -225,8 +225,9 @@ def _normalize_summary(summary: Any) -> str:
         return summary
     if isinstance(summary, dict):
         for key in ("summary", "text", "description", "overview"):
-            if key in summary and isinstance(summary[key], str):
-                return summary[key]
+            value = summary.get(key)
+            if isinstance(value, str):
+                return value
         return " ".join(str(v) for v in summary.values() if v)
     if isinstance(summary, (list, tuple)):
         return " ".join(str(item) for item in summary if item)
@@ -1440,8 +1441,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
         slightly noisier warning log.
         """
         for finding in synthesis.key_findings:
-            if not isinstance(finding, str):
-                finding = str(finding)
+            finding = str(finding)
             match = _HYPOTHESIS_PREFIX_RE.match(finding)
             if match:
                 extracted = finding[match.end() :].strip()
@@ -1466,7 +1466,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
         kept.
         """
         corpus_parts = [topic]
-        for source in skill.sources or []:
+        for source in cast(List[Any], skill.sources or []):
             if isinstance(source, dict):
                 corpus_parts.extend(str(source.get(key, "")) for key in ("title", "url", "snippet"))
             else:
@@ -1475,8 +1475,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
 
         kept: List[str] = []
         for finding in skill.key_findings:
-            if not isinstance(finding, str):
-                finding = str(finding)
+            finding = str(finding)
             unsupported = sorted({c.upper() for c in _CVE_RE.findall(finding)} - corpus_cves)
             if unsupported:
                 logger.warning(
@@ -1492,7 +1491,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
         skill.summary = self._redact_unsupported_cves(skill.summary, corpus_cves, skill.skill_name)
 
     @staticmethod
-    def _redact_unsupported_cves(summary: str, corpus_cves: Set[str], skill_name: str) -> str:
+    def _redact_unsupported_cves(summary: Any, corpus_cves: Set[str], skill_name: str) -> str:
         """Drop the sentences of a summary that cite an unsourced CVE.
 
         Findings are discrete claims, so an unsupported one is removed whole.
@@ -1505,14 +1504,13 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
         the surrounding analysis stays, and a marker records that something
         was removed so the gap is visible rather than silent.
         """
-        if not isinstance(summary, str):
-            summary = _normalize_summary(summary)
-        if not summary.strip():
-            return summary
+        normalized = _normalize_summary(summary)
+        if not normalized.strip():
+            return normalized
 
         # Split on sentence-ending punctuation followed by whitespace, keeping
         # the punctuation with its sentence.
-        sentences = re.split(r"(?<=[.!?])\s+", summary)
+        sentences = re.split(r"(?<=[.!?])\s+", normalized)
         kept, dropped = [], []
         for sentence in sentences:
             unsupported = sorted({c.upper() for c in _CVE_RE.findall(sentence)} - corpus_cves)
@@ -1522,7 +1520,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
             kept.append(sentence)
 
         if not dropped:
-            return summary
+            return normalized
 
         logger.warning(
             "Redacted %d sentence(s) from the %s summary citing unsupported %s.",
@@ -1590,8 +1588,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
         than only an exact "gap:" prefix."""
         gaps = []
         for finding in synthesis.key_findings:
-            if not isinstance(finding, str):
-                finding = str(finding)
+            finding = str(finding)
             match = _GAP_PREFIX_RE.match(finding)
             if match:
                 extracted = finding[match.end() :].strip()

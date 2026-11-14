@@ -1,6 +1,11 @@
 name: Tests
 
+permissions:
+  contents: read
+
 on:
+  workflow_call:
+  workflow_dispatch:
   push:
     branches: [ main, develop ]
   pull_request:
@@ -127,6 +132,9 @@ jobs:
     - name: Install dependencies
       run: |
         uv pip install --system -e ".[docs]"
+
+    - name: Check packaged documentation synchronization
+      run: python scripts/sync_docs.py --check
 
     - name: Check markdown links
       run: |
