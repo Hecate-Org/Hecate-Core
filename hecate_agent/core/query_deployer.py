@@ -156,6 +156,16 @@ class QueryDeployer:
         except ImportError:
             pass
 
+    def _http(self, *, verify: bool = True) -> httpx.Client:
+        """Reuse one client per deployer instance (keeps TLS warm; test-mock friendly)."""
+        cache: dict[bool, httpx.Client] = getattr(self, "_http_clients", {})
+        client = cache.get(verify)
+        if client is None or getattr(client, "is_closed", False):
+            client = httpx.Client(timeout=self.timeout_sec, verify=verify)
+            cache[verify] = client
+            self._http_clients = cache
+        return client
+
     def deploy(
         self,
         payload: DeploymentPayload,
@@ -403,17 +413,17 @@ class QueryDeployer:
                 dry_run=dry_run,
             )
 
-        with httpx.Client(timeout=self.timeout_sec) as client:
-            resp = client.put(endpoint, json=body, headers={"Authorization": f"Bearer {token}"})
-            resp.raise_for_status()
-            return DeploymentResult(
-                target=payload.target,
-                status="deployed",
-                remote_id=search_id,
-                detail=f"Successfully deployed Saved Search to Microsoft Sentinel ({resp.status_code})",
-                request_summary=req_summary,
-                dry_run=False,
-            )
+        client = self._http()
+        resp = client.put(endpoint, json=body, headers={"Authorization": f"Bearer {token}"})
+        resp.raise_for_status()
+        return DeploymentResult(
+            target=payload.target,
+            status="deployed",
+            remote_id=search_id,
+            detail=f"Successfully deployed Saved Search to Microsoft Sentinel ({resp.status_code})",
+            request_summary=req_summary,
+            dry_run=False,
+        )
 
     def _deploy_crowdstrike(self, payload: DeploymentPayload, dry_run: bool) -> DeploymentResult:
         """Deploy to CrowdStrike Falcon / LogScale Saved Queries API."""
@@ -450,19 +460,19 @@ class QueryDeployer:
                 dry_run=dry_run,
             )
 
-        with httpx.Client(timeout=self.timeout_sec) as client:
-            resp = client.post(endpoint, json=body, headers={"Authorization": f"Bearer {token}"})
-            resp.raise_for_status()
-            data = resp.json()
-            remote_id = data.get("id") or str(resp.status_code)
-            return DeploymentResult(
-                target=payload.target,
-                status="deployed",
-                remote_id=remote_id,
-                detail="Successfully deployed query to CrowdStrike Falcon LogScale",
-                request_summary=req_summary,
-                dry_run=False,
-            )
+        client = self._http()
+        resp = client.post(endpoint, json=body, headers={"Authorization": f"Bearer {token}"})
+        resp.raise_for_status()
+        data = resp.json()
+        remote_id = data.get("id") or str(resp.status_code)
+        return DeploymentResult(
+            target=payload.target,
+            status="deployed",
+            remote_id=remote_id,
+            detail="Successfully deployed query to CrowdStrike Falcon LogScale",
+            request_summary=req_summary,
+            dry_run=False,
+        )
 
     def _deploy_rapid7(self, payload: DeploymentPayload, dry_run: bool) -> DeploymentResult:
         """Deploy to Rapid7 InsightIDR Log Search Saved Queries API."""
@@ -499,19 +509,19 @@ class QueryDeployer:
                 dry_run=dry_run,
             )
 
-        with httpx.Client(timeout=self.timeout_sec) as client:
-            resp = client.post(endpoint, json=body, headers={"x-api-key": api_key})
-            resp.raise_for_status()
-            data = resp.json()
-            remote_id = data.get("saved_query", {}).get("id") or str(resp.status_code)
-            return DeploymentResult(
-                target=payload.target,
-                status="deployed",
-                remote_id=remote_id,
-                detail="Successfully deployed Saved Query to Rapid7 InsightIDR",
-                request_summary=req_summary,
-                dry_run=False,
-            )
+        client = self._http()
+        resp = client.post(endpoint, json=body, headers={"x-api-key": api_key})
+        resp.raise_for_status()
+        data = resp.json()
+        remote_id = data.get("saved_query", {}).get("id") or str(resp.status_code)
+        return DeploymentResult(
+            target=payload.target,
+            status="deployed",
+            remote_id=remote_id,
+            detail="Successfully deployed Saved Query to Rapid7 InsightIDR",
+            request_summary=req_summary,
+            dry_run=False,
+        )
 
     def _deploy_sentinelone(self, payload: DeploymentPayload, dry_run: bool) -> DeploymentResult:
         """Deploy to SentinelOne Deep Visibility Saved Queries API."""
@@ -549,19 +559,19 @@ class QueryDeployer:
                 dry_run=dry_run,
             )
 
-        with httpx.Client(timeout=self.timeout_sec) as client:
-            resp = client.post(endpoint, json=body, headers={"Authorization": f"ApiToken {api_token}"})
-            resp.raise_for_status()
-            data = resp.json()
-            remote_id = data.get("data", {}).get("id") or str(resp.status_code)
-            return DeploymentResult(
-                target=payload.target,
-                status="deployed",
-                remote_id=remote_id,
-                detail="Successfully deployed Saved Query to SentinelOne Deep Visibility",
-                request_summary=req_summary,
-                dry_run=False,
-            )
+        client = self._http()
+        resp = client.post(endpoint, json=body, headers={"Authorization": f"ApiToken {api_token}"})
+        resp.raise_for_status()
+        data = resp.json()
+        remote_id = data.get("data", {}).get("id") or str(resp.status_code)
+        return DeploymentResult(
+            target=payload.target,
+            status="deployed",
+            remote_id=remote_id,
+            detail="Successfully deployed Saved Query to SentinelOne Deep Visibility",
+            request_summary=req_summary,
+            dry_run=False,
+        )
 
     def _deploy_splunk(self, payload: DeploymentPayload, dry_run: bool) -> DeploymentResult:
         """Deploy to Splunk Enterprise / Cloud REST Saved Searches API."""
@@ -633,26 +643,26 @@ class QueryDeployer:
             )
 
         verify_ssl = os.getenv("SPLUNK_VERIFY_SSL", "true").lower() in ("true", "1", "yes")
-        with httpx.Client(timeout=self.timeout_sec, verify=verify_ssl) as client:
-            resp = client.post(endpoint, data=data, headers={"Authorization": auth_header})
-            if resp.status_code == 409:
-                # Saved search already exists — update it idempotently
-                update_url = f"{endpoint}/{quote_plus(search_name)}"
-                update_data = {
-                    "search": search_query,
-                    "description": f"Hecate Hunt {payload.hunt_id}: {payload.rule_title}",
-                    "output_mode": "json",
-                }
-                resp = client.post(update_url, data=update_data, headers={"Authorization": auth_header})
-            resp.raise_for_status()
-            return DeploymentResult(
-                target=payload.target,
-                status="deployed",
-                remote_id=search_name,
-                detail="Successfully deployed Saved Search to Splunk Enterprise/Cloud",
-                request_summary=req_summary,
-                dry_run=False,
-            )
+        client = self._http(verify=verify_ssl)
+        resp = client.post(endpoint, data=data, headers={"Authorization": auth_header})
+        if resp.status_code == 409:
+            # Saved search already exists — update it idempotently
+            update_url = f"{endpoint}/{quote_plus(search_name)}"
+            update_data = {
+                "search": search_query,
+                "description": f"Hecate Hunt {payload.hunt_id}: {payload.rule_title}",
+                "output_mode": "json",
+            }
+            resp = client.post(update_url, data=update_data, headers={"Authorization": auth_header})
+        resp.raise_for_status()
+        return DeploymentResult(
+            target=payload.target,
+            status="deployed",
+            remote_id=search_name,
+            detail="Successfully deployed Saved Search to Splunk Enterprise/Cloud",
+            request_summary=req_summary,
+            dry_run=False,
+        )
 
     def _deploy_elastic(self, payload: DeploymentPayload, dry_run: bool) -> DeploymentResult:
         """Deploy to Elastic Security Detection Engine Rules API."""
@@ -699,23 +709,23 @@ class QueryDeployer:
                 dry_run=dry_run,
             )
 
-        with httpx.Client(timeout=self.timeout_sec) as client:
-            resp = client.post(
-                endpoint,
-                json=body,
-                headers={"Authorization": f"ApiKey {api_key}", "kbn-xsrf": "true"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            remote_id = data.get("id") or rule_id
-            return DeploymentResult(
-                target=payload.target,
-                status="deployed",
-                remote_id=remote_id,
-                detail="Successfully deployed Detection Rule to Elastic Security",
-                request_summary=req_summary,
-                dry_run=False,
-            )
+        client = self._http()
+        resp = client.post(
+            endpoint,
+            json=body,
+            headers={"Authorization": f"ApiKey {api_key}", "kbn-xsrf": "true"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        remote_id = data.get("id") or rule_id
+        return DeploymentResult(
+            target=payload.target,
+            status="deployed",
+            remote_id=remote_id,
+            detail="Successfully deployed Detection Rule to Elastic Security",
+            request_summary=req_summary,
+            dry_run=False,
+        )
 
     def _undeploy_sentinel(self, payload: UndeploymentPayload, dry_run: bool) -> UndeploymentResult:
         """Teardown/delete Saved Search from Microsoft Sentinel."""
@@ -750,26 +760,26 @@ class QueryDeployer:
                 dry_run=dry_run,
             )
 
-        with httpx.Client(timeout=self.timeout_sec) as client:
-            resp = client.delete(endpoint, headers={"Authorization": f"Bearer {token}"})
-            if resp.status_code == 404:
-                return UndeploymentResult(
-                    target=payload.target,
-                    status="not_found",
-                    remote_id=search_id,
-                    detail=f"Saved Search '{search_id}' not found in Microsoft Sentinel",
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
-            resp.raise_for_status()
+        client = self._http()
+        resp = client.delete(endpoint, headers={"Authorization": f"Bearer {token}"})
+        if resp.status_code == 404:
             return UndeploymentResult(
                 target=payload.target,
-                status="undeployed",
+                status="not_found",
                 remote_id=search_id,
-                detail=f"Successfully deleted Saved Search '{search_id}' from Microsoft Sentinel",
+                detail=f"Saved Search '{search_id}' not found in Microsoft Sentinel",
                 request_summary=req_summary,
                 dry_run=False,
             )
+        resp.raise_for_status()
+        return UndeploymentResult(
+            target=payload.target,
+            status="undeployed",
+            remote_id=search_id,
+            detail=f"Successfully deleted Saved Search '{search_id}' from Microsoft Sentinel",
+            request_summary=req_summary,
+            dry_run=False,
+        )
 
     def _sync_sentinel(self, payload: DeploymentPayload, dry_run: bool) -> SyncResult:
         """Verify synchronization and drift against Microsoft Sentinel."""
@@ -800,43 +810,43 @@ class QueryDeployer:
                 dry_run=dry_run,
             )
 
-        with httpx.Client(timeout=self.timeout_sec) as client:
-            resp = client.get(endpoint, headers={"Authorization": f"Bearer {token}"})
-            if resp.status_code == 404:
-                return SyncResult(
-                    target=payload.target,
-                    status="missing_remote",
-                    remote_id=search_id,
-                    local_query=payload.query,
-                    detail=f"Saved Search '{search_id}' does not exist in Microsoft Sentinel",
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
-            resp.raise_for_status()
-            remote_query = resp.json().get("properties", {}).get("query", "").strip()
-            if remote_query == payload.query.strip():
-                return SyncResult(
-                    target=payload.target,
-                    status="in_sync",
-                    remote_id=search_id,
-                    local_query=payload.query,
-                    remote_query=remote_query,
-                    detail=f"Remote query '{search_id}' is in sync with local query",
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
-            else:
-                return SyncResult(
-                    target=payload.target,
-                    status="drift_detected",
-                    remote_id=search_id,
-                    local_query=payload.query,
-                    remote_query=remote_query,
-                    detail=f"Query drift detected for '{search_id}'",
-                    drift_diff=f"- Local:  {payload.query.strip()}\n+ Remote: {remote_query}",
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
+        client = self._http()
+        resp = client.get(endpoint, headers={"Authorization": f"Bearer {token}"})
+        if resp.status_code == 404:
+            return SyncResult(
+                target=payload.target,
+                status="missing_remote",
+                remote_id=search_id,
+                local_query=payload.query,
+                detail=f"Saved Search '{search_id}' does not exist in Microsoft Sentinel",
+                request_summary=req_summary,
+                dry_run=False,
+            )
+        resp.raise_for_status()
+        remote_query = resp.json().get("properties", {}).get("query", "").strip()
+        if remote_query == payload.query.strip():
+            return SyncResult(
+                target=payload.target,
+                status="in_sync",
+                remote_id=search_id,
+                local_query=payload.query,
+                remote_query=remote_query,
+                detail=f"Remote query '{search_id}' is in sync with local query",
+                request_summary=req_summary,
+                dry_run=False,
+            )
+        else:
+            return SyncResult(
+                target=payload.target,
+                status="drift_detected",
+                remote_id=search_id,
+                local_query=payload.query,
+                remote_query=remote_query,
+                detail=f"Query drift detected for '{search_id}'",
+                drift_diff=f"- Local:  {payload.query.strip()}\n+ Remote: {remote_query}",
+                request_summary=req_summary,
+                dry_run=False,
+            )
 
     def _undeploy_crowdstrike(self, payload: UndeploymentPayload, dry_run: bool) -> UndeploymentResult:
         """Teardown/delete saved query from CrowdStrike Falcon LogScale."""
@@ -863,26 +873,26 @@ class QueryDeployer:
                 dry_run=dry_run,
             )
 
-        with httpx.Client(timeout=self.timeout_sec) as client:
-            resp = client.delete(endpoint, headers={"Authorization": f"Bearer {token}"})
-            if resp.status_code == 404:
-                return UndeploymentResult(
-                    target=payload.target,
-                    status="not_found",
-                    remote_id=remote_id,
-                    detail=f"LogScale query '{remote_id}' not found",
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
-            resp.raise_for_status()
+        client = self._http()
+        resp = client.delete(endpoint, headers={"Authorization": f"Bearer {token}"})
+        if resp.status_code == 404:
             return UndeploymentResult(
                 target=payload.target,
-                status="undeployed",
+                status="not_found",
                 remote_id=remote_id,
-                detail=f"Successfully deleted query '{remote_id}' from Falcon LogScale",
+                detail=f"LogScale query '{remote_id}' not found",
                 request_summary=req_summary,
                 dry_run=False,
             )
+        resp.raise_for_status()
+        return UndeploymentResult(
+            target=payload.target,
+            status="undeployed",
+            remote_id=remote_id,
+            detail=f"Successfully deleted query '{remote_id}' from Falcon LogScale",
+            request_summary=req_summary,
+            dry_run=False,
+        )
 
     def _sync_crowdstrike(self, payload: DeploymentPayload, dry_run: bool) -> SyncResult:
         """Verify synchronization and drift against CrowdStrike Falcon LogScale."""
@@ -908,43 +918,43 @@ class QueryDeployer:
                 dry_run=dry_run,
             )
 
-        with httpx.Client(timeout=self.timeout_sec) as client:
-            resp = client.get(endpoint, headers={"Authorization": f"Bearer {token}"})
-            if resp.status_code == 404:
-                return SyncResult(
-                    target=payload.target,
-                    status="missing_remote",
-                    remote_id=remote_id,
-                    local_query=payload.query,
-                    detail=f"Falcon LogScale query '{remote_id}' does not exist",
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
-            resp.raise_for_status()
-            remote_query = resp.json().get("queryString", "").strip()
-            if remote_query == payload.query.strip():
-                return SyncResult(
-                    target=payload.target,
-                    status="in_sync",
-                    remote_id=remote_id,
-                    local_query=payload.query,
-                    remote_query=remote_query,
-                    detail=f"Remote query '{remote_id}' is in sync with local query",
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
-            else:
-                return SyncResult(
-                    target=payload.target,
-                    status="drift_detected",
-                    remote_id=remote_id,
-                    local_query=payload.query,
-                    remote_query=remote_query,
-                    detail=f"Query drift detected for '{remote_id}'",
-                    drift_diff=f"- Local:  {payload.query.strip()}\n+ Remote: {remote_query}",
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
+        client = self._http()
+        resp = client.get(endpoint, headers={"Authorization": f"Bearer {token}"})
+        if resp.status_code == 404:
+            return SyncResult(
+                target=payload.target,
+                status="missing_remote",
+                remote_id=remote_id,
+                local_query=payload.query,
+                detail=f"Falcon LogScale query '{remote_id}' does not exist",
+                request_summary=req_summary,
+                dry_run=False,
+            )
+        resp.raise_for_status()
+        remote_query = resp.json().get("queryString", "").strip()
+        if remote_query == payload.query.strip():
+            return SyncResult(
+                target=payload.target,
+                status="in_sync",
+                remote_id=remote_id,
+                local_query=payload.query,
+                remote_query=remote_query,
+                detail=f"Remote query '{remote_id}' is in sync with local query",
+                request_summary=req_summary,
+                dry_run=False,
+            )
+        else:
+            return SyncResult(
+                target=payload.target,
+                status="drift_detected",
+                remote_id=remote_id,
+                local_query=payload.query,
+                remote_query=remote_query,
+                detail=f"Query drift detected for '{remote_id}'",
+                drift_diff=f"- Local:  {payload.query.strip()}\n+ Remote: {remote_query}",
+                request_summary=req_summary,
+                dry_run=False,
+            )
 
     def _undeploy_rapid7(self, payload: UndeploymentPayload, dry_run: bool) -> UndeploymentResult:
         """Teardown/delete saved query from Rapid7 InsightIDR."""
@@ -970,26 +980,26 @@ class QueryDeployer:
                 dry_run=dry_run,
             )
 
-        with httpx.Client(timeout=self.timeout_sec) as client:
-            resp = client.delete(endpoint, headers={"x-api-key": api_key})
-            if resp.status_code == 404:
-                return UndeploymentResult(
-                    target=payload.target,
-                    status="not_found",
-                    remote_id=remote_id,
-                    detail=f"Saved query '{remote_id}' not found in Rapid7 InsightIDR",
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
-            resp.raise_for_status()
+        client = self._http()
+        resp = client.delete(endpoint, headers={"x-api-key": api_key})
+        if resp.status_code == 404:
             return UndeploymentResult(
                 target=payload.target,
-                status="undeployed",
+                status="not_found",
                 remote_id=remote_id,
-                detail=f"Successfully deleted query '{remote_id}' from Rapid7 InsightIDR",
+                detail=f"Saved query '{remote_id}' not found in Rapid7 InsightIDR",
                 request_summary=req_summary,
                 dry_run=False,
             )
+        resp.raise_for_status()
+        return UndeploymentResult(
+            target=payload.target,
+            status="undeployed",
+            remote_id=remote_id,
+            detail=f"Successfully deleted query '{remote_id}' from Rapid7 InsightIDR",
+            request_summary=req_summary,
+            dry_run=False,
+        )
 
     def _sync_rapid7(self, payload: DeploymentPayload, dry_run: bool) -> SyncResult:
         """Verify synchronization and drift against Rapid7 InsightIDR."""
@@ -1014,43 +1024,43 @@ class QueryDeployer:
                 dry_run=dry_run,
             )
 
-        with httpx.Client(timeout=self.timeout_sec) as client:
-            resp = client.get(endpoint, headers={"x-api-key": api_key})
-            if resp.status_code == 404:
-                return SyncResult(
-                    target=payload.target,
-                    status="missing_remote",
-                    remote_id=remote_id,
-                    local_query=payload.query,
-                    detail=f"Rapid7 saved query '{remote_id}' does not exist",
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
-            resp.raise_for_status()
-            remote_query = resp.json().get("saved_query", {}).get("leql", {}).get("statement", "").strip()
-            if remote_query == payload.query.strip():
-                return SyncResult(
-                    target=payload.target,
-                    status="in_sync",
-                    remote_id=remote_id,
-                    local_query=payload.query,
-                    remote_query=remote_query,
-                    detail=f"Remote query '{remote_id}' is in sync with local query",
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
-            else:
-                return SyncResult(
-                    target=payload.target,
-                    status="drift_detected",
-                    remote_id=remote_id,
-                    local_query=payload.query,
-                    remote_query=remote_query,
-                    detail=f"Query drift detected for '{remote_id}'",
-                    drift_diff=f"- Local:  {payload.query.strip()}\n+ Remote: {remote_query}",
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
+        client = self._http()
+        resp = client.get(endpoint, headers={"x-api-key": api_key})
+        if resp.status_code == 404:
+            return SyncResult(
+                target=payload.target,
+                status="missing_remote",
+                remote_id=remote_id,
+                local_query=payload.query,
+                detail=f"Rapid7 saved query '{remote_id}' does not exist",
+                request_summary=req_summary,
+                dry_run=False,
+            )
+        resp.raise_for_status()
+        remote_query = resp.json().get("saved_query", {}).get("leql", {}).get("statement", "").strip()
+        if remote_query == payload.query.strip():
+            return SyncResult(
+                target=payload.target,
+                status="in_sync",
+                remote_id=remote_id,
+                local_query=payload.query,
+                remote_query=remote_query,
+                detail=f"Remote query '{remote_id}' is in sync with local query",
+                request_summary=req_summary,
+                dry_run=False,
+            )
+        else:
+            return SyncResult(
+                target=payload.target,
+                status="drift_detected",
+                remote_id=remote_id,
+                local_query=payload.query,
+                remote_query=remote_query,
+                detail=f"Query drift detected for '{remote_id}'",
+                drift_diff=f"- Local:  {payload.query.strip()}\n+ Remote: {remote_query}",
+                request_summary=req_summary,
+                dry_run=False,
+            )
 
     def _undeploy_sentinelone(self, payload: UndeploymentPayload, dry_run: bool) -> UndeploymentResult:
         """Teardown/delete saved query from SentinelOne Deep Visibility."""
@@ -1076,26 +1086,26 @@ class QueryDeployer:
                 dry_run=dry_run,
             )
 
-        with httpx.Client(timeout=self.timeout_sec) as client:
-            resp = client.delete(endpoint, headers={"Authorization": f"ApiToken {api_token}"})
-            if resp.status_code == 404:
-                return UndeploymentResult(
-                    target=payload.target,
-                    status="not_found",
-                    remote_id=remote_id,
-                    detail=f"Saved query '{remote_id}' not found in SentinelOne",
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
-            resp.raise_for_status()
+        client = self._http()
+        resp = client.delete(endpoint, headers={"Authorization": f"ApiToken {api_token}"})
+        if resp.status_code == 404:
             return UndeploymentResult(
                 target=payload.target,
-                status="undeployed",
+                status="not_found",
                 remote_id=remote_id,
-                detail=f"Successfully deleted query '{remote_id}' from SentinelOne",
+                detail=f"Saved query '{remote_id}' not found in SentinelOne",
                 request_summary=req_summary,
                 dry_run=False,
             )
+        resp.raise_for_status()
+        return UndeploymentResult(
+            target=payload.target,
+            status="undeployed",
+            remote_id=remote_id,
+            detail=f"Successfully deleted query '{remote_id}' from SentinelOne",
+            request_summary=req_summary,
+            dry_run=False,
+        )
 
     def _sync_sentinelone(self, payload: DeploymentPayload, dry_run: bool) -> SyncResult:
         """Verify synchronization and drift against SentinelOne Deep Visibility."""
@@ -1120,43 +1130,43 @@ class QueryDeployer:
                 dry_run=dry_run,
             )
 
-        with httpx.Client(timeout=self.timeout_sec) as client:
-            resp = client.get(endpoint, headers={"Authorization": f"ApiToken {api_token}"})
-            if resp.status_code == 404:
-                return SyncResult(
-                    target=payload.target,
-                    status="missing_remote",
-                    remote_id=remote_id,
-                    local_query=payload.query,
-                    detail=f"SentinelOne saved query '{remote_id}' does not exist",
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
-            resp.raise_for_status()
-            remote_query = resp.json().get("data", {}).get("query", "").strip()
-            if remote_query == payload.query.strip():
-                return SyncResult(
-                    target=payload.target,
-                    status="in_sync",
-                    remote_id=remote_id,
-                    local_query=payload.query,
-                    remote_query=remote_query,
-                    detail=f"Remote query '{remote_id}' is in sync with local query",
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
-            else:
-                return SyncResult(
-                    target=payload.target,
-                    status="drift_detected",
-                    remote_id=remote_id,
-                    local_query=payload.query,
-                    remote_query=remote_query,
-                    detail=f"Query drift detected for '{remote_id}'",
-                    drift_diff=f"- Local:  {payload.query.strip()}\n+ Remote: {remote_query}",
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
+        client = self._http()
+        resp = client.get(endpoint, headers={"Authorization": f"ApiToken {api_token}"})
+        if resp.status_code == 404:
+            return SyncResult(
+                target=payload.target,
+                status="missing_remote",
+                remote_id=remote_id,
+                local_query=payload.query,
+                detail=f"SentinelOne saved query '{remote_id}' does not exist",
+                request_summary=req_summary,
+                dry_run=False,
+            )
+        resp.raise_for_status()
+        remote_query = resp.json().get("data", {}).get("query", "").strip()
+        if remote_query == payload.query.strip():
+            return SyncResult(
+                target=payload.target,
+                status="in_sync",
+                remote_id=remote_id,
+                local_query=payload.query,
+                remote_query=remote_query,
+                detail=f"Remote query '{remote_id}' is in sync with local query",
+                request_summary=req_summary,
+                dry_run=False,
+            )
+        else:
+            return SyncResult(
+                target=payload.target,
+                status="drift_detected",
+                remote_id=remote_id,
+                local_query=payload.query,
+                remote_query=remote_query,
+                detail=f"Query drift detected for '{remote_id}'",
+                drift_diff=f"- Local:  {payload.query.strip()}\n+ Remote: {remote_query}",
+                request_summary=req_summary,
+                dry_run=False,
+            )
 
     def _undeploy_splunk(self, payload: UndeploymentPayload, dry_run: bool) -> UndeploymentResult:
         """Teardown/delete Saved Search from Splunk REST API."""
@@ -1212,26 +1222,26 @@ class QueryDeployer:
             )
 
         verify_ssl = os.getenv("SPLUNK_VERIFY_SSL", "true").lower() in ("true", "1", "yes")
-        with httpx.Client(timeout=self.timeout_sec, verify=verify_ssl) as client:
-            resp = client.delete(endpoint, headers={"Authorization": auth_header})
-            if resp.status_code == 404:
-                return UndeploymentResult(
-                    target=payload.target,
-                    status="not_found",
-                    remote_id=search_name,
-                    detail=f"Saved Search '{search_name}' was not found in Splunk (already removed)",
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
-            resp.raise_for_status()
+        client = self._http(verify=verify_ssl)
+        resp = client.delete(endpoint, headers={"Authorization": auth_header})
+        if resp.status_code == 404:
             return UndeploymentResult(
                 target=payload.target,
-                status="undeployed",
+                status="not_found",
                 remote_id=search_name,
-                detail=f"Successfully deleted Saved Search '{search_name}' from Splunk",
+                detail=f"Saved Search '{search_name}' was not found in Splunk (already removed)",
                 request_summary=req_summary,
                 dry_run=False,
             )
+        resp.raise_for_status()
+        return UndeploymentResult(
+            target=payload.target,
+            status="undeployed",
+            remote_id=search_name,
+            detail=f"Successfully deleted Saved Search '{search_name}' from Splunk",
+            request_summary=req_summary,
+            dry_run=False,
+        )
 
     def _sync_splunk(self, payload: DeploymentPayload, dry_run: bool) -> SyncResult:
         """Verify synchronization and drift against Splunk REST API."""
@@ -1288,62 +1298,62 @@ class QueryDeployer:
             )
 
         verify_ssl = os.getenv("SPLUNK_VERIFY_SSL", "true").lower() in ("true", "1", "yes")
-        with httpx.Client(timeout=self.timeout_sec, verify=verify_ssl) as client:
-            resp = client.get(endpoint, headers={"Authorization": auth_header})
-            if resp.status_code == 404:
-                return SyncResult(
-                    target=payload.target,
-                    status="missing_remote",
-                    remote_id=search_name,
-                    local_query=payload.query,
-                    detail=f"Saved Search '{search_name}' does not exist in Splunk",
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
-            resp.raise_for_status()
-            data = resp.json()
-            entries = data.get("entry", [])
-            if not entries:
-                return SyncResult(
-                    target=payload.target,
-                    status="missing_remote",
-                    remote_id=search_name,
-                    local_query=payload.query,
-                    detail=f"No entry found for Saved Search '{search_name}'",
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
+        client = self._http(verify=verify_ssl)
+        resp = client.get(endpoint, headers={"Authorization": auth_header})
+        if resp.status_code == 404:
+            return SyncResult(
+                target=payload.target,
+                status="missing_remote",
+                remote_id=search_name,
+                local_query=payload.query,
+                detail=f"Saved Search '{search_name}' does not exist in Splunk",
+                request_summary=req_summary,
+                dry_run=False,
+            )
+        resp.raise_for_status()
+        data = resp.json()
+        entries = data.get("entry", [])
+        if not entries:
+            return SyncResult(
+                target=payload.target,
+                status="missing_remote",
+                remote_id=search_name,
+                local_query=payload.query,
+                detail=f"No entry found for Saved Search '{search_name}'",
+                request_summary=req_summary,
+                dry_run=False,
+            )
 
-            remote_query = entries[0].get("content", {}).get("search", "").strip()
+        remote_query = entries[0].get("content", {}).get("search", "").strip()
 
-            expected_query = payload.query.strip()
-            if not expected_query.startswith("|") and not expected_query.startswith("search "):
-                expected_query = f"search {expected_query}"
+        expected_query = payload.query.strip()
+        if not expected_query.startswith("|") and not expected_query.startswith("search "):
+            expected_query = f"search {expected_query}"
 
-            if remote_query == expected_query or remote_query == payload.query.strip():
-                return SyncResult(
-                    target=payload.target,
-                    status="in_sync",
-                    remote_id=search_name,
-                    local_query=payload.query,
-                    remote_query=remote_query,
-                    detail=f"Remote query '{search_name}' is in sync with local transpiled query",
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
-            else:
-                drift_diff = f"- Local:  {expected_query}\n+ Remote: {remote_query}"
-                return SyncResult(
-                    target=payload.target,
-                    status="drift_detected",
-                    remote_id=search_name,
-                    local_query=payload.query,
-                    remote_query=remote_query,
-                    detail=f"Remote query '{search_name}' has drifted from local transpiled query",
-                    drift_diff=drift_diff,
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
+        if remote_query == expected_query or remote_query == payload.query.strip():
+            return SyncResult(
+                target=payload.target,
+                status="in_sync",
+                remote_id=search_name,
+                local_query=payload.query,
+                remote_query=remote_query,
+                detail=f"Remote query '{search_name}' is in sync with local transpiled query",
+                request_summary=req_summary,
+                dry_run=False,
+            )
+        else:
+            drift_diff = f"- Local:  {expected_query}\n+ Remote: {remote_query}"
+            return SyncResult(
+                target=payload.target,
+                status="drift_detected",
+                remote_id=search_name,
+                local_query=payload.query,
+                remote_query=remote_query,
+                detail=f"Remote query '{search_name}' has drifted from local transpiled query",
+                drift_diff=drift_diff,
+                request_summary=req_summary,
+                dry_run=False,
+            )
 
     def _undeploy_elastic(self, payload: UndeploymentPayload, dry_run: bool) -> UndeploymentResult:
         """Teardown/delete Detection Rule from Elastic Security."""
@@ -1372,26 +1382,26 @@ class QueryDeployer:
                 dry_run=dry_run,
             )
 
-        with httpx.Client(timeout=self.timeout_sec) as client:
-            resp = client.delete(endpoint, headers={"Authorization": f"ApiKey {api_key}", "kbn-xsrf": "true"})
-            if resp.status_code == 404:
-                return UndeploymentResult(
-                    target=payload.target,
-                    status="not_found",
-                    remote_id=rule_id,
-                    detail=f"Detection Rule '{rule_id}' not found in Elastic Security",
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
-            resp.raise_for_status()
+        client = self._http()
+        resp = client.delete(endpoint, headers={"Authorization": f"ApiKey {api_key}", "kbn-xsrf": "true"})
+        if resp.status_code == 404:
             return UndeploymentResult(
                 target=payload.target,
-                status="undeployed",
+                status="not_found",
                 remote_id=rule_id,
-                detail=f"Successfully deleted Detection Rule '{rule_id}' from Elastic Security",
+                detail=f"Detection Rule '{rule_id}' not found in Elastic Security",
                 request_summary=req_summary,
                 dry_run=False,
             )
+        resp.raise_for_status()
+        return UndeploymentResult(
+            target=payload.target,
+            status="undeployed",
+            remote_id=rule_id,
+            detail=f"Successfully deleted Detection Rule '{rule_id}' from Elastic Security",
+            request_summary=req_summary,
+            dry_run=False,
+        )
 
     def _sync_elastic(self, payload: DeploymentPayload, dry_run: bool) -> SyncResult:
         """Verify synchronization and drift against Elastic Security Detection Engine."""
@@ -1416,40 +1426,40 @@ class QueryDeployer:
                 dry_run=dry_run,
             )
 
-        with httpx.Client(timeout=self.timeout_sec) as client:
-            resp = client.get(endpoint, headers={"Authorization": f"ApiKey {api_key}", "kbn-xsrf": "true"})
-            if resp.status_code == 404:
-                return SyncResult(
-                    target=payload.target,
-                    status="missing_remote",
-                    remote_id=rule_id,
-                    local_query=payload.query,
-                    detail=f"Detection Rule '{rule_id}' does not exist in Elastic Security",
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
-            resp.raise_for_status()
-            remote_query = resp.json().get("query", "").strip()
-            if remote_query == payload.query.strip():
-                return SyncResult(
-                    target=payload.target,
-                    status="in_sync",
-                    remote_id=rule_id,
-                    local_query=payload.query,
-                    remote_query=remote_query,
-                    detail=f"Remote query '{rule_id}' is in sync with local query",
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
-            else:
-                return SyncResult(
-                    target=payload.target,
-                    status="drift_detected",
-                    remote_id=rule_id,
-                    local_query=payload.query,
-                    remote_query=remote_query,
-                    detail=f"Query drift detected for '{rule_id}'",
-                    drift_diff=f"- Local:  {payload.query.strip()}\n+ Remote: {remote_query}",
-                    request_summary=req_summary,
-                    dry_run=False,
-                )
+        client = self._http()
+        resp = client.get(endpoint, headers={"Authorization": f"ApiKey {api_key}", "kbn-xsrf": "true"})
+        if resp.status_code == 404:
+            return SyncResult(
+                target=payload.target,
+                status="missing_remote",
+                remote_id=rule_id,
+                local_query=payload.query,
+                detail=f"Detection Rule '{rule_id}' does not exist in Elastic Security",
+                request_summary=req_summary,
+                dry_run=False,
+            )
+        resp.raise_for_status()
+        remote_query = resp.json().get("query", "").strip()
+        if remote_query == payload.query.strip():
+            return SyncResult(
+                target=payload.target,
+                status="in_sync",
+                remote_id=rule_id,
+                local_query=payload.query,
+                remote_query=remote_query,
+                detail=f"Remote query '{rule_id}' is in sync with local query",
+                request_summary=req_summary,
+                dry_run=False,
+            )
+        else:
+            return SyncResult(
+                target=payload.target,
+                status="drift_detected",
+                remote_id=rule_id,
+                local_query=payload.query,
+                remote_query=remote_query,
+                detail=f"Query drift detected for '{rule_id}'",
+                drift_diff=f"- Local:  {payload.query.strip()}\n+ Remote: {remote_query}",
+                request_summary=req_summary,
+                dry_run=False,
+            )

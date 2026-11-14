@@ -1630,7 +1630,6 @@ def _hunts_table(workspace: Path, metrics: HuntsMetrics) -> Panel:
         for candidate in [
             workspace.parent / "Hecate-Workspace" / "hunts",
             workspace.parent / "Hecate-Public" / "hunts",
-            Path("/home/chemch/betas/Hecate-Public/hunts"),
         ]:
             if candidate.exists():
                 hunts_dir = candidate

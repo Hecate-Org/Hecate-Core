@@ -117,9 +117,20 @@ def test_url_ports_scope_their_host() -> None:
 
 def test_chunks_cover_the_whole_page_within_the_size_limit() -> None:
     page = "\n".join(f"line {i} " + "x" * 90 for i in range(400))
-    chunks = se.chunk_text(page, size=5000, overlap=300)
+    chunks = se.chunk_text(page, size=5000, overlap=300, max_chunks=0)
     assert len(chunks) > 1 and all(len(c) <= 5000 for c in chunks)
     assert chunks[0] == page[: len(chunks[0])] and page.endswith(chunks[-1])
+
+
+def test_chunk_budget_caps_call_count_and_keeps_tail() -> None:
+    page = "\n".join(f"line {i} " + "x" * 90 for i in range(2000))
+    chunks = se.chunk_text(page, size=5000, overlap=300, max_chunks=8)
+    assert 1 < len(chunks) <= 8
+    assert page.endswith(chunks[-1])
+    assert chunks[0] == page[: len(chunks[0])]
+    # Without a budget the same page needs more windows than the cap.
+    uncapped = se.chunk_text(page, size=5000, overlap=300, max_chunks=0)
+    assert len(uncapped) > len(chunks)
 
 
 def _extract(*artifacts: Dict[str, Any]) -> se.SourceEvidence:

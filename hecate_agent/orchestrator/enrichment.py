@@ -581,6 +581,19 @@ def generate_enrichment_summary(
     indicators = extract_indicators(threat_intel)
     if not any(indicators.values()):
         return ""
+
+    from hecate_agent.core.http_pool import use_shared_httpx
+
+    with use_shared_httpx(pool_name="enrichment"):
+        return _generate_enrichment_summary_body(threat_intel, indicators, stats, citations)
+
+
+def _generate_enrichment_summary_body(
+    threat_intel: str,
+    indicators: Dict[str, List[str]],
+    stats: Dict[str, Dict[str, int]] | None,
+    citations: List[Dict[str, str]] | None,
+) -> str:
     rec = _EnrichmentTally(stats, citations)
 
     summary = [

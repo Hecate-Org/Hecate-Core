@@ -153,14 +153,14 @@ ATOMIC_TESTS_MAP: Dict[str, List[Dict[str, str]]] = {
         {
             "name": "Exploitation of Public-Facing Web Application Endpoint",
             "test_id": "ART T1190 #1",
-            "command": "curl -X POST http://127.0.0.1:8080/ping.php -d 'action=test'",
-            "telemetry": "Webserver Access Log (cs-method: POST, cs-uri-stem: /ping.php) / Process Execution",
+            "command": "curl -X POST http://127.0.0.1:8080/vulnerable -d 'cmd=id'",
+            "telemetry": "Webserver Access Log (cs-method: POST, anomalous URI / request body) / Process Execution",
         },
         {
             "name": "Web Server Worker Spawning Interactive Command Shell",
             "test_id": "ART T1190 #2",
             "command": "/bin/sh -c id",
-            "telemetry": "Sysmon Linux Event ID 1 (ParentImage: /usr/sbin/php-fpm, Image: /bin/sh)",
+            "telemetry": "Sysmon Linux Event ID 1 (ParentImage: web worker e.g. php-fpm/nginx, Image: /bin/sh)",
         },
     ],
     "T1574.002": [
@@ -836,8 +836,8 @@ def synthesize_atomic_telemetry(
             "webserver",
             {
                 "cs-method": "POST",
-                "cs-uri-stem": "/ping.php",
-                "c-uri": "http://127.0.0.1:8080/ping.php",
+                "cs-uri-stem": "/vulnerable",
+                "c-uri": "http://127.0.0.1:8080/vulnerable",
                 "sc-status": "200",
             },
         )
@@ -848,15 +848,6 @@ def synthesize_atomic_telemetry(
                 "CommandLine": "/bin/sh -c id",
                 "ParentImage": "/usr/sbin/php-fpm",
                 "User": "www-data",
-            },
-        )
-        add(
-            "process_creation",
-            {
-                "Image": "/usr/bin/python3",
-                "CommandLine": "python3 tooling/checker/checker.py",
-                "ParentImage": "/bin/bash",
-                "User": "app",
             },
         )
 

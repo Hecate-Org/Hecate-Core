@@ -112,3 +112,28 @@ def clip_text_for_simple(text: str, *, max_chars: Optional[int] = None, config: 
         return text
     room = max(0, budget - len(TRUNCATION_MARKER))
     return text[:room].rstrip() + TRUNCATION_MARKER
+
+
+def would_clip_messages_for_simple(
+    messages: Sequence[Mapping[str, Any]],
+    *,
+    max_chars: Optional[int] = None,
+    config: Optional[Mapping[str, Any]] = None,
+) -> bool:
+    """True when simple-tier routing would truncate these messages."""
+    budget = max_chars if max_chars is not None else simple_max_prompt_chars(config)
+    return budget > 0 and _message_chars(messages) > budget
+
+
+def would_clip_prompt_for_simple(
+    prompt: str,
+    *,
+    max_chars: Optional[int] = None,
+    config: Optional[Mapping[str, Any]] = None,
+) -> bool:
+    """True when a single-user-message prompt would be clipped on simple."""
+    return would_clip_messages_for_simple(
+        [{"role": "user", "content": prompt}],
+        max_chars=max_chars,
+        config=config,
+    )

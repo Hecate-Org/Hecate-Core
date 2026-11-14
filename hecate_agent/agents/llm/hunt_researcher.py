@@ -14,7 +14,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
 from hecate_agent.agents.base import AgentResult, LLMAgent
 from hecate_agent.core.telemetry_examples import render_examples
@@ -77,6 +77,9 @@ def _no_telemetry_mapped(key_findings: List[str]) -> bool:
 # Runner now sends the feed item plus the primary source's verified artifacts
 # (hecate_agent.core.source_evidence), which a 4,000 cut truncated mid-list.
 _SOURCE_CONTEXT_MAX_CHARS = 12000
+#: Compact digest injected into parallel skills 1–3; skill 5 synthesis still
+#: sees the fuller ``_source_block`` so recommendations stay grounded.
+_SOURCE_DIGEST_MAX_CHARS = 3500
 
 _GROUNDING_INSTRUCTION = (
     "Base your summary and findings strictly on the Research Context above. "
@@ -225,8 +228,9 @@ def _normalize_summary(summary: Any) -> str:
         return summary
     if isinstance(summary, dict):
         for key in ("summary", "text", "description", "overview"):
-            if key in summary and isinstance(summary[key], str):
-                return summary[key]
+            value = summary.get(key)
+            if isinstance(value, str):
+                return value
         return " ".join(str(v) for v in summary.values() if v)
     if isinstance(summary, (list, tuple)):
         return " ".join(str(item) for item in summary if item)
@@ -417,6 +421,9 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
         self._search_failure_detail = ""
         self._web_searches = 0
         self._workspace: Optional[Path] = None
+        self._source_context = ""
+        self._source_block_cache: Optional[str] = None
+        self._source_digest_cache: Optional[str] = None
 
     def _log_llm_metrics(
         self,
@@ -541,6 +548,8 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
         self._workspace = input_data.workspace
         # Read by every skill's prompt; set once before the skills fan out.
         self._source_context = (input_data.source_context or "").strip()[:_SOURCE_CONTEXT_MAX_CHARS]
+        self._source_block_cache = None
+        self._source_digest_cache = None
 
         from hecate_agent.core.attack_matrix import search_groups_in_text
 
@@ -558,10 +567,20 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
             # Determine search depth based on input
             search_depth = "basic" if input_data.depth == "basic" else "advanced"
 
-            # Execute skills 1-4 in parallel (they are independent)
+            # Execute skills 1-4 in parallel when backends differ. A shared
+            # local/simple backend serializes better than queueing 4 GPU jobs.
             from concurrent.futures import ThreadPoolExecutor
 
-            with ThreadPoolExecutor(max_workers=4) as executor:
+            from hecate_agent.core.llm_escalate import backends_differ
+            from hecate_agent.core.llm_router import LLMRouter
+
+            provider = self._get_provider() if self.llm_enabled else None
+            max_workers = (
+                1
+                if isinstance(provider, LLMRouter) and not backends_differ(provider)
+                else 4
+            )
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_1 = executor.submit(
                     self._skill_1_system_research,
                     input_data.topic,
@@ -1038,14 +1057,43 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
 
     def _source_block(self) -> str:
         """The source intelligence, framed as primary evidence, or nothing."""
+        cached = getattr(self, "_source_block_cache", None)
+        if isinstance(cached, str):
+            return cached
         text = getattr(self, "_source_context", "")
         if not text:
+            self._source_block_cache = ""
             return ""
-        return (
+        block = (
             "Source Intelligence (the report this research is about -- primary"
             " evidence; where web results disagree with it, it wins):\n"
             "{}\n\n".format(text)
         )
+        self._source_block_cache = block
+        return block
+
+    def _source_digest(self) -> str:
+        """Short primary-source digest for parallel skills (not synthesis)."""
+        cached = getattr(self, "_source_digest_cache", None)
+        if isinstance(cached, str):
+            return cached
+        text = getattr(self, "_source_context", "")
+        if not text:
+            self._source_digest_cache = ""
+            return ""
+        primary = text.split("SECONDARY OSINT ENRICHMENT", 1)[0].strip()
+        if len(primary) > _SOURCE_DIGEST_MAX_CHARS:
+            primary = (
+                primary[:_SOURCE_DIGEST_MAX_CHARS].rstrip()
+                + "\n...[source truncated for skill prompts; synthesis sees fuller text]...\n"
+            )
+        block = (
+            "Source Intelligence digest (primary evidence for this skill; "
+            "synthesis receives the fuller source):\n"
+            "{}\n\n".format(primary)
+        )
+        self._source_digest_cache = block
+        return block
 
     def _llm_summarize_system_research(
         self,
@@ -1092,7 +1140,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
                 ' "finding3"]\n}}'
             ).format(
                 topic=topic,
-                source=self._source_block(),
+                source=self._source_digest(),
                 context=context,
                 grounding=_GROUNDING_INSTRUCTION,
             )
@@ -1207,7 +1255,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
                 anti_hallucination=_GROUNDING_INSTRUCTION,
                 topic=topic,
                 technique_str=technique_str,
-                source=self._source_block(),
+                source=self._source_digest(),
                 context=context,
             )
 
@@ -1288,9 +1336,9 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
                 grounding=grounding,
                 topic=topic,
                 technique_str=technique_str,
-                source=self._source_block(),
+                source=self._source_digest(),
                 ocsf_schema=ocsf_schema[:3000],
-                telemetry_examples=render_examples(f"{topic}\n{self._source_block()}"),
+                telemetry_examples=render_examples(f"{topic}\n{self._source_context}"),
                 environment_data=environment_data[:1000],
             )
 
@@ -1440,8 +1488,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
         slightly noisier warning log.
         """
         for finding in synthesis.key_findings:
-            if not isinstance(finding, str):
-                finding = str(finding)
+            finding = str(finding)
             match = _HYPOTHESIS_PREFIX_RE.match(finding)
             if match:
                 extracted = finding[match.end() :].strip()
@@ -1466,7 +1513,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
         kept.
         """
         corpus_parts = [topic]
-        for source in skill.sources or []:
+        for source in cast(List[Any], skill.sources or []):
             if isinstance(source, dict):
                 corpus_parts.extend(str(source.get(key, "")) for key in ("title", "url", "snippet"))
             else:
@@ -1475,8 +1522,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
 
         kept: List[str] = []
         for finding in skill.key_findings:
-            if not isinstance(finding, str):
-                finding = str(finding)
+            finding = str(finding)
             unsupported = sorted({c.upper() for c in _CVE_RE.findall(finding)} - corpus_cves)
             if unsupported:
                 logger.warning(
@@ -1492,7 +1538,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
         skill.summary = self._redact_unsupported_cves(skill.summary, corpus_cves, skill.skill_name)
 
     @staticmethod
-    def _redact_unsupported_cves(summary: str, corpus_cves: Set[str], skill_name: str) -> str:
+    def _redact_unsupported_cves(summary: Any, corpus_cves: Set[str], skill_name: str) -> str:
         """Drop the sentences of a summary that cite an unsourced CVE.
 
         Findings are discrete claims, so an unsupported one is removed whole.
@@ -1505,14 +1551,13 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
         the surrounding analysis stays, and a marker records that something
         was removed so the gap is visible rather than silent.
         """
-        if not isinstance(summary, str):
-            summary = _normalize_summary(summary)
-        if not summary.strip():
-            return summary
+        normalized = _normalize_summary(summary)
+        if not normalized.strip():
+            return normalized
 
         # Split on sentence-ending punctuation followed by whitespace, keeping
         # the punctuation with its sentence.
-        sentences = re.split(r"(?<=[.!?])\s+", summary)
+        sentences = re.split(r"(?<=[.!?])\s+", normalized)
         kept, dropped = [], []
         for sentence in sentences:
             unsupported = sorted({c.upper() for c in _CVE_RE.findall(sentence)} - corpus_cves)
@@ -1522,7 +1567,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
             kept.append(sentence)
 
         if not dropped:
-            return summary
+            return normalized
 
         logger.warning(
             "Redacted %d sentence(s) from the %s summary citing unsupported %s.",
@@ -1590,8 +1635,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
         than only an exact "gap:" prefix."""
         gaps = []
         for finding in synthesis.key_findings:
-            if not isinstance(finding, str):
-                finding = str(finding)
+            finding = str(finding)
             match = _GAP_PREFIX_RE.match(finding)
             if match:
                 extracted = finding[match.end() :].strip()

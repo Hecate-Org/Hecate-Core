@@ -1679,7 +1679,6 @@ def _load_mobile_ics_mappings() -> Tuple[Dict[str, List[str]], Dict[str, List[st
     candidate_dirs = [
         stix_dir,
         Path.home() / ".hecate" / "stix-data",
-        Path("/home/chemch/.hecate/stix-data"),
     ]
     mobile_map: Dict[str, List[str]] = {}
     ics_map: Dict[str, List[str]] = {}

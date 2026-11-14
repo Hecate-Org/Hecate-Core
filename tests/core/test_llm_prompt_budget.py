@@ -5,6 +5,8 @@ from hecate_agent.core.llm_prompt_budget import (
     clip_messages_for_tier,
     clip_text_for_simple,
     simple_max_prompt_chars,
+    would_clip_messages_for_simple,
+    would_clip_prompt_for_simple,
 )
 from hecate_agent.core.llm_provider import LLMProvider, LLMResponse
 from hecate_agent.core.llm_router import LLMRouter
@@ -61,3 +63,12 @@ def test_clip_text_for_simple_respects_budget(monkeypatch):
     text = clip_text_for_simple("z" * 200)
     assert TRUNCATION_MARKER in text
     assert len(text) <= 80
+
+
+def test_would_clip_detects_over_budget_prompts():
+    budget = simple_max_prompt_chars()
+    assert not would_clip_prompt_for_simple("short")
+    assert would_clip_prompt_for_simple("x" * (budget + 1))
+    assert would_clip_messages_for_simple(
+        [{"role": "user", "content": "y" * (budget + 10)}]
+    )

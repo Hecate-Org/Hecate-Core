@@ -68,6 +68,56 @@ def test_complete_with_escalation_retries_on_complex() -> None:
     assert complex_.calls == 1
 
 
+def test_complete_with_escalation_skips_simple_when_over_budget(monkeypatch) -> None:
+    from hecate_agent.core import llm_prompt_budget
+
+    monkeypatch.setattr(llm_prompt_budget, "simple_max_prompt_chars", lambda config=None: 50)
+    simple = _Backend("ollama", ["should-not-run"])
+    complex_ = _Backend("cloud", ['{"observables": []}'])
+    router = LLMRouter(
+        {"simple": simple, "complex": complex_},
+        capability_tiers={"artifact_extract": "simple"},
+    )
+    response, escalated = complete_with_escalation(
+        router,
+        [{"role": "user", "content": "z" * 200}],
+        validate=lambda text: text.startswith("{"),
+        capability="artifact_extract",
+    )
+    assert escalated
+    assert response.text.startswith("{")
+    assert simple.calls == 0
+    assert complex_.calls == 1
+
+
+def test_call_llm_with_retry_skips_simple_when_over_budget(monkeypatch) -> None:
+    from hecate_agent.core import llm_prompt_budget
+
+    monkeypatch.setattr(llm_prompt_budget, "simple_max_prompt_chars", lambda config=None: 40)
+    simple = _Backend("ollama", ["bad"])
+    complex_ = _Backend("cloud", ['{"ok": true}'])
+    router = LLMRouter(
+        {"simple": simple, "complex": complex_},
+        capability_tiers={"pivot_suggest": "simple"},
+    )
+
+    class Stub(LLMAgent[dict, dict]):
+        def execute(self, input_data: dict) -> Any:
+            return self._success({})
+
+    agent = Stub(provider=router)
+    result = agent._call_llm_with_retry(
+        "p" * 200,
+        lambda text: None if text.startswith("{") else "bad",
+        max_retries=2,
+        backoff_base_sec=0,
+        capability="pivot_suggest",
+    )
+    assert result.startswith("{")
+    assert simple.calls == 0
+    assert complex_.calls == 1
+
+
 def test_call_llm_with_retry_escalates_after_simple_failures() -> None:
     simple = _Backend("ollama", ["bad", "still-bad"])
     complex_ = _Backend("cloud", ['{"ok": true}'])

@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import httpx
+
 from hecate_agent.core.http_pool import (
     close_shared_clients,
     get_shared_client,
     is_mocked,
+    pooled_get,
+    use_shared_httpx,
 )
 
 
@@ -45,3 +49,40 @@ def test_is_mocked_detects_mock() -> None:
     # With original check
     assert is_mocked(mock_func, original=real_func)
     assert not is_mocked(real_func, original=real_func)
+
+
+def test_pooled_get_reuses_keep_alive_client(monkeypatch) -> None:
+    close_shared_clients()
+    seen: list[httpx.Client] = []
+
+    class FakeResp:
+        status_code = 200
+
+    def fake_request(self, method, url, **kwargs):
+        seen.append(self)
+        return FakeResp()
+
+    monkeypatch.setattr(httpx.Client, "request", fake_request)
+    pooled_get("https://example.test/a", pool_name="pool_reuse", timeout=3.0)
+    pooled_get("https://example.test/b", pool_name="pool_reuse", timeout=3.0)
+    assert len(seen) == 2
+    assert seen[0] is seen[1]
+    close_shared_clients()
+
+
+def test_use_shared_httpx_routes_module_get(monkeypatch) -> None:
+    close_shared_clients()
+    calls: list[str] = []
+
+    class FakeResp:
+        status_code = 200
+
+    def fake_request(self, method, url, **kwargs):
+        calls.append(url)
+        return FakeResp()
+
+    monkeypatch.setattr(httpx.Client, "request", fake_request)
+    with use_shared_httpx(pool_name="ctx_pool"):
+        httpx.get("https://example.test/via-pool", timeout=2.0)
+    assert calls == ["https://example.test/via-pool"]
+    close_shared_clients()

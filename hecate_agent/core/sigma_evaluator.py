@@ -17,6 +17,7 @@ Supports:
 from __future__ import annotations
 
 import fnmatch
+import functools
 import ipaddress
 import logging
 import re
@@ -26,6 +27,12 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 import yaml
 
 logger = logging.getLogger(__name__)
+
+
+@functools.lru_cache(maxsize=4096)
+def _compiled_wildcard_pattern(pattern: str) -> re.Pattern[str]:
+    """Compile and cache Sigma wildcard regexes across evaluations."""
+    return re.compile(pattern, re.IGNORECASE | re.DOTALL)
 
 #: Canonical field aliases across Sysmon, Windows Events, Linux auditd, and OCSF.
 #: Maps lowered field name to alternative representations found in telemetry.
@@ -368,7 +375,8 @@ def _match_scalar_value(needle: Any, haystack: Any, modifiers: List[str]) -> boo
         i += 1
     prefix = ".*" if "contains" in modifiers or "endswith" in modifiers else ""
     suffix = ".*" if "contains" in modifiers or "startswith" in modifiers else ""
-    return re.fullmatch(prefix + "".join(parts) + suffix, s_haystack, re.IGNORECASE | re.DOTALL) is not None
+    pattern = _compiled_wildcard_pattern(prefix + "".join(parts) + suffix)
+    return pattern.fullmatch(s_haystack) is not None
 
 
 def match_field_value(raw_val: Any, event_val: Any, modifiers: List[str]) -> bool:
@@ -428,8 +436,14 @@ class ConditionEvaluator:
                 tokens.append((kind, val))
         return tokens
 
-    def __init__(self, condition_str: str, blocks: Dict[str, bool]):
-        self.tokens = self.tokenize(condition_str)
+    def __init__(
+        self,
+        condition_str: str,
+        blocks: Dict[str, bool],
+        *,
+        tokens: Optional[List[Tuple[str, str]]] = None,
+    ):
+        self.tokens = tokens if tokens is not None else self.tokenize(condition_str)
         self.pos = 0
         self.blocks = blocks
 
@@ -666,6 +680,8 @@ class SigmaEvaluator:
             self.condition_str: str = " or ".join(f"({condition})" for condition in raw_cond)
         else:
             self.condition_str = str(raw_cond)
+        # Tokenize once per rule; reused for every event evaluation.
+        self._condition_tokens = ConditionEvaluator.tokenize(self.condition_str)
 
     def _parse_rule(self, rule: Union[str, Dict[str, Any], Any]) -> None:
         if isinstance(rule, dict):
@@ -812,7 +828,11 @@ class SigmaEvaluator:
 
         # Evaluate overall condition
         try:
-            cond_eval = ConditionEvaluator(self.condition_str, block_results)
+            cond_eval = ConditionEvaluator(
+                self.condition_str,
+                block_results,
+                tokens=self._condition_tokens,
+            )
             overall_matched = cond_eval.evaluate()
         except Exception as exc:
             overall_matched = False

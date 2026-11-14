@@ -39,12 +39,14 @@ from hecate_agent.core.provenance import (
 
 logger = logging.getLogger(__name__)
 
-#: Characters per extraction call. The whole report is read, in chunks: the
-#: H-0618 report kept its hash roles and historical-domain note past 25,000.
-CHUNK_CHARS = 11000
-CHUNK_OVERLAP = 600
+#: Characters per extraction call. Larger chunks cut LLM round-trips on long
+#: CTI pages; line-boundary splitting still avoids mid-artifact cuts.
+CHUNK_CHARS = 22000
+CHUNK_OVERLAP = 300
 #: Hard ceiling on page text, so a runaway page cannot turn into dozens of calls.
 MAX_PAGE_CHARS = 120000
+#: Soft cap on chunk count before the page is truncated further for extraction.
+MAX_EXTRACTION_CHUNKS = 8
 #: Words that must match contiguously for a quoted passage to count as found.
 EVIDENCE_WINDOW = 8
 
@@ -354,8 +356,11 @@ def github_readme_text(url: str, timeout: float = 20.0) -> str:
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
-        response = httpx.get(
+        from hecate_agent.core.http_pool import pooled_get
+
+        response = pooled_get(
             f"https://api.github.com/repos/{match['owner']}/{match['repo']}/readme",
+            pool_name="source_evidence",
             headers=headers,
             timeout=timeout,
             follow_redirects=True,
@@ -379,8 +384,11 @@ def fetch_page_text(url: str, timeout: float = 20.0) -> str:
     tavily_key = os.getenv("TAVILY_API_KEY")
     if tavily_key:
         try:
-            r = httpx.post(
+            from hecate_agent.core.http_pool import pooled_post
+
+            r = pooled_post(
                 "https://api.tavily.com/extract",
+                pool_name="source_evidence",
                 json={"urls": [url], "api_key": tavily_key},
                 timeout=min(timeout, 15.0),
             )
@@ -408,7 +416,15 @@ def fetch_page_text(url: str, timeout: float = 20.0) -> str:
         "Upgrade-Insecure-Requests": "1",
     }
     try:
-        response = httpx.get(url, timeout=timeout, headers=headers, follow_redirects=True)
+        from hecate_agent.core.http_pool import pooled_get
+
+        response = pooled_get(
+            url,
+            pool_name="source_evidence",
+            timeout=timeout,
+            headers=headers,
+            follow_redirects=True,
+        )
         response.raise_for_status()
         html = response.text
     except Exception as exc:
@@ -490,13 +506,34 @@ def strip_page_furniture(text: str) -> str:
     return text
 
 
-def chunk_text(text: str, size: int = CHUNK_CHARS, overlap: int = CHUNK_OVERLAP) -> List[str]:
-    """Split on line boundaries into overlapping chunks, so no artifact is cut in two."""
+def chunk_text(
+    text: str,
+    size: int = CHUNK_CHARS,
+    overlap: int = CHUNK_OVERLAP,
+    *,
+    max_chunks: int = MAX_EXTRACTION_CHUNKS,
+) -> List[str]:
+    """Split on line boundaries into overlapping chunks, so no artifact is cut in two.
+
+    When a page would exceed ``max_chunks``, chunk size grows so extraction stays
+    within a bounded number of LLM calls. The final slot always absorbs any
+    remainder so tail artifacts are not dropped. Pass ``max_chunks=0`` to disable
+    the call-budget cap (size limit still applies).
+    """
     if len(text) <= size:
         return [text]
+    if max_chunks > 0:
+        # Account for overlap so the budgeted windows still cover the page.
+        min_size = (len(text) + (max_chunks - 1) * overlap + max_chunks - 1) // max_chunks
+        if min_size > size:
+            size = min_size
+
     chunks: List[str] = []
     start = 0
     while start < len(text):
+        if max_chunks > 0 and len(chunks) >= max_chunks - 1:
+            chunks.append(text[start:])
+            break
         end = min(len(text), start + size)
         if end < len(text):
             newline = text.rfind("\n", start + size // 2, end)

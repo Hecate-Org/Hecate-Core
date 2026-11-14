@@ -1,9 +1,16 @@
 """Tests for hecate-agent config command."""
 
 from pathlib import Path
+
+import pytest
 from click.testing import CliRunner
 
 from hecate_agent.commands.config import config, _read_env_file, _write_env_file
+
+
+@pytest.fixture(autouse=True)
+def offline_ollama_status(monkeypatch):
+    monkeypatch.setattr("hecate_agent.core.llm_provider._ollama_is_running", lambda *args, **kwargs: False)
 
 
 def test_write_env_file_preserves_existing(tmp_path: Path):
