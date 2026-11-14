@@ -10,6 +10,8 @@ import pytest
 
 from hecate_agent.core import attack_matrix
 
+pytest_plugins = ("tests.offline_guard",)
+
 # Live developer shells often export workspace / SIEM / LLM vars (or load them
 # via dotenv). Those leak into unit tests that assert missing-file, missing-
 # credential, or walk-up behavior. CI runners do not set them; clear them here

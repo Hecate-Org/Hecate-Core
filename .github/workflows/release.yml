@@ -13,7 +13,14 @@ permissions:
   id-token: write
 
 jobs:
+  verify:
+    name: Verify release candidate
+    uses: ./.github/workflows/tests.yml
+    permissions:
+      contents: read
+
   build-and-release:
+    needs: verify
     name: Build distributions and publish
     runs-on: ubuntu-latest
 
