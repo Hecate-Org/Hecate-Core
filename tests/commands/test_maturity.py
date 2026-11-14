@@ -1,11 +1,20 @@
 """Tests for hecate-agent maturity assess command."""
 
 import json
+import importlib
+
+import pytest
 from pathlib import Path
 from click.testing import CliRunner
 
 from hecate_agent.commands.maturity import maturity, assess_workspace_maturity
 from hecate_agent.commands.demo import demo
+
+
+@pytest.fixture(autouse=True)
+def offline_ollama_status(monkeypatch):
+    module = importlib.import_module("hecate_agent.commands.maturity")
+    monkeypatch.setattr(module, "_ollama_is_running", lambda *args, **kwargs: False)
 
 
 def test_maturity_assess_empty_workspace(tmp_path: Path):

@@ -334,6 +334,7 @@ class TestCreateProvider:
 
         with (
             patch("hecate_agent.core.llm_provider._load_config_file", return_value={}),
+            patch("hecate_agent.core.llm_provider._get_default_ollama_model", return_value="llama3"),
             patch.dict("os.environ", env, clear=False),
         ):
             provider = create_provider()
@@ -381,6 +382,7 @@ class TestCreateProvider:
 
         with (
             patch("hecate_agent.core.llm_provider._load_config_file", return_value={}),
+            patch("hecate_agent.core.llm_provider._get_default_ollama_model", return_value="llama3"),
             patch.dict("os.environ", env, clear=False),
             patch("hecate_agent.core.llm_provider._ollama_is_running", return_value=True),
         ):
