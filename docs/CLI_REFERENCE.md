@@ -2998,10 +2998,11 @@ model; review representative outputs before changing those routes.
 
 The **LLM demotion gate** Actions workflow defaults to the same Qwen3.6 model.
 Its roughly 24 GB model file exceeds the storage available on standard GitHub
-hosted runners. For automated weekly evaluations, provision a separate runner
-with enough disk and RAM/GPU memory, then set repository variable
-`HECATE_LLM_EVAL_RUNNER` to its label. Optionally set `HECATE_LLM_EVAL_MODEL`
-for scheduled runs. A manual dispatch can supply a runner and model instead.
+hosted runners. This workflow is manual only; scheduled model evaluations are
+disabled. To run it manually, provision a separate runner with enough disk and
+RAM/GPU memory, then supply its label and the model when dispatching the
+workflow. Alternatively, set repository variable `HECATE_LLM_EVAL_RUNNER`
+to the runner label. Regular code CI and security scans continue automatically.
 Do not install an Actions runner on the production service host or expose its
 Ollama endpoint publicly.
 
