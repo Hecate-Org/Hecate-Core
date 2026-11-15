@@ -609,7 +609,8 @@ class QueryDeployer:
             "name": search_name,
             "search": search_query,
             "description": f"Hecate Hunt {payload.hunt_id}: {payload.rule_title}",
-            "is_scheduled": "0",
+            # Unscheduled is the server default. Sending is_scheduled even as
+            # 0 requires schedule_search on some Splunk versions.
             "output_mode": "json",
         }
 
