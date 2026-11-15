@@ -377,6 +377,7 @@ class TestQueryDeployer:
             assert res.remote_id.startswith("Hecate_H-0868_")
             call_args, call_kwargs = mock_post.call_args
             assert call_args[0] == "https://splunk.corp.local:8089/servicesNS/nobody/search/saved/searches"
+            assert "is_scheduled" not in call_kwargs["data"]  # Restricted writers cannot schedule searches
             assert call_kwargs["headers"]["Authorization"] == "Bearer splunk-token-xyz"
             assert call_kwargs["data"]["search"] == 'search Image="*/whoami.exe"'
 
