@@ -1,15 +1,17 @@
 name: LLM demotion gate
 
-# Manual / scheduled only — needs a live simple-tier model and is too slow/flaky
-# for the PR matrix. Use after changing the local model or before demoting a
-# locked capability in llm.defaults.
+# Live evaluations need a separately provisioned runner with enough RAM/disk
+# for the selected model. Never attach the production service host as a runner.
 on:
   workflow_dispatch:
     inputs:
       model:
         description: Ollama model tag for the simple tier
         required: true
-        default: qwen2.5:14b-instruct-q4_K_M
+        default: qwen3.6:35b-a3b-q4_K_M
+      runner:
+        description: Dedicated runner label (or configure HECATE_LLM_EVAL_RUNNER)
+        required: false
       capability:
         description: Locked capability to gate (or "all")
         required: true
@@ -19,26 +21,51 @@ on:
         required: true
         default: "0.8"
   schedule:
-    # Weekly Sunday 06:00 UTC — opt-in signal; fails soft if Ollama is unavailable.
+    # Weekly Sunday 06:00 UTC; live job requires HECATE_LLM_EVAL_RUNNER.
     - cron: "0 6 * * 0"
 
+permissions:
+  contents: read
+
+concurrency:
+  group: llm-eval-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  configuration:
+    name: Evaluation runner configuration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain evaluation status
+        env:
+          RUNNER: ${{ inputs.runner || vars.HECATE_LLM_EVAL_RUNNER }}
+        run: |
+          if [ -z "$RUNNER" ]; then
+            echo "::notice::Model NOT EVALUATED: no suitable evaluation runner configured. Use scripts/eval_local_model.py on the local GPU."
+            echo "Model **NOT EVALUATED**. No runner configured; quality job skipped and no demotion approved. Use the local evaluation script or configure a dedicated evaluation runner." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Live evaluation requested; consult the quality job for its result." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   demotion-gate:
     name: Eval simple tier + write demotion gate
-    runs-on: ubuntu-latest
+    if: ${{ inputs.runner != '' || vars.HECATE_LLM_EVAL_RUNNER != '' }}
+    runs-on: ${{ inputs.runner || vars.HECATE_LLM_EVAL_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 90
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v2
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
         with:
           version: "latest"
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.11"
 
@@ -56,23 +83,33 @@ jobs:
 
       - name: Pull simple-tier model
         env:
-          MODEL: ${{ github.event.inputs.model || 'qwen2.5:14b-instruct-q4_K_M' }}
+          MODEL: ${{ inputs.model || vars.HECATE_LLM_EVAL_MODEL || 'qwen3.6:35b-a3b-q4_K_M' }}
         run: ollama pull "$MODEL"
 
       - name: Run demotion eval gates
         env:
-          MODEL: ${{ github.event.inputs.model || 'qwen2.5:14b-instruct-q4_K_M' }}
           CAPABILITY: ${{ github.event.inputs.capability || 'research_synthesize' }}
           FAIL_UNDER: ${{ github.event.inputs.fail_under || '0.8' }}
           HECATE_LLM_SIMPLE_PROVIDER: ollama
-          HECATE_LLM_SIMPLE_MODEL: ${{ github.event.inputs.model || 'qwen2.5:14b-instruct-q4_K_M' }}
+          HECATE_LLM_SIMPLE_MODEL: ${{ inputs.model || vars.HECATE_LLM_EVAL_MODEL || 'qwen3.6:35b-a3b-q4_K_M' }}
           HECATE_LLM_SIMPLE_BASE_URL: http://127.0.0.1:11434
           HECATE_LLM_COMPLEX_PROVIDER: ollama
-          HECATE_LLM_COMPLEX_MODEL: ${{ github.event.inputs.model || 'qwen2.5:14b-instruct-q4_K_M' }}
+          HECATE_LLM_COMPLEX_MODEL: ${{ inputs.model || vars.HECATE_LLM_EVAL_MODEL || 'qwen3.6:35b-a3b-q4_K_M' }}
           HECATE_LLM_COMPLEX_BASE_URL: http://127.0.0.1:11434
-          HECATE_LLM_DEMOTION_GATES: ${{ github.workspace }}/.hecate/llm_demotion_gates.json
+          HECATE_SERVICE_ISOLATED: "1"
+          PYTHON_DOTENV_DISABLED: "1"
+          HECATE_WORKSPACE: ${{ github.workspace }}/eval-results
+          HECATE_OLLAMA_THINK: "false"
+          HECATE_OLLAMA_NUM_CTX: "16384"
+          HECATE_OLLAMA_TIMEOUT_SEC: "600"
+          HECATE_LLM_DEMOTION_GATES: ${{ github.workspace }}/eval-results/llm_demotion_gates.json
         run: |
-          mkdir -p .hecate
+          mkdir -p eval-results
+          # Also allow-list capability names before using them in report filenames.
+          case "$CAPABILITY" in
+            all|hypothesis|sigma_draft|sigma_review|finding_triage|research_synthesize) ;;
+            *) echo "Unsupported capability" >&2; exit 1 ;;
+          esac
           if [ "$CAPABILITY" = "all" ]; then
             caps="hypothesis sigma_draft sigma_review finding_triage research_synthesize"
           else
@@ -81,18 +118,19 @@ jobs:
           status=0
           for cap in $caps; do
             echo "::group::eval --write-gate $cap"
-            if ! hecate-agent eval --tier simple --write-gate "$cap" --fail-under "$FAIL_UNDER" --output json; then
+            if ! hecate-agent eval --tier simple --write-gate "$cap" --fail-under "$FAIL_UNDER" --output json > "eval-results/$cap.json"; then
               status=1
             fi
+            cat "eval-results/$cap.json"
             echo "::endgroup::"
           done
           exit $status
 
-      - name: Upload demotion gate stamps
+      - name: Upload evaluation reports and any passing stamps
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: llm-demotion-gates
-          path: .hecate/llm_demotion_gates.json
+          path: eval-results/*.json
           if-no-files-found: ignore
           retention-days: 30
