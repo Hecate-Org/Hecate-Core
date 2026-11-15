@@ -23,21 +23,20 @@ workspace `.env`, or secret store; repositories do not supply working keys.
 
 ## Install from source
 
-Use Python 3.11+ and uv. For Core alone:
+Use Python 3.11.5+ and uv. For Core alone:
 
 ```bash
 git clone https://github.com/Hecate-Org/Hecate-Core.git
 cd Hecate-Core
-uv venv .venv
+uv sync --locked --extra all --extra dev
 source .venv/bin/activate
-uv pip install -e '.[all,dev]'
 hecate-agent --version
 ```
 
 For Core and Runner together, follow the shared environment instructions in
 [onboarding](docs/ONBOARDING.md). No API keys are needed for hunt management,
 reading the catalog or the offline demos. Model generation and external services
-require their respective configuration. See [installation](docs/INSTALL.md).
+require their respective configuration. See [installation](docs/INSTALL.md) and [dependency security notes](docs/DEPENDENCY_SECURITY.md).
 
 ## Explore a workspace
 

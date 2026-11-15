@@ -7,7 +7,7 @@ name = "hecate-agent"
 dynamic = ["version"]
 description = "Hecate - memory and AI for threat hunters"
 readme = {file = "README.md", content-type = "text/markdown"}
-requires-python = ">=3.11"
+requires-python = ">=3.11.5"
 license = {text = "MIT"}
 authors = [
     {name = "BrizoSec"},
@@ -81,7 +81,7 @@ dev = [
     "flake8-pyproject>=1.2.0",
     "ruff>=0.6.0",
     "mypy>=1.0.0",
-    "black>=23.0.0",
+    "black>=26.10.1",
     "isort>=5.12.0",
     "bandit[toml]>=1.7.0",
     "pre-commit>=3.0.0",
@@ -101,7 +101,7 @@ splunk = [
 ]
 # LLM providers (choose one or use litellm for all)
 litellm = [
-    "litellm>=1.30.0",
+    "litellm>=1.101.3,<2",
 ]
 openai = [
     "openai>=1.0.0",
@@ -131,7 +131,7 @@ research = [
 ]
 # Convenience: all LLM providers via LiteLLM
 llm = [
-    "litellm>=1.30.0",
+    "litellm>=1.101.3,<2",
 ]
 # MCP server
 mcp = [
@@ -144,7 +144,7 @@ all = [
     "pysigma-backend-splunk>=2.1.0",
     "pysigma-backend-elasticsearch>=2.1.0",
     "pysigma-backend-sentinelone>=0.1.3",
-    "litellm>=1.30.0",
+    "litellm>=1.101.3,<2",
     "scikit-learn>=1.0.0",
     "requests>=2.25.0",
     "tavily-python>=0.3.0",
@@ -374,3 +374,19 @@ statistics = true
 [tool.bandit]
 exclude_dirs = ["tests", "test_*.py", "*/tests/*"]
 skips = ["B101"]  # Skip assert_used check (common in tests)
+
+[tool.uv]
+# Security floors constrain transitive packages without installing unused extras.
+# Soup Sieve 4 requires Python 3.11.5; keep older vulnerable branches out of the lock.
+constraint-dependencies = [
+    "aiohttp>=3.14.4",
+    "anyio>=4.14.2",
+    "certifi>=2026.10.18",
+    "filelock>=4.2.1",
+    "multidict>=6.9.1",
+    "pillow>=13.0.0",
+    "soupsieve>=4.0.0",
+    "urllib3>=2.8.0",
+    "pyjwt>=2.15.0",
+    "virtualenv>=21.14.9",
+]
