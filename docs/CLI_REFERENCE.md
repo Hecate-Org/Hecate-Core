@@ -147,11 +147,10 @@ drives, pseudo-filesystems, and duplicate bind mounts are omitted. Unsupported
 hardware is shown as unavailable. Credential panels show only
 whether a key is configured, never its value. Press Ctrl-C to exit.
 
-When the `hecate-runner-orchestrator` systemd service is installed, the
-dashboard also shows service and timer state, a countdown to the timer's next
-run, daily draft and research quota, parked items, and total drafts. The
-high-signal backlog count comes from the most recent intake trail event and is
-timestamped; it is the last observed count, not a live feed query. Compact
+When the `hecate-runner-daemon` systemd service is installed, the
+dashboard also shows service state, daily draft and research quota, parked items,
+and total drafts. The high-signal backlog count comes from the most recent intake trail
+event and is timestamped; it is the last observed count, not a live feed query. Compact
 terminals show this service summary in the footer. The service panel is omitted
 when the systemd unit is not installed.
 
