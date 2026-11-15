@@ -44,10 +44,13 @@ def get_client(host: Optional[str], token: Optional[str], verify_ssl: Optional[b
     if not host:
         host = os.getenv("SPLUNK_HOST")
     if not token:
-        token = os.getenv("SPLUNK_TOKEN")
+        from hecate_agent.core.splunk_credentials import splunk_token
+        token = splunk_token("read")
 
     username = os.getenv("SPLUNK_USERNAME") or os.getenv("SPLUNK_AUTH_USER")
     password = os.getenv("SPLUNK_PASSWORD")
+    if os.getenv("HECATE_STRICT_CREDENTIAL_ROLES", "").lower() in {"1", "true", "yes"}:
+        password = None
 
     # Read verify_ssl from environment if not provided via CLI
     if verify_ssl is None:
@@ -138,7 +141,7 @@ def _render_results(results: list, output_format: str, count: int) -> None:
 
 @splunk.command()
 @click.option("--host", envvar="SPLUNK_HOST", help="Splunk host (e.g., splunk.example.com)")
-@click.option("--token", envvar="SPLUNK_TOKEN", help="Splunk authentication token")
+@click.option("--token", envvar="SPLUNK_READ_TOKEN", help="Splunk authentication token")
 @click.option("--verify-ssl/--no-verify-ssl", default=None, help="Verify SSL certificates")
 def test(host: Optional[str], token: Optional[str], verify_ssl: Optional[bool]) -> None:
     """Test Splunk connection and authentication.
@@ -173,7 +176,7 @@ def test(host: Optional[str], token: Optional[str], verify_ssl: Optional[bool]) 
 
 @splunk.command()
 @click.option("--host", envvar="SPLUNK_HOST", help="Splunk host")
-@click.option("--token", envvar="SPLUNK_TOKEN", help="Splunk authentication token")
+@click.option("--token", envvar="SPLUNK_READ_TOKEN", help="Splunk authentication token")
 @click.option("--verify-ssl/--no-verify-ssl", default=None, help="Verify SSL certificates")
 @click.option("--format", "output_format", type=click.Choice(["table", "json", "list"]), default="list", help="Output format")
 def indexes(host: Optional[str], token: Optional[str], verify_ssl: Optional[bool], output_format: str) -> None:
@@ -220,7 +223,7 @@ def indexes(host: Optional[str], token: Optional[str], verify_ssl: Optional[bool
 @splunk.command()
 @click.argument("query")
 @click.option("--host", envvar="SPLUNK_HOST", help="Splunk host")
-@click.option("--token", envvar="SPLUNK_TOKEN", help="Splunk authentication token")
+@click.option("--token", envvar="SPLUNK_READ_TOKEN", help="Splunk authentication token")
 @click.option("--verify-ssl/--no-verify-ssl", default=None, help="Verify SSL certificates")
 @click.option("--earliest", default="-24h", help="Earliest time (e.g., '-24h', '2024-01-01T00:00:00')")
 @click.option("--latest", default="now", help="Latest time (e.g., 'now', '2024-01-02T00:00:00')")
@@ -313,7 +316,7 @@ def search(
 
 @splunk.command()
 @click.option("--host", envvar="SPLUNK_HOST", help="Splunk host")
-@click.option("--token", envvar="SPLUNK_TOKEN", help="Splunk authentication token")
+@click.option("--token", envvar="SPLUNK_READ_TOKEN", help="Splunk authentication token")
 @click.option("--verify-ssl/--no-verify-ssl", default=None, help="Verify SSL certificates")
 def config(host: Optional[str], token: Optional[str], verify_ssl: Optional[bool]) -> None:
     """Show current Splunk configuration.

@@ -7,6 +7,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from hecate_agent.core.llm_router import create_router
+from hecate_agent.core.public_http import public_get
 from hecate_agent.core.source_evidence import is_safe_report_url
 
 logger = logging.getLogger(__name__)
@@ -27,8 +28,8 @@ def scrape_url_text(url: str) -> str:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
-        resp = httpx.get(url, timeout=15.0, headers=headers, follow_redirects=True)
-    except httpx.HTTPError as e:
+        resp = public_get(url, timeout=15.0, headers=headers)
+    except (httpx.HTTPError, ValueError) as e:
         logger.error(f"Failed to scrape {url}: {e}")
         return ""
     if resp.status_code != 200:

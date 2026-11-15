@@ -23,9 +23,11 @@ import re
 import socket
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urlsplit
 
 import httpx
+
+from hecate_agent.core.public_http import public_get
 
 from hecate_agent.core.source_extraction import SourceBudgetExceeded, SourceExtractionSession
 from hecate_agent.core.provenance import (
@@ -159,7 +161,7 @@ def is_safe_report_url(url: str) -> bool:
         parsed = urlsplit(url.strip())
     except Exception:
         return False
-    if parsed.scheme not in ("http", "https"):
+    if parsed.scheme not in ("http", "https") or parsed.username is not None or parsed.password is not None:
         return False
     host = parsed.hostname
     if not host:
@@ -174,10 +176,14 @@ def is_safe_report_url(url: str) -> bool:
         pass
     if "." not in host:
         return False
-    if parsed.port is not None:
-        if parsed.scheme == "http" and parsed.port != 80:
+    try:
+        port = parsed.port
+    except ValueError:
+        return False
+    if port is not None:
+        if parsed.scheme == "http" and port != 80:
             return False
-        if parsed.scheme == "https" and parsed.port != 443:
+        if parsed.scheme == "https" and port != 443:
             return False
     path = (parsed.path or "").lower()
     for ext in _DISALLOWED_EXTENSIONS:
@@ -228,29 +234,8 @@ def _safe_get_following_redirects(
     timeout: float,
     headers: Dict[str, str],
 ) -> httpx.Response:
-    """GET ``url`` while re-validating every redirect target before following it."""
-    from hecate_agent.core.http_pool import pooled_get
-
-    current = assert_safe_fetch_url(url)
-    response: Optional[httpx.Response] = None
-    for _ in range(MAX_FETCH_REDIRECTS + 1):
-        response = pooled_get(
-            current,
-            pool_name="source_evidence",
-            timeout=timeout,
-            headers=headers,
-            follow_redirects=False,
-        )
-        if response.is_redirect:
-            location = response.headers.get("location")
-            if not location:
-                response.raise_for_status()
-                return response
-            current = assert_safe_fetch_url(urljoin(str(response.url), location))
-            continue
-        response.raise_for_status()
-        return response
-    raise ValueError(f"too many redirects while fetching report URL (limit {MAX_FETCH_REDIRECTS})")
+    """Fetch with bounded bytes and a checked numeric address for every connection."""
+    return public_get(url, timeout=timeout, headers=headers)
 
 
 INDICATOR_KINDS = {
@@ -425,16 +410,12 @@ def github_readme_text(url: str, timeout: float = 20.0) -> str:
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
-        from hecate_agent.core.http_pool import pooled_get
-
-        response = pooled_get(
+        response = public_get(
             f"https://api.github.com/repos/{match['owner']}/{match['repo']}/readme",
-            pool_name="source_evidence",
             headers=headers,
             timeout=timeout,
-            follow_redirects=True,
         )
-    except httpx.HTTPError:
+    except (httpx.HTTPError, ValueError):
         return ""
     text = response.text.strip() if response.status_code == 200 else ""
     return text if len(text) >= 100 else ""
