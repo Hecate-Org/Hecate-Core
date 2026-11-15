@@ -1,6 +1,6 @@
 name: LLM demotion gate
 
-# Live evaluations need a separately provisioned runner with enough RAM/disk
+# Manual only. Live evaluations need a separately provisioned runner with enough RAM/disk
 # for the selected model. Never attach the production service host as a runner.
 on:
   workflow_dispatch:
@@ -20,9 +20,6 @@ on:
         description: Minimum eval score (0-1)
         required: true
         default: "0.8"
-  schedule:
-    # Weekly Sunday 06:00 UTC; live job requires HECATE_LLM_EVAL_RUNNER.
-    - cron: "0 6 * * 0"
 
 permissions:
   contents: read
