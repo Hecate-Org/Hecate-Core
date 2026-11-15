@@ -139,8 +139,8 @@ Always maintain human oversight:
 ## Level 4: Agentic
 
 Level 3 gives Claude the **tools**. Level 4 gives it **agency** — and it is built,
-not a preview: [Hecate-Runner](https://github.com/Hecate-Org/Hecate-Runner) runs on a
-systemd timer, polls CTI (OTX, RSS, MISP, CISA KEV, abuse.ch), grounds each item
+not a preview: [Hecate-Runner](https://github.com/Hecate-Org/Hecate-Runner) runs as a
+resident background daemon (`hecate-runner-daemon`), polls CTI (OTX, RSS, MISP, CISA KEV, abuse.ch), grounds each item
 with web research, and writes draft hunts into this workspace.
 
 Note what it deliberately does not do. Drafts land as `status: planning` for human
