@@ -7,7 +7,7 @@ This guide covers installation methods and development setup for Hecate.
 The supported setup in this guide uses a source checkout, so it does not depend
 on package-registry availability or an assumed GitHub release filename.
 
-Requirements: Python 3.11+, Git, and uv or Python's venv/pip tooling.
+Requirements: Python 3.11.5+, Git, and uv or Python's venv/pip tooling.
 
 ```bash
 git clone https://github.com/Hecate-Org/Hecate-Core.git
