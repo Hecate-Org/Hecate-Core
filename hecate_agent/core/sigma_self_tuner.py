@@ -76,6 +76,14 @@ FIELD_ALIASES: Dict[str, str] = {
     "eventid": "EventID",
     "provider_name": "Provider_Name",
     "queryname": "QueryName",
+    "targetobject": "TargetObject",
+    "details": "Details",
+    "pipename": "PipeName",
+    "imageloaded": "ImageLoaded",
+    "eventsource": "eventSource",
+    "eventname": "eventName",
+    "operationname": "operationName",
+    "resource": "resource",
 }
 
 
