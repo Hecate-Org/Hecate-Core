@@ -585,8 +585,12 @@ class QueryDeployer:
         splunk_url = (os.getenv("SPLUNK_URL") or os.getenv("SPLUNK_HOST") or "https://localhost:8089").rstrip("/")
         if not splunk_url.startswith(("http://", "https://")):
             splunk_url = f"https://{splunk_url}"
-        token = os.getenv("SPLUNK_TOKEN") or os.getenv("SPLUNK_API_TOKEN")
+        from hecate_agent.core.splunk_credentials import splunk_token
+
+        token = splunk_token("write")
         password = os.getenv("SPLUNK_PASSWORD")
+        if os.getenv("HECATE_STRICT_CREDENTIAL_ROLES", "").lower() in {"1", "true", "yes"}:
+            password = None
         app = os.getenv("SPLUNK_APP") or "search"
         user = os.getenv("SPLUNK_USER") or "nobody"
 
@@ -1180,8 +1184,12 @@ class QueryDeployer:
         splunk_url = (os.getenv("SPLUNK_URL") or os.getenv("SPLUNK_HOST") or "https://localhost:8089").rstrip("/")
         if not splunk_url.startswith(("http://", "https://")):
             splunk_url = f"https://{splunk_url}"
-        token = os.getenv("SPLUNK_TOKEN") or os.getenv("SPLUNK_API_TOKEN")
+        from hecate_agent.core.splunk_credentials import splunk_token
+
+        token = splunk_token("write")
         password = os.getenv("SPLUNK_PASSWORD")
+        if os.getenv("HECATE_STRICT_CREDENTIAL_ROLES", "").lower() in {"1", "true", "yes"}:
+            password = None
         app = os.getenv("SPLUNK_APP") or "search"
         user = os.getenv("SPLUNK_USER") or "nobody"
 
@@ -1255,8 +1263,12 @@ class QueryDeployer:
         splunk_url = (os.getenv("SPLUNK_URL") or os.getenv("SPLUNK_HOST") or "https://localhost:8089").rstrip("/")
         if not splunk_url.startswith(("http://", "https://")):
             splunk_url = f"https://{splunk_url}"
-        token = os.getenv("SPLUNK_TOKEN") or os.getenv("SPLUNK_API_TOKEN")
+        from hecate_agent.core.splunk_credentials import splunk_token
+
+        token = splunk_token("read")
         password = os.getenv("SPLUNK_PASSWORD")
+        if os.getenv("HECATE_STRICT_CREDENTIAL_ROLES", "").lower() in {"1", "true", "yes"}:
+            password = None
         app = os.getenv("SPLUNK_APP") or "search"
         user = os.getenv("SPLUNK_USER") or "nobody"
 

@@ -469,7 +469,7 @@ def test_a_github_repository_is_read_as_its_readme(monkeypatch: pytest.MonkeyPat
         calls.append(url)
         return httpx.Response(200, text=readme)
 
-    monkeypatch.setattr(se.httpx, "get", fake_get)
+    monkeypatch.setattr(se, "public_get", fake_get)
     assert se.fetch_page_text("https://github.com/al4n4n/CVE-2026-58115") == readme.strip()
     assert calls == ["https://api.github.com/repos/al4n4n/CVE-2026-58115/readme"]
     assert se.github_readme_text("https://github.com/al4n4n/CVE-2026-58115/blob/main/x.py") == ""
@@ -535,32 +535,18 @@ def test_assert_safe_fetch_url_rejects_private_and_metadata_hosts(monkeypatch: p
         se.assert_safe_fetch_url("https://evil.example/advisory")
 
 
-def test_fetch_page_text_blocks_redirect_to_private_target(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fetch_page_text_uses_shared_public_fetcher(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(se, "github_readme_text", lambda *a, **k: "")
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    monkeypatch.setattr(se, "assert_safe_fetch_url", lambda url: url)
+    calls = []
 
-    def guarded(url: str) -> str:
-        if "169.254" in url:
-            raise ValueError(f"refusing to fetch unsafe report URL: {url!r}")
-        return url
-
-    monkeypatch.setattr(se, "assert_safe_fetch_url", guarded)
-
-    calls: List[str] = []
-
-    def fake_get(url: str, **kwargs: Any) -> httpx.Response:
+    def blocked(url, **kwargs):
         calls.append(url)
-        if url.endswith("/start"):
-            return httpx.Response(
-                302,
-                headers={"location": "http://169.254.169.254/"},
-                request=httpx.Request("GET", url),
-            )
-        return httpx.Response(200, text="should not fetch", request=httpx.Request("GET", url))
+        raise ValueError("private destination blocked")
 
-    monkeypatch.setattr(httpx, "get", fake_get)
-
-    with pytest.raises(ValueError, match="unsafe report URL"):
+    monkeypatch.setattr(se, "public_get", blocked)
+    with pytest.raises(ValueError, match="private destination"):
         se.fetch_page_text("https://reports.example/start")
     assert calls == ["https://reports.example/start"]
 

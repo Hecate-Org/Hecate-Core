@@ -63,6 +63,8 @@ def load_workspace_env() -> None:
     3. Workspace root .env (from HECATE_WORKSPACE, .hecateconfig.yaml discovery,
        or the current working directory)
     """
+    if os.environ.get("HECATE_SERVICE_ISOLATED") == "1":
+        return
     from dotenv import load_dotenv
 
     had_ws = "HECATE_WORKSPACE" in os.environ

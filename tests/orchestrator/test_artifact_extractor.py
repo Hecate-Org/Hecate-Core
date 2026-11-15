@@ -94,7 +94,7 @@ def test_malformed_model_output_adds_nothing(monkeypatch, payload):
 
 def test_scrape_returns_visible_text_only(monkeypatch):
     html = "<html><script>var x=1;</script><nav>menu</nav><p>schtasks /create /tn MicrosoftIME</p></html>"
-    monkeypatch.setattr(ax.httpx, "get", lambda *a, **k: SimpleNamespace(status_code=200, text=html))
+    monkeypatch.setattr(ax, "public_get", lambda *a, **k: SimpleNamespace(status_code=200, text=html))
     assert ax.scrape_url_text(VOLEXITY) == "schtasks /create /tn MicrosoftIME"
 
 
@@ -105,7 +105,7 @@ def test_scrape_verifies_tls(monkeypatch):
         seen.update(kwargs)
         return SimpleNamespace(status_code=404, text="")
 
-    monkeypatch.setattr(ax.httpx, "get", fake_get)
+    monkeypatch.setattr(ax, "public_get", fake_get)
     assert ax.scrape_url_text(VOLEXITY) == ""
     assert seen.get("verify", True) is True
 
