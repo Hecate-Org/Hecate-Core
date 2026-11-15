@@ -12,6 +12,25 @@ on:
     branches: [ main, develop ]
 
 jobs:
+  required:
+    name: CI required
+    if: ${{ always() }}
+    needs: [test, validate-hunts, docs, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every CI job to pass
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          results = json.loads(os.environ["RESULTS"])
+          failed = [name for name, job in results.items() if job["result"] != "success"]
+          if failed:
+              raise SystemExit("Required CI jobs did not pass: " + ", ".join(failed))
+          PY
+
   test:
     name: Test on ${{ matrix.os }} - Python ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}

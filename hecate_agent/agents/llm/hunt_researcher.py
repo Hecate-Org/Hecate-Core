@@ -77,6 +77,9 @@ def _no_telemetry_mapped(key_findings: List[str]) -> bool:
 # Runner now sends the feed item plus the primary source's verified artifacts
 # (hecate_agent.core.source_evidence), which a 4,000 cut truncated mid-list.
 _SOURCE_CONTEXT_MAX_CHARS = 12000
+#: Compact digest injected into parallel skills 1–3; skill 5 synthesis still
+#: sees the fuller ``_source_block`` so recommendations stay grounded.
+_SOURCE_DIGEST_MAX_CHARS = 3500
 
 _GROUNDING_INSTRUCTION = (
     "Base your summary and findings strictly on the Research Context above. "
@@ -418,6 +421,9 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
         self._search_failure_detail = ""
         self._web_searches = 0
         self._workspace: Optional[Path] = None
+        self._source_context = ""
+        self._source_block_cache: Optional[str] = None
+        self._source_digest_cache: Optional[str] = None
 
     def _log_llm_metrics(
         self,
@@ -542,6 +548,8 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
         self._workspace = input_data.workspace
         # Read by every skill's prompt; set once before the skills fan out.
         self._source_context = (input_data.source_context or "").strip()[:_SOURCE_CONTEXT_MAX_CHARS]
+        self._source_block_cache = None
+        self._source_digest_cache = None
 
         from hecate_agent.core.attack_matrix import search_groups_in_text
 
@@ -559,10 +567,20 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
             # Determine search depth based on input
             search_depth = "basic" if input_data.depth == "basic" else "advanced"
 
-            # Execute skills 1-4 in parallel (they are independent)
+            # Execute skills 1-4 in parallel when backends differ. A shared
+            # local/simple backend serializes better than queueing 4 GPU jobs.
             from concurrent.futures import ThreadPoolExecutor
 
-            with ThreadPoolExecutor(max_workers=4) as executor:
+            from hecate_agent.core.llm_escalate import backends_differ
+            from hecate_agent.core.llm_router import LLMRouter
+
+            provider = self._get_provider() if self.llm_enabled else None
+            max_workers = (
+                1
+                if isinstance(provider, LLMRouter) and not backends_differ(provider)
+                else 4
+            )
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_1 = executor.submit(
                     self._skill_1_system_research,
                     input_data.topic,
@@ -1039,14 +1057,43 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
 
     def _source_block(self) -> str:
         """The source intelligence, framed as primary evidence, or nothing."""
+        cached = getattr(self, "_source_block_cache", None)
+        if isinstance(cached, str):
+            return cached
         text = getattr(self, "_source_context", "")
         if not text:
+            self._source_block_cache = ""
             return ""
-        return (
+        block = (
             "Source Intelligence (the report this research is about -- primary"
             " evidence; where web results disagree with it, it wins):\n"
             "{}\n\n".format(text)
         )
+        self._source_block_cache = block
+        return block
+
+    def _source_digest(self) -> str:
+        """Short primary-source digest for parallel skills (not synthesis)."""
+        cached = getattr(self, "_source_digest_cache", None)
+        if isinstance(cached, str):
+            return cached
+        text = getattr(self, "_source_context", "")
+        if not text:
+            self._source_digest_cache = ""
+            return ""
+        primary = text.split("SECONDARY OSINT ENRICHMENT", 1)[0].strip()
+        if len(primary) > _SOURCE_DIGEST_MAX_CHARS:
+            primary = (
+                primary[:_SOURCE_DIGEST_MAX_CHARS].rstrip()
+                + "\n...[source truncated for skill prompts; synthesis sees fuller text]...\n"
+            )
+        block = (
+            "Source Intelligence digest (primary evidence for this skill; "
+            "synthesis receives the fuller source):\n"
+            "{}\n\n".format(primary)
+        )
+        self._source_digest_cache = block
+        return block
 
     def _llm_summarize_system_research(
         self,
@@ -1093,7 +1140,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
                 ' "finding3"]\n}}'
             ).format(
                 topic=topic,
-                source=self._source_block(),
+                source=self._source_digest(),
                 context=context,
                 grounding=_GROUNDING_INSTRUCTION,
             )
@@ -1208,7 +1255,7 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
                 anti_hallucination=_GROUNDING_INSTRUCTION,
                 topic=topic,
                 technique_str=technique_str,
-                source=self._source_block(),
+                source=self._source_digest(),
                 context=context,
             )
 
@@ -1289,9 +1336,9 @@ class HuntResearcherAgent(LLMAgent[ResearchInput, ResearchOutput]):
                 grounding=grounding,
                 topic=topic,
                 technique_str=technique_str,
-                source=self._source_block(),
+                source=self._source_digest(),
                 ocsf_schema=ocsf_schema[:3000],
-                telemetry_examples=render_examples(f"{topic}\n{self._source_block()}"),
+                telemetry_examples=render_examples(f"{topic}\n{self._source_context}"),
                 environment_data=environment_data[:1000],
             )
 

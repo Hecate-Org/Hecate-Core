@@ -148,3 +148,102 @@ class TestAtomicRedTeam:
         assert res.backend == "simulation"
         assert len(res.events) > 0
         assert any(e.get("category") == "process_creation" for e in res.events)
+
+    def test_get_atomic_tests_extended_catalog(self):
+        techniques = ["T1033", "T1059.006", "T1090", "T1095", "T1021.007", "T1546.016"]
+        for tid in techniques:
+            tests = get_atomic_tests(tid)
+            assert len(tests) >= 1, f"Expected at least 1 test for {tid}"
+
+        # Platform filtering: T1033 should return tests on both Windows and Linux
+        win_tests = get_atomic_tests("T1033", platforms=["Windows"])
+        linux_tests = get_atomic_tests("T1033", platforms=["Linux"])
+        assert any("whoami" in t["command"].lower() for t in win_tests)
+        assert any("whoami" in t["command"].lower() or "id" in t["command"].lower() for t in linux_tests)
+
+        # T1095: Linux tests should include ping / nc
+        linux_1095 = get_atomic_tests("T1095", platforms=["Linux"])
+        assert any("ping" in t["command"] or "nc" in t["command"] for t in linux_1095)
+
+        # Markdown rendering should produce valid tables without placeholder warnings
+        md = format_atomic_tests_markdown(techniques)
+        for tid in techniques:
+            assert f"`{tid}`" in md
+            assert f"No Atomic Red Team test is mapped for `{tid}`" not in md
+
+    def test_synthesize_atomic_telemetry_extended_techniques(self):
+        from hecate_agent.core.atomic_red_team import synthesize_atomic_telemetry
+
+        # T1033
+        t1033 = synthesize_atomic_telemetry("T1033")
+        assert "process_creation" in t1033
+        assert any("whoami" in e.get("CommandLine", "").lower() for e in t1033["process_creation"])
+
+        # T1059.006
+        t1059_006 = synthesize_atomic_telemetry("T1059.006")
+        assert "process_creation" in t1059_006
+        assert any("python" in e.get("Image", "").lower() for e in t1059_006["process_creation"])
+        assert "network_connection" in t1059_006
+
+        # T1090
+        t1090 = synthesize_atomic_telemetry("T1090")
+        assert "process_creation" in t1090
+        assert any(
+            "netsh" in e.get("Image", "").lower() or "ssh" in e.get("Image", "").lower() for e in t1090["process_creation"]
+        )
+        assert "registry_set" in t1090
+        assert "network_connection" in t1090
+
+        # T1095
+        t1095 = synthesize_atomic_telemetry("T1095")
+        assert "process_creation" in t1095
+        assert any(
+            "ping" in e.get("Image", "").lower() or "nc" in e.get("Image", "").lower() for e in t1095["process_creation"]
+        )
+        assert "network_connection" in t1095
+
+        # T1021.007
+        t1021_007 = synthesize_atomic_telemetry("T1021.007")
+        assert "cloud_audit" in t1021_007
+        assert any(e.get("eventName") == "StartSession" for e in t1021_007["cloud_audit"])
+        assert "process_creation" in t1021_007
+
+        # T1546.016
+        t1546_016 = synthesize_atomic_telemetry("T1546.016")
+        assert "process_creation" in t1546_016
+        assert any("msiexec.exe" in e.get("Image", "").lower() for e in t1546_016["process_creation"])
+        assert "file_event" in t1546_016
+        assert "network_connection" in t1546_016
+
+        # T1055 - Process Injection
+        t1055 = synthesize_atomic_telemetry("T1055")
+        assert "process_creation" in t1055
+        assert "create_remote_thread" in t1055
+        assert any("mavinject.exe" in e.get("Image", "").lower() for e in t1055["process_creation"])
+
+        # T1003.002 - SAM Registry Dump
+        t1003_002 = synthesize_atomic_telemetry("T1003.002")
+        assert "process_creation" in t1003_002
+        assert any("sam.save" in e.get("CommandLine", "").lower() for e in t1003_002["process_creation"])
+        assert "file_event" in t1003_002
+
+        # T1021.002 - SMB Admin Shares
+        t1021_002 = synthesize_atomic_telemetry("T1021.002")
+        assert "process_creation" in t1021_002
+        assert "network_connection" in t1021_002
+        assert any(e.get("DestinationPort") == 445 for e in t1021_002["network_connection"])
+
+        # T1078.004 - Cloud Accounts
+        t1078_004 = synthesize_atomic_telemetry("T1078.004")
+        assert "cloud_audit" in t1078_004
+        assert any(e.get("eventName") == "CreateAccessKey" for e in t1078_004["cloud_audit"])
+
+        # T1530 - Data from Cloud Storage
+        t1530 = synthesize_atomic_telemetry("T1530")
+        assert "cloud_audit" in t1530
+        assert any(e.get("eventName") == "GetObject" for e in t1530["cloud_audit"])
+
+        # T1562.008 - Disable Cloud Logs
+        t1562_008 = synthesize_atomic_telemetry("T1562.008")
+        assert "cloud_audit" in t1562_008
+        assert any(e.get("eventName") == "StopLogging" for e in t1562_008["cloud_audit"])

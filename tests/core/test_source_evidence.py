@@ -117,9 +117,20 @@ def test_url_ports_scope_their_host() -> None:
 
 def test_chunks_cover_the_whole_page_within_the_size_limit() -> None:
     page = "\n".join(f"line {i} " + "x" * 90 for i in range(400))
-    chunks = se.chunk_text(page, size=5000, overlap=300)
+    chunks = se.chunk_text(page, size=5000, overlap=300, max_chunks=0)
     assert len(chunks) > 1 and all(len(c) <= 5000 for c in chunks)
     assert chunks[0] == page[: len(chunks[0])] and page.endswith(chunks[-1])
+
+
+def test_chunk_budget_caps_call_count_and_keeps_tail() -> None:
+    page = "\n".join(f"line {i} " + "x" * 90 for i in range(2000))
+    chunks = se.chunk_text(page, size=5000, overlap=300, max_chunks=8)
+    assert 1 < len(chunks) <= 8
+    assert page.endswith(chunks[-1])
+    assert chunks[0] == page[: len(chunks[0])]
+    # Without a budget the same page needs more windows than the cap.
+    uncapped = se.chunk_text(page, size=5000, overlap=300, max_chunks=0)
+    assert len(uncapped) > len(chunks)
 
 
 def _extract(*artifacts: Dict[str, Any]) -> se.SourceEvidence:
@@ -458,7 +469,7 @@ def test_a_github_repository_is_read_as_its_readme(monkeypatch: pytest.MonkeyPat
         calls.append(url)
         return httpx.Response(200, text=readme)
 
-    monkeypatch.setattr(se.httpx, "get", fake_get)
+    monkeypatch.setattr(se, "public_get", fake_get)
     assert se.fetch_page_text("https://github.com/al4n4n/CVE-2026-58115") == readme.strip()
     assert calls == ["https://api.github.com/repos/al4n4n/CVE-2026-58115/readme"]
     assert se.github_readme_text("https://github.com/al4n4n/CVE-2026-58115/blob/main/x.py") == ""
@@ -504,4 +515,51 @@ def test_reference_urls_and_domains_are_excluded_from_indicators() -> None:
     )
     assert artifact is None
     assert "reference/documentation URL" in problem
+
+
+def test_assert_safe_fetch_url_rejects_private_and_metadata_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert se.is_safe_report_url("http://127.0.0.1/report") is False
+    assert se.is_safe_report_url("http://169.254.169.254/latest/meta-data/") is False
+    assert se.is_safe_report_url("https://evil.local/advisory") is False
+
+    with pytest.raises(ValueError, match="unsafe report URL"):
+        se.assert_safe_fetch_url("http://127.0.0.1/report")
+
+    # Hostname looks public but DNS returns a link-local / private address.
+    monkeypatch.setattr(
+        se.socket,
+        "getaddrinfo",
+        lambda *a, **k: [(0, 0, 0, "", ("169.254.169.254", 0))],
+    )
+    with pytest.raises(ValueError, match="non-public DNS"):
+        se.assert_safe_fetch_url("https://evil.example/advisory")
+
+
+def test_fetch_page_text_uses_shared_public_fetcher(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(se, "github_readme_text", lambda *a, **k: "")
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    monkeypatch.setattr(se, "assert_safe_fetch_url", lambda url: url)
+    calls = []
+
+    def blocked(url, **kwargs):
+        calls.append(url)
+        raise ValueError("private destination blocked")
+
+    monkeypatch.setattr(se, "public_get", blocked)
+    with pytest.raises(ValueError, match="private destination"):
+        se.fetch_page_text("https://reports.example/start")
+    assert calls == ["https://reports.example/start"]
+
+
+def test_extract_source_evidence_refuses_unsafe_url_before_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+    called = {"fetch": False}
+
+    def boom(_url: str) -> str:
+        called["fetch"] = True
+        raise AssertionError("fetch_page_text must not run for unsafe URLs")
+
+    monkeypatch.setattr(se, "fetch_page_text", boom)
+    ev = se.extract_source_evidence("http://127.0.0.1/secret")
+    assert called["fetch"] is False
+    assert ev.error and "unsafe" in ev.error
 

@@ -484,10 +484,12 @@ class SigmaTranspiler:
         cacheable = type(self) is SigmaTranspiler
         with _QUERY_CACHE_LOCK:
             query = _QUERY_CACHE.get(key) if cacheable else None
-            if query is None:
-                query = converter(normalizer(rule_yaml, target), target)
-            validation = self.validator.validate(target, query)
-            if cacheable:
+        # Convert outside the lock so parallel transpile work is not serialized.
+        if query is None:
+            query = converter(normalizer(rule_yaml, target), target)
+        validation = self.validator.validate(target, query)
+        if cacheable:
+            with _QUERY_CACHE_LOCK:
                 if validation.is_valid and query and len(query.encode("utf-8")) <= MAX_CACHED_QUERY_BYTES:
                     _QUERY_CACHE[key] = query
                     _QUERY_CACHE.move_to_end(key)
@@ -495,7 +497,7 @@ class SigmaTranspiler:
                         _QUERY_CACHE.popitem(last=False)
                 else:
                     _QUERY_CACHE.pop(key, None)
-            return query, validation
+        return query, validation
 
     def _transpile_single_target(self, rule_yaml: str, target: str) -> str:
         """Internal helper to convert a Sigma rule for a specific backend."""

@@ -155,15 +155,15 @@ class SourceExtractionSession:
             row["reserved_tokens"] = reservation
             usage["llm_calls"] = usage.get("llm_calls", 0) + 1
             usage.setdefault("input_token_samples", 0)
-            if isinstance(provider, LLMRouter):
-                response = provider.complete(
-                    messages,
-                    max_tokens=allowance,
-                    temperature=0.0,
-                    capability=capability,
-                )
-            else:
-                response = provider.complete(messages, max_tokens=allowance, temperature=0.0)
+
+            from hecate_agent.core.llm_escalate import can_escalate
+            from hecate_agent.core.llm_prompt_budget import would_clip_messages_for_simple
+
+            skip_simple = (
+                isinstance(provider, LLMRouter)
+                and can_escalate(provider, capability=capability)
+                and would_clip_messages_for_simple(messages)
+            )
 
             def _record_usage(resp: Any) -> None:
                 usage["input_tokens"] = usage.get("input_tokens", 0) + resp.input_tokens
@@ -176,14 +176,35 @@ class SourceExtractionSession:
                 usage["cost_usd"] = usage.get("cost_usd", 0.0) + resp.cost_usd
                 usage["models"] = sorted({*usage.get("models", []), resp.model})
 
+            if skip_simple:
+                row["escalated"] = True
+                from hecate_agent.core.llm_activity import call_meta
+
+                with call_meta(escalated="true", escalate_from="simple_over_budget"):
+                    response = provider.complete(
+                        messages,
+                        max_tokens=allowance,
+                        temperature=0.0,
+                        tier="complex",
+                        capability=capability,
+                    )
+            elif isinstance(provider, LLMRouter):
+                response = provider.complete(
+                    messages,
+                    max_tokens=allowance,
+                    temperature=0.0,
+                    capability=capability,
+                )
+            else:
+                response = provider.complete(messages, max_tokens=allowance, temperature=0.0)
+
             output_bound = response.output_tokens or allowance
             self.tokens_used += max(prompt_bound, response.input_tokens) + output_bound - reservation
             _record_usage(response)
 
-            from hecate_agent.core.llm_escalate import can_escalate
-
             if (
-                not validate(response.text)
+                not skip_simple
+                and not validate(response.text)
                 and isinstance(provider, LLMRouter)
                 and can_escalate(provider, capability=capability)
             ):
@@ -217,7 +238,7 @@ class SourceExtractionSession:
             )
             if row["status"] == "ok":
                 self._cache_write(key, response.text)
-            return response.text
+            return str(response.text)
         finally:
             row["duration_ms"] = max(0, round((time.monotonic() - started) * 1000))
             self.attempts.append(row)

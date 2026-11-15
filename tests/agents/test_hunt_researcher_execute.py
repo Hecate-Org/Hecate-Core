@@ -181,6 +181,11 @@ class TestExecuteHappyPath:
         assert result.success is True
         assert len(provider.prompts) == 4
         assert all("hid payloads in font files" in prompt for prompt in provider.prompts)
+        # Skills 1-3 use the short digest; synthesis keeps the fuller source block.
+        digest_prompts = provider.prompts[:3]
+        synthesis_prompt = provider.prompts[3]
+        assert all("Source Intelligence digest" in p for p in digest_prompts)
+        assert "Source Intelligence (the report this research is about" in synthesis_prompt
 
     def test_no_source_context_adds_no_source_section(self, monkeypatch: pytest.MonkeyPatch) -> None:
         provider = CapturingProvider()

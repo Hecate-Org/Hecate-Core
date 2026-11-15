@@ -20,11 +20,14 @@ import ipaddress
 import json
 import logging
 import re
+import socket
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 import httpx
+
+from hecate_agent.core.public_http import public_get
 
 from hecate_agent.core.source_extraction import SourceBudgetExceeded, SourceExtractionSession
 from hecate_agent.core.provenance import (
@@ -39,12 +42,14 @@ from hecate_agent.core.provenance import (
 
 logger = logging.getLogger(__name__)
 
-#: Characters per extraction call. The whole report is read, in chunks: the
-#: H-0618 report kept its hash roles and historical-domain note past 25,000.
-CHUNK_CHARS = 11000
-CHUNK_OVERLAP = 600
+#: Characters per extraction call. Larger chunks cut LLM round-trips on long
+#: CTI pages; line-boundary splitting still avoids mid-artifact cuts.
+CHUNK_CHARS = 22000
+CHUNK_OVERLAP = 300
 #: Hard ceiling on page text, so a runaway page cannot turn into dozens of calls.
 MAX_PAGE_CHARS = 120000
+#: Soft cap on chunk count before the page is truncated further for extraction.
+MAX_EXTRACTION_CHUNKS = 8
 #: Words that must match contiguously for a quoted passage to count as found.
 EVIDENCE_WINDOW = 8
 
@@ -144,6 +149,10 @@ _DISALLOWED_PATHS = {
 }
 
 
+#: Cap redirect hops so a malicious Location chain cannot loop forever.
+MAX_FETCH_REDIRECTS = 5
+
+
 def is_safe_report_url(url: str) -> bool:
     """True if ``url`` looks like a public advisory/article and not adversary infra or a payload drop."""
     if not url or not isinstance(url, str):
@@ -152,7 +161,7 @@ def is_safe_report_url(url: str) -> bool:
         parsed = urlsplit(url.strip())
     except Exception:
         return False
-    if parsed.scheme not in ("http", "https"):
+    if parsed.scheme not in ("http", "https") or parsed.username is not None or parsed.password is not None:
         return False
     host = parsed.hostname
     if not host:
@@ -167,10 +176,14 @@ def is_safe_report_url(url: str) -> bool:
         pass
     if "." not in host:
         return False
-    if parsed.port is not None:
-        if parsed.scheme == "http" and parsed.port != 80:
+    try:
+        port = parsed.port
+    except ValueError:
+        return False
+    if port is not None:
+        if parsed.scheme == "http" and port != 80:
             return False
-        if parsed.scheme == "https" and parsed.port != 443:
+        if parsed.scheme == "https" and port != 443:
             return False
     path = (parsed.path or "").lower()
     for ext in _DISALLOWED_EXTENSIONS:
@@ -180,6 +193,49 @@ def is_safe_report_url(url: str) -> bool:
         if path.endswith(bad_path) or bad_path in path:
             return False
     return True
+
+
+def _hostname_resolves_publicly(host: str) -> bool:
+    """True when every resolved address for ``host`` is globally routable (blocks SSRF to LAN/metadata)."""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return False
+    if not infos:
+        return False
+    for info in infos:
+        try:
+            addr = ipaddress.ip_address(info[4][0])
+        except (ValueError, IndexError, TypeError):
+            return False
+        if not addr.is_global:
+            return False
+    return True
+
+
+def assert_safe_fetch_url(url: str) -> str:
+    """Return a normalized public report URL or raise ``ValueError`` if fetching it would be unsafe.
+
+    Checks scheme/host/path heuristics and that DNS resolution does not point at
+    private, loopback, link-local, or otherwise non-global addresses.
+    """
+    cleaned = (url or "").strip()
+    if not is_safe_report_url(cleaned):
+        raise ValueError(f"refusing to fetch unsafe report URL: {cleaned!r}")
+    host = urlsplit(cleaned).hostname
+    if not host or not _hostname_resolves_publicly(host):
+        raise ValueError(f"refusing to fetch URL with non-public DNS resolution: {cleaned!r}")
+    return cleaned
+
+
+def _safe_get_following_redirects(
+    url: str,
+    *,
+    timeout: float,
+    headers: Dict[str, str],
+) -> httpx.Response:
+    """Fetch with bounded bytes and a checked numeric address for every connection."""
+    return public_get(url, timeout=timeout, headers=headers)
 
 
 INDICATOR_KINDS = {
@@ -354,34 +410,41 @@ def github_readme_text(url: str, timeout: float = 20.0) -> str:
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
-        response = httpx.get(
+        response = public_get(
             f"https://api.github.com/repos/{match['owner']}/{match['repo']}/readme",
             headers=headers,
             timeout=timeout,
-            follow_redirects=True,
         )
-    except httpx.HTTPError:
+    except (httpx.HTTPError, ValueError):
         return ""
     text = response.text.strip() if response.status_code == 200 else ""
     return text if len(text) >= 100 else ""
 
 
 def fetch_page_text(url: str, timeout: float = 20.0) -> str:
-    """Visible text of a report page, or raise on any failure."""
+    """Visible text of a report page, or raise on any failure.
+
+    Refuses private/non-public targets and re-validates every redirect hop.
+    Does not shell out to ``curl`` (which previously followed redirects unchecked).
+    """
     import os
-    import subprocess
     from bs4 import BeautifulSoup
 
-    readme = github_readme_text(url, timeout)
+    safe_url = assert_safe_fetch_url(url)
+
+    readme = github_readme_text(safe_url, timeout)
     if readme:
         return readme[:MAX_PAGE_CHARS]
 
     tavily_key = os.getenv("TAVILY_API_KEY")
     if tavily_key:
         try:
-            r = httpx.post(
+            from hecate_agent.core.http_pool import pooled_post
+
+            r = pooled_post(
                 "https://api.tavily.com/extract",
-                json={"urls": [url], "api_key": tavily_key},
+                pool_name="source_evidence",
+                json={"urls": [safe_url], "api_key": tavily_key},
                 timeout=min(timeout, 15.0),
             )
             if r.status_code == 200:
@@ -407,23 +470,8 @@ def fetch_page_text(url: str, timeout: float = 20.0) -> str:
         "Sec-Fetch-User": "?1",
         "Upgrade-Insecure-Requests": "1",
     }
-    try:
-        response = httpx.get(url, timeout=timeout, headers=headers, follow_redirects=True)
-        response.raise_for_status()
-        html = response.text
-    except Exception as exc:
-        try:
-            res = subprocess.run(
-                ["curl", "-sL", "-m", str(int(timeout)), url],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            html = res.stdout
-            if not html.strip():
-                raise exc
-        except Exception:
-            raise exc
+    response = _safe_get_following_redirects(safe_url, timeout=timeout, headers=headers)
+    html = response.text
 
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
@@ -490,13 +538,34 @@ def strip_page_furniture(text: str) -> str:
     return text
 
 
-def chunk_text(text: str, size: int = CHUNK_CHARS, overlap: int = CHUNK_OVERLAP) -> List[str]:
-    """Split on line boundaries into overlapping chunks, so no artifact is cut in two."""
+def chunk_text(
+    text: str,
+    size: int = CHUNK_CHARS,
+    overlap: int = CHUNK_OVERLAP,
+    *,
+    max_chunks: int = MAX_EXTRACTION_CHUNKS,
+) -> List[str]:
+    """Split on line boundaries into overlapping chunks, so no artifact is cut in two.
+
+    When a page would exceed ``max_chunks``, chunk size grows so extraction stays
+    within a bounded number of LLM calls. The final slot always absorbs any
+    remainder so tail artifacts are not dropped. Pass ``max_chunks=0`` to disable
+    the call-budget cap (size limit still applies).
+    """
     if len(text) <= size:
         return [text]
+    if max_chunks > 0:
+        # Account for overlap so the budgeted windows still cover the page.
+        min_size = (len(text) + (max_chunks - 1) * overlap + max_chunks - 1) // max_chunks
+        if min_size > size:
+            size = min_size
+
     chunks: List[str] = []
     start = 0
     while start < len(text):
+        if max_chunks > 0 and len(chunks) >= max_chunks - 1:
+            chunks.append(text[start:])
+            break
         end = min(len(text), start + size)
         if end < len(text):
             newline = text.rfind("\n", start + size // 2, end)
@@ -1228,7 +1297,11 @@ def extract_source_evidence(
     """
     evidence = SourceEvidence(url=url)
     try:
-        text = page_text if page_text is not None else fetch_page_text(url)
+        if page_text is None:
+            assert_safe_fetch_url(url)
+            text = fetch_page_text(url)
+        else:
+            text = page_text
     except (httpx.HTTPError, ValueError) as exc:
         evidence.error = f"fetch failed: {exc}"
         return evidence

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import atexit
 import threading
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Iterator
 from unittest.mock import Mock, NonCallableMock
 
 import httpx
@@ -60,6 +61,117 @@ def close_shared_clients() -> None:
 
 
 atexit.register(close_shared_clients)
+
+
+def pooled_request(
+    method: str,
+    url: str,
+    *,
+    pool_name: str = "default",
+    timeout: float | httpx.Timeout | None = 15.0,
+    verify: bool = True,
+    follow_redirects: bool = True,
+    headers: dict[str, str] | None = None,
+    **kwargs: Any,
+) -> httpx.Response:
+    """Issue an HTTP request via the shared keep-alive pool.
+
+    Falls back to bare ``httpx.request`` when tests have patched ``httpx.get`` /
+    ``httpx.post`` so existing mocks keep working.
+    """
+    method_u = method.upper()
+    if method_u == "GET" and is_mocked(httpx.get, _ORIGINAL_HTTPX_GET):
+        return httpx.get(
+            url,
+            timeout=timeout,
+            verify=verify,
+            follow_redirects=follow_redirects,
+            headers=headers,
+            **kwargs,
+        )
+    if method_u == "POST" and is_mocked(httpx.post, _ORIGINAL_HTTPX_POST):
+        return httpx.post(
+            url,
+            timeout=timeout,
+            verify=verify,
+            follow_redirects=follow_redirects,
+            headers=headers,
+            **kwargs,
+        )
+    timeout_s = 15.0
+    if isinstance(timeout, (int, float)):
+        timeout_s = float(timeout)
+    elif isinstance(timeout, httpx.Timeout):
+        # Prefer read timeout when present; fall back to pool default.
+        read = getattr(timeout, "read", None)
+        timeout_s = float(read) if isinstance(read, (int, float)) else 15.0
+    client = get_shared_client(
+        pool_name=pool_name,
+        timeout=timeout_s,
+        verify=verify,
+        follow_redirects=follow_redirects,
+        headers=headers,
+    )
+    return client.request(method_u, url, timeout=timeout, **kwargs)
+
+
+def pooled_get(url: str, **kwargs: Any) -> httpx.Response:
+    return pooled_request("GET", url, **kwargs)
+
+
+def pooled_post(url: str, **kwargs: Any) -> httpx.Response:
+    return pooled_request("POST", url, **kwargs)
+
+
+@contextmanager
+def use_shared_httpx(pool_name: str = "default") -> Iterator[None]:
+    """Temporarily route module-level ``httpx.get``/``post`` through the pool.
+
+    No-ops when tests have already patched those entry points.
+    """
+    if is_mocked(httpx.get, _ORIGINAL_HTTPX_GET) or is_mocked(httpx.post, _ORIGINAL_HTTPX_POST):
+        yield
+        return
+
+    def _get(url: str, **kwargs: Any) -> httpx.Response:
+        # Call the client directly — do not re-enter via patched ``httpx.get``.
+        timeout = kwargs.pop("timeout", 15.0)
+        verify = kwargs.pop("verify", True)
+        follow_redirects = kwargs.pop("follow_redirects", True)
+        headers = kwargs.pop("headers", None)
+        timeout_s = float(timeout) if isinstance(timeout, (int, float)) else 15.0
+        client = get_shared_client(
+            pool_name=pool_name,
+            timeout=timeout_s,
+            verify=verify,
+            follow_redirects=follow_redirects,
+            headers=headers,
+        )
+        return client.get(url, timeout=timeout, **kwargs)
+
+    def _post(url: str, **kwargs: Any) -> httpx.Response:
+        timeout = kwargs.pop("timeout", 15.0)
+        verify = kwargs.pop("verify", True)
+        follow_redirects = kwargs.pop("follow_redirects", True)
+        headers = kwargs.pop("headers", None)
+        timeout_s = float(timeout) if isinstance(timeout, (int, float)) else 15.0
+        client = get_shared_client(
+            pool_name=pool_name,
+            timeout=timeout_s,
+            verify=verify,
+            follow_redirects=follow_redirects,
+            headers=headers,
+        )
+        return client.post(url, timeout=timeout, **kwargs)
+
+    original_get, original_post = httpx.get, httpx.post
+    httpx.get = _get  # type: ignore[assignment]
+    httpx.post = _post  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        httpx.get = original_get
+        httpx.post = original_post
 
 
 def is_mocked(func: Any, original: Any | None = None) -> bool:

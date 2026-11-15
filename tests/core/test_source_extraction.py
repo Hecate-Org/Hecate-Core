@@ -82,6 +82,7 @@ def test_cache_invalidation(tmp_path, provider, monkeypatch, change):
 
 
 def test_source_is_refetched_before_cache_lookup(tmp_path, provider, monkeypatch):
+    monkeypatch.setattr(se, "assert_safe_fetch_url", lambda u: u)
     fetch = Mock(side_effect=[PAGE, PAGE, PAGE + " Updated."])
     monkeypatch.setattr(se, "fetch_page_text", fetch)
     for _ in range(3):
@@ -152,7 +153,7 @@ def test_cache_hit_does_not_spend_classification_budget(tmp_path, provider):
 
 def test_failed_calls_consume_budget_and_usage_stays_unknown(tmp_path, provider):
     provider.complete.side_effect = RuntimeError("offline")
-    result = extract(tmp_path, text=PAGE * 600, max_calls=2)
+    result = extract(tmp_path, text=PAGE * 1200, max_calls=2)
     assert provider.complete.call_count == 2
     assert result.extraction_metrics["budget_exhausted"]
     assert result.usage_metadata()["input_tokens"] is None

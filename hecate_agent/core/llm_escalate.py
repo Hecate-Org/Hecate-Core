@@ -50,7 +50,30 @@ def complete_with_escalation(
     Returns ``(response, escalated)``. The returned response is the last attempt
     (complex when escalated), even when still invalid — callers decide next steps.
     """
+    from hecate_agent.core.llm_prompt_budget import would_clip_messages_for_simple
+
     resolved = router.resolve_tier(tier, capability)
+    # Oversized prompts are clipped on simple and often fail validation; skip
+    # the doomed local call when a distinct complex backend is available.
+    if (
+        resolved == "simple"
+        and backends_differ(router)
+        and would_clip_messages_for_simple(messages)
+    ):
+        logger.info(
+            "Skipping simple for oversized %s prompt; using complex directly",
+            capability or tier or "llm",
+        )
+        with call_meta(escalated="true", escalate_from="simple_over_budget"):
+            response = router.complete(
+                list(messages),
+                max_tokens=max_tokens,
+                temperature=temperature,
+                tier="complex",
+                capability=capability,
+            )
+        return response, True
+
     response = router.complete(
         list(messages),
         max_tokens=max_tokens,

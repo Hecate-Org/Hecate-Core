@@ -6,11 +6,13 @@ telemetry events into Hecate's Sigma evaluator for closed-loop detection validat
 
 Supported Execution Backends:
 - BwrapBackend: Linux rootless unprivileged containerization via bubblewrap (bwrap).
-  Mounts host filesystem strictly read-only, provides an ephemeral in-memory tmpfs,
-  and intercepts kernel syscalls via strace.
-- DockerBackend: Ephemeral Docker containerization (`docker run --rm`) when Docker daemon is operational.
-- SubprocessBackend: Portable fallback execution in an isolated temporary directory with timeout and environment protection.
-- MockBackend: Deterministic synthetic replay for offline unit testing and automated CI.
+  Binds only runtime paths read-only, hides home/root, disables network, and uses
+  an ephemeral tmpfs for /tmp; intercepts syscalls via strace.
+- DockerBackend: Ephemeral Docker/Podman containers with no network, read-only root,
+  no-new-privileges, and all capabilities dropped.
+- SubprocessBackend: Explicit opt-in only (HECATE_ALLOW_UNSANDBOXED_EMULATION=1 or
+  allow_unsandboxed=True). Never selected automatically.
+- MockBackend / SimulationBackend: Deterministic synthetic backends for CI and safe default.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ import tempfile
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from hecate_agent.core.sigma_evaluator import EvaluationReport, SigmaEvaluator
@@ -31,10 +34,36 @@ from hecate_agent.core.telemetry_harvester import TelemetryHarvester
 
 logger = logging.getLogger(__name__)
 
+_UNSANDBOXED_ENV = "HECATE_ALLOW_UNSANDBOXED_EMULATION"
+
 
 def _ptrace_unavailable(stderr: str) -> bool:
     """Detect strace failing before it could run the requested command."""
     return "ptrace(" in stderr and "Operation not permitted" in stderr
+
+
+def _unsandboxed_emulation_allowed(explicit: bool = False) -> bool:
+    return explicit or os.environ.get(_UNSANDBOXED_ENV, "").strip() == "1"
+
+
+def _bwrap_ro_binds() -> List[str]:
+    """Host paths required to run a minimal shell command, bound read-only."""
+    args: List[str] = []
+    for path in ("/usr", "/bin", "/lib", "/lib64", "/sbin"):
+        if Path(path).exists():
+            args.extend(["--ro-bind", path, path])
+    for path in (
+        "/etc/ld.so.cache",
+        "/etc/ld.so.conf",
+        "/etc/ld.so.conf.d",
+        "/etc/alternatives",
+        "/etc/nsswitch.conf",
+        "/etc/passwd",
+        "/etc/group",
+    ):
+        if Path(path).exists():
+            args.extend(["--ro-bind", path, path])
+    return args
 
 
 @dataclass
@@ -109,6 +138,50 @@ class BwrapBackend(BaseSandboxBackend):
         assert self.bwrap_bin is not None
         assert self.strace_bin is not None
 
+        binds = _bwrap_ro_binds()
+        if not binds:
+            raise RuntimeError("bwrap sandbox could not bind any host runtime paths")
+
+        # Network is disabled; home/root/var are replaced with empty tmpfs so
+        # host secrets under those trees are not readable from the sandbox.
+        bwrap_cmd = [
+            self.bwrap_bin,
+            "--die-with-parent",
+            "--new-session",
+            "--unshare-net",
+            "--unshare-pid",
+            "--clearenv",
+            "--setenv",
+            "PATH",
+            "/usr/bin:/bin:/usr/sbin:/sbin",
+            "--setenv",
+            "HOME",
+            "/tmp",
+            "--setenv",
+            "TMPDIR",
+            "/tmp",
+            *binds,
+            "--dev",
+            "/dev",
+            "--proc",
+            "/proc",
+            "--tmpfs",
+            "/tmp",
+            "--tmpfs",
+            "/home",
+            "--tmpfs",
+            "/root",
+            "--tmpfs",
+            "/var",
+            "--tmpfs",
+            "/run",
+            "--chdir",
+            "/tmp",
+            "sh",
+            "-c",
+            command,
+        ]
+
         cmd = [
             self.strace_bin,
             "-f",
@@ -116,19 +189,7 @@ class BwrapBackend(BaseSandboxBackend):
             "256",
             "-e",
             "trace=execve,openat,creat,unlink,unlinkat,rename,renameat,renameat2,connect",
-            self.bwrap_bin,
-            "--ro-bind",
-            "/",
-            "/",
-            "--dev",
-            "/dev",
-            "--proc",
-            "/proc",
-            "--tmpfs",
-            "/tmp",
-            "sh",
-            "-c",
-            command,
+            *bwrap_cmd,
         ]
 
         try:
@@ -138,7 +199,6 @@ class BwrapBackend(BaseSandboxBackend):
                 timeout=timeout,
                 cwd=workdir,
             )
-            # Strace outputs trace lines on stderr; separate inner program stderr if needed
             return proc.returncode, proc.stdout, proc.stderr, proc.stderr
         except subprocess.TimeoutExpired:
             return -1, "", f"Command timed out after {timeout} seconds", ""
@@ -160,7 +220,6 @@ class DockerBackend(BaseSandboxBackend):
         if not self.docker_bin:
             return False
         try:
-            # Check if Docker daemon is responsive
             res = subprocess.run(
                 [self.docker_bin, "info"],
                 capture_output=True,
@@ -187,7 +246,16 @@ class DockerBackend(BaseSandboxBackend):
             "--rm",
             "-i",
             "--network",
-            "bridge",
+            "none",
+            "--read-only",
+            "--tmpfs",
+            "/tmp:rw,exec,nosuid,nodev,size=64m",
+            "--security-opt",
+            "no-new-privileges",
+            "--cap-drop",
+            "ALL",
+            "--user",
+            "65534:65534",
             self.image,
             "sh",
             "-c",
@@ -209,19 +277,22 @@ class DockerBackend(BaseSandboxBackend):
 
 
 class SubprocessBackend(BaseSandboxBackend):
-    """Fallback execution within an isolated temporary directory."""
+    """Host-process fallback. Disabled unless explicitly opted in.
 
-    def __init__(self) -> None:
-        # A Git for Windows installation may expose an unrelated MSYS
-        # strace.exe on PATH; it does not accept the Linux syscall options
-        # used here, so syscall tracing is only enabled on POSIX hosts.
+    This backend runs ``sh -c`` on the host and must never be the automatic
+    choice for purple-team detonation. Opt in with ``allow_unsandboxed=True``
+    or ``HECATE_ALLOW_UNSANDBOXED_EMULATION=1``.
+    """
+
+    def __init__(self, *, allow_unsandboxed: bool = False) -> None:
+        self.allow_unsandboxed = _unsandboxed_emulation_allowed(allow_unsandboxed)
         self.strace_bin = shutil.which("strace") if os.name == "posix" else None
 
     def name(self) -> str:
         return "subprocess"
 
     def is_available(self) -> bool:
-        return True
+        return self.allow_unsandboxed
 
     def run(
         self,
@@ -229,6 +300,12 @@ class SubprocessBackend(BaseSandboxBackend):
         timeout: float = 30.0,
         workdir: Optional[str] = None,
     ) -> Tuple[int, str, str, str]:
+        if not self.allow_unsandboxed:
+            raise RuntimeError(
+                "Unsandboxed subprocess emulation is disabled. Use bwrap/docker "
+                f"or set {_UNSANDBOXED_ENV}=1 only for controlled local debugging."
+            )
+
         with tempfile.TemporaryDirectory() as temp_dir:
             exec_dir = workdir or temp_dir
 
@@ -254,10 +331,12 @@ class SubprocessBackend(BaseSandboxBackend):
                     timeout=timeout,
                     cwd=exec_dir,
                 )
-                if self.strace_bin and proc.returncode != 0 and not proc.stdout and _ptrace_unavailable(proc.stderr):
-                    # Some CI/container hosts ship strace but prohibit ptrace.
-                    # Preserve subprocess execution there; telemetry is empty
-                    # because the host cannot provide syscall traces.
+                if (
+                    self.strace_bin
+                    and proc.returncode != 0
+                    and not proc.stdout
+                    and _ptrace_unavailable(proc.stderr)
+                ):
                     proc = run_process_group(
                         ["sh", "-c", command],
                         text=True,
@@ -341,11 +420,19 @@ class EmulationRunner:
         elif backend == "docker":
             self.backend = DockerBackend()
         elif backend == "subprocess":
-            self.backend = SubprocessBackend()
+            sp = SubprocessBackend()
+            if sp.is_available():
+                self.backend = sp
+            else:
+                logger.warning(
+                    "Subprocess emulation requested but unsandboxed mode is disabled; "
+                    "using simulation backend instead"
+                )
+                self.backend = SimulationBackend()
         elif backend == "mock":
             self.backend = MockBackend()
         else:
-            # Auto-detect best available backend
+            # Auto-detect: real sandboxes only; never fall back to host subprocess.
             bwrap = BwrapBackend()
             docker = DockerBackend()
             if bwrap.is_available():
@@ -353,7 +440,11 @@ class EmulationRunner:
             elif docker.is_available():
                 self.backend = docker
             else:
-                self.backend = SubprocessBackend()
+                logger.info(
+                    "No bwrap/docker sandbox available; using simulation backend "
+                    "(refusing unsandboxed host execution)"
+                )
+                self.backend = SimulationBackend()
 
     def run_command(
         self,
@@ -365,15 +456,27 @@ class EmulationRunner:
         """Execute a shell command inside the sandbox and capture telemetry."""
         start_time = time.perf_counter()
 
-        exit_code, stdout, stderr, raw_trace = self.backend.run(
-            command,
-            timeout=timeout,
-            workdir=workdir,
-        )
+        try:
+            exit_code, stdout, stderr, raw_trace = self.backend.run(
+                command,
+                timeout=timeout,
+                workdir=workdir,
+            )
+        except RuntimeError as exc:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            return EmulationResult(
+                success=False,
+                exit_code=-1,
+                stdout="",
+                stderr=str(exc),
+                duration_ms=duration_ms,
+                backend=self.backend.name(),
+                error_message=str(exc),
+                command=command,
+            )
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
-        # If running mock backend, return mock events
         if isinstance(self.backend, MockBackend):
             events = list(self.backend.mock_events)
         elif raw_trace:

@@ -136,3 +136,5 @@ research/
 *.sqlite3-journal
 *.sqlite3-wal
 *.sqlite3-shm
+# CI dependency scan report (uploaded as an artifact, never packaged).
+/dependency-audit.json

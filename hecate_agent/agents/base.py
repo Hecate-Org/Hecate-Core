@@ -281,12 +281,33 @@ class LLMAgent(Agent[InputT, OutputT]):
         """
         from hecate_agent.core.llm_activity import call_meta
         from hecate_agent.core.llm_escalate import can_escalate
+        from hecate_agent.core.llm_prompt_budget import would_clip_prompt_for_simple
         from hecate_agent.core.llm_router import LLMRouter
 
         current_prompt = prompt
         result = ""
         last_error: Optional[str] = None
         provider = self._get_provider()
+        # When simple would truncate this prompt, skip local retries and go
+        # straight to complex (distinct backends only).
+        if (
+            escalate
+            and isinstance(provider, LLMRouter)
+            and can_escalate(provider, tier=tier, capability=capability)
+            and would_clip_prompt_for_simple(prompt)
+        ):
+            logger.info(
+                "Skipping simple retries for oversized %s prompt; using complex",
+                capability or "llm",
+            )
+            with call_meta(escalated="true", escalate_from="simple_over_budget"):
+                return self._call_llm(
+                    prompt,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    capability=capability,
+                    tier="complex",
+                )
 
         for attempt in range(1 + max_retries):
             result = self._call_llm(

@@ -380,7 +380,9 @@ def create_client_from_env() -> SplunkClient:
     import os
 
     host = os.getenv("SPLUNK_HOST")
-    token = os.getenv("SPLUNK_TOKEN")
+    from hecate_agent.core.splunk_credentials import splunk_token
+
+    token = splunk_token("read")
 
     if not host:
         raise ValueError("SPLUNK_HOST environment variable is required")
