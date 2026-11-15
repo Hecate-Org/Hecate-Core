@@ -27,6 +27,14 @@ ATOMIC_TESTS_MAP: Dict[str, List[Dict[str, str]]] = {
             "telemetry": "Sysmon Event ID 10 / Process Creation Event ID 4688 (rundll32.exe loading comsvcs.dll)",
         },
     ],
+    "T1003.002": [
+        {
+            "name": "Dump SAM and SYSTEM Registry Hives using reg.exe",
+            "test_id": "ART T1003.002 #1",
+            "command": "reg.exe save HKLM\\SAM C:\\Windows\\Temp\\sam.save && reg.exe save HKLM\\SYSTEM C:\\Windows\\Temp\\system.save",
+            "telemetry": "Sysmon Event ID 1 (reg.exe save) / Event ID 11 (File creation of sam.save)",
+        },
+    ],
     "T1059.001": [
         {
             "name": "PowerShell Download and Execute",
@@ -87,6 +95,30 @@ ATOMIC_TESTS_MAP: Dict[str, List[Dict[str, str]]] = {
             "test_id": "ART T1078 #1",
             "command": "net user /add atomic_hunter TempPass123! && net localgroup administrators atomic_hunter /add",
             "telemetry": "Windows Event ID 4720 (A user account was created) / 4728 (Member added to security group)",
+        },
+    ],
+    "T1078.004": [
+        {
+            "name": "AWS IAM User or Access Key Backdoor Creation",
+            "test_id": "ART T1078.004 #1",
+            "command": "aws iam create-access-key --user-name target_user",
+            "telemetry": "AWS CloudTrail (eventSource: iam.amazonaws.com, eventName: CreateAccessKey)",
+        },
+    ],
+    "T1530": [
+        {
+            "name": "Cloud Storage Object Exfiltration",
+            "test_id": "ART T1530 #1",
+            "command": "aws s3 cp s3://target-bucket/sensitive.csv /tmp/sensitive.csv",
+            "telemetry": "AWS CloudTrail S3 Data Events (eventName: GetObject) / GCP Audit storage.objects.get",
+        },
+    ],
+    "T1562.008": [
+        {
+            "name": "Disable Cloud Logging / Stop CloudTrail",
+            "test_id": "ART T1562.008 #1",
+            "command": "aws cloudtrail stop-logging --name production-trail",
+            "telemetry": "AWS CloudTrail (eventSource: cloudtrail.amazonaws.com, eventName: StopLogging)",
         },
     ],
     "T1558.003": [
@@ -1119,6 +1151,131 @@ def synthesize_atomic_telemetry(
                 "DestinationHostname": "example.com",
                 "DestinationPort": 80,
                 "Image": "msiexec.exe",
+            },
+        )
+    elif tid == "T1055":
+        add(
+            "process_creation",
+            {
+                "Image": "C:\\Windows\\System32\\mavinject.exe",
+                "CommandLine": "mavinject.exe 3128 /INJECTRUNNING C:\\Windows\\Temp\\inject.dll",
+                "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+            },
+        )
+        add(
+            "process_access",
+            {
+                "SourceImage": "C:\\Windows\\System32\\cmd.exe",
+                "TargetImage": "C:\\Windows\\System32\\svchost.exe",
+                "GrantedAccess": "0x1F0FFF",
+            },
+        )
+        add(
+            "create_remote_thread",
+            {
+                "SourceImage": "C:\\Windows\\System32\\cmd.exe",
+                "TargetImage": "C:\\Windows\\System32\\svchost.exe",
+                "StartAddress": "0x00007FF712340000",
+            },
+        )
+    elif tid == "T1003.002":
+        add(
+            "process_creation",
+            {
+                "Image": "C:\\Windows\\System32\\reg.exe",
+                "CommandLine": "reg.exe save HKLM\\SAM C:\\Windows\\Temp\\sam.save",
+                "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+                "User": "NT AUTHORITY\\SYSTEM",
+            },
+        )
+        add(
+            "process_creation",
+            {
+                "Image": "C:\\Windows\\System32\\reg.exe",
+                "CommandLine": "reg.exe save HKLM\\SYSTEM C:\\Windows\\Temp\\system.save",
+                "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+                "User": "NT AUTHORITY\\SYSTEM",
+            },
+        )
+        add(
+            "file_event",
+            {
+                "TargetFilename": "C:\\Windows\\Temp\\sam.save",
+                "Image": "C:\\Windows\\System32\\reg.exe",
+            },
+        )
+    elif tid == "T1021.002":
+        add(
+            "process_creation",
+            {
+                "Image": "C:\\Windows\\System32\\net.exe",
+                "CommandLine": "net.exe use \\\\10.0.0.5\\C$ /user:domain\\admin password",
+                "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+            },
+        )
+        add(
+            "network_connection",
+            {
+                "DestinationIp": "10.0.0.5",
+                "DestinationPort": 445,
+                "Image": "net.exe",
+                "Protocol": "tcp",
+            },
+        )
+    elif tid == "T1078.004":
+        add(
+            "cloud_audit",
+            {
+                "eventSource": "iam.amazonaws.com",
+                "eventName": "CreateAccessKey",
+                "userIdentity.type": "IAMUser",
+                "requestParameters.userName": "target_user",
+                "awsRegion": "us-east-1",
+            },
+        )
+        add(
+            "cloud_audit",
+            {
+                "protoPayload.serviceName": "iam.googleapis.com",
+                "protoPayload.methodName": "google.iam.admin.v1.CreateServiceAccountKey",
+                "protoPayload.authenticationInfo.principalEmail": "admin@example.com",
+            },
+        )
+    elif tid == "T1530":
+        add(
+            "cloud_audit",
+            {
+                "eventSource": "s3.amazonaws.com",
+                "eventName": "GetObject",
+                "userIdentity.type": "AssumedRole",
+                "requestParameters.bucketName": "target-bucket",
+                "requestParameters.key": "sensitive.csv",
+            },
+        )
+        add(
+            "cloud_audit",
+            {
+                "protoPayload.serviceName": "storage.googleapis.com",
+                "protoPayload.methodName": "storage.objects.get",
+                "protoPayload.resourceName": "projects/_/buckets/target-bucket/objects/sensitive.csv",
+            },
+        )
+    elif tid == "T1562.008":
+        add(
+            "cloud_audit",
+            {
+                "eventSource": "cloudtrail.amazonaws.com",
+                "eventName": "StopLogging",
+                "userIdentity.type": "IAMUser",
+                "requestParameters.name": "production-trail",
+            },
+        )
+        add(
+            "cloud_audit",
+            {
+                "protoPayload.serviceName": "logging.googleapis.com",
+                "protoPayload.methodName": "google.logging.v2.ConfigServiceV2.DeleteSink",
+                "protoPayload.authenticationInfo.principalEmail": "admin@example.com",
             },
         )
 

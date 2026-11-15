@@ -214,3 +214,36 @@ class TestAtomicRedTeam:
         assert any("msiexec.exe" in e.get("Image", "").lower() for e in t1546_016["process_creation"])
         assert "file_event" in t1546_016
         assert "network_connection" in t1546_016
+
+        # T1055 - Process Injection
+        t1055 = synthesize_atomic_telemetry("T1055")
+        assert "process_creation" in t1055
+        assert "create_remote_thread" in t1055
+        assert any("mavinject.exe" in e.get("Image", "").lower() for e in t1055["process_creation"])
+
+        # T1003.002 - SAM Registry Dump
+        t1003_002 = synthesize_atomic_telemetry("T1003.002")
+        assert "process_creation" in t1003_002
+        assert any("sam.save" in e.get("CommandLine", "").lower() for e in t1003_002["process_creation"])
+        assert "file_event" in t1003_002
+
+        # T1021.002 - SMB Admin Shares
+        t1021_002 = synthesize_atomic_telemetry("T1021.002")
+        assert "process_creation" in t1021_002
+        assert "network_connection" in t1021_002
+        assert any(e.get("DestinationPort") == 445 for e in t1021_002["network_connection"])
+
+        # T1078.004 - Cloud Accounts
+        t1078_004 = synthesize_atomic_telemetry("T1078.004")
+        assert "cloud_audit" in t1078_004
+        assert any(e.get("eventName") == "CreateAccessKey" for e in t1078_004["cloud_audit"])
+
+        # T1530 - Data from Cloud Storage
+        t1530 = synthesize_atomic_telemetry("T1530")
+        assert "cloud_audit" in t1530
+        assert any(e.get("eventName") == "GetObject" for e in t1530["cloud_audit"])
+
+        # T1562.008 - Disable Cloud Logs
+        t1562_008 = synthesize_atomic_telemetry("T1562.008")
+        assert "cloud_audit" in t1562_008
+        assert any(e.get("eventName") == "StopLogging" for e in t1562_008["cloud_audit"])
