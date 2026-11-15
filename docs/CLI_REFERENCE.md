@@ -2972,6 +2972,46 @@ hecate-agent eval --grounded
 hecate-agent eval --tier simple --write-gate research_synthesize --fail-under 0.8
 ```
 
+### Repeatable local GPU checks
+
+From a source checkout, use the Python environment with Hecate installed:
+
+```bash
+.venv/bin/python scripts/eval_local_model.py --model qwen3.6:35b-a3b-q4_K_M
+```
+
+Start Ollama and pull the selected model beforehand. The helper calls the
+existing `hecate-agent eval` CLI with an 80% pass threshold, thinking disabled,
+a 16,384-token context, and a 600-second per-call timeout. It prints the path
+to a private run directory containing the JSON report, runtime metadata, call
+log, and stderr. Use `--output-root /path/to/reports` to retain runs together.
+The process exits unsuccessfully on a failed check; keep failed reports too.
+Run this after changing a model, quantization, or inference settings, and
+occasionally to check for regressions. Model tags can change; record the local
+Ollama digest alongside reports when comparing upgrades.
+
+The helper excludes inherited API credentials and workspace configuration,
+uses a temporary workspace, and never requests a demotion stamp. Production
+routing stays unchanged. Passing ten recall questions alone does not justify
+moving research synthesis, hypotheses, Sigma, or triage from Claude to a local
+model; review representative outputs before changing those routes.
+
+The **LLM demotion gate** Actions workflow defaults to the same Qwen3.6 model.
+Its roughly 24 GB model file exceeds the storage available on standard GitHub
+hosted runners. For automated weekly evaluations, provision a separate runner
+with enough disk and RAM/GPU memory, then set repository variable
+`HECATE_LLM_EVAL_RUNNER` to its label. Optionally set `HECATE_LLM_EVAL_MODEL`
+for scheduled runs. A manual dispatch can supply a runner and model instead.
+Do not install an Actions runner on the production service host or expose its
+Ollama endpoint publicly.
+
+Without a configured runner, the workflow explicitly reports **NOT EVALUATED**
+and skips the quality job; that status does not approve any demotion. Local GPU
+evaluation is the default path until dedicated CI hardware is available.
+Configured CI retains per-capability reports even on failure, writes stamps
+only for passing checks, and uploads them as artifacts. It never installs those
+artifacts into production automatically.
+
 ### JSON Output
 
 ```json
