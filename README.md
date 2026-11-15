@@ -101,6 +101,11 @@ python scripts/sync_docs.py --check
 Unit test suites run offline with isolated operator environments. Explicit external
 checks use `-m network`. Mock transports remain available for unit tests.
 
+Model/prompt changes have a separate manual quality check: the packaged
+20-case `hecate-agent eval-suite`, offline report comparison, and existing
+full-pipeline gold replays. See [evaluation and release checks](evals/README.md).
+Live model calls remain outside regular CI.
+
 - [Onboarding](docs/ONBOARDING.md)
 - [Installation](docs/INSTALL.md)
 - [Configuration](docs/CONFIGURATION.md)

@@ -1,5 +1,131 @@
 # Gold sets
 
+## Twenty-case model quality suite
+
+The packaged [task suite](../hecate_agent/data/evals/model-quality-v1.yaml)
+adds 20 frozen, deterministically scored cases alongside the three full-draft
+gold cases below. It tests cold and grounded PowerShell recall, interpreter
+disambiguation, Windows/Linux/macOS behavior mapping, benign administration,
+authorized lab activity, unsupported claims, historical indicators, missing
+telemetry, hostile source instructions, validation evidence, rule semantics,
+bounded queries and corrected sources.
+
+These are **task-level gold answers**, including authored synthetic controls and
+summaries of existing reviewed cases. They are not 20 new incident reports or
+full-pipeline replays. Expected answers and review rationales were checked by
+the implementing agent before live runs; independent human review is pending
+and recorded explicitly in the suite. Review the source snapshots and expected
+answers before treating this as a release acceptance baseline.
+
+Validate without a model, credentials or network:
+
+```bash
+hecate-agent eval-suite --validate-only
+python -m pytest tests/core/test_model_quality.py -q
+```
+
+Run both configured production model families in isolated scratch processes:
+
+```bash
+.venv/bin/python scripts/compare_model_quality.py \
+  --repeats 3 --output-root /path/to/private/evaluation-reports
+```
+
+The helper uses local `qwen3.6:35b-a3b-q4_K_M` and
+`anthropic/claude-sonnet-4-5-20250929`, with no fallback between them. Supply
+`ANTHROPIC_API_KEY` in the environment or use
+`--credential-env-file /absolute/path/to/private.env`; it reads only that key,
+without executing the file or loading its other credentials. `--local-only`
+omits Claude. Override the model IDs explicitly when evaluating a replacement.
+Install the LLM extras in the evaluation environment for the Claude run.
+
+Each run gets a private directory with per-model reports, progress logs and an
+offline `comparison.json`. Reports include per-case/per-repeat results, category
+scores, pass/fail variation, wall-clock median/p95 latency including the first
+call's loading, input/output token counts, suite/prompt hashes, scorer code hash
+and provider model IDs. API cost is a token-price estimate, not an invoice.
+Local API charges are zero; local GPU/electricity cost remains unmetered. Small
+sample latency percentiles are descriptive, not performance guarantees.
+`run-metadata.json` captures the installed Ollama digest and the run's limits;
+`evaluator-source/` retains the evaluator, command, fixture and helper sources.
+
+The remote estimate cap defaults to $1. Before each call the harness reserves a
+conservative prompt/output estimate against the remaining cap. Unknown pricing,
+missing remote usage and provider errors stop further requests. Unexecuted
+cases remain in the denominator and cannot yield a passing gate. Rates come
+from Core's cost table; validate them when changing models. Sonnet 4.5 standard
+rates were checked against [Anthropic pricing](https://platform.claude.com/docs/en/about-claude/pricing)
+on 2026-11-15. Discounts, cache billing, taxes, regional premiums and unknown
+charges are not measured, so this is not a strict invoice spending guarantee.
+
+Default acceptance requires at least 85% of case/repetition answers to pass,
+zero critical failures, and a complete run. Each case passes only when all its
+checks pass. A PowerShell recall error, invented compromise or overstated live
+validation cannot hide behind a high overall score. One JSON object, optionally
+inside a single complete Markdown JSON fence as accepted by production parsing,
+is allowed. Duplicate-key, type, missing/extra-field and exact-set checks prevent
+keyword/format shortcuts. Arbitrary prose containing JSON is rejected. Accepted
+fenced answers are counted separately. The
+adversarial case tests the model's answer only; it cannot establish security of
+tool authorization or the wider application.
+
+For direct runs with an explicitly prepared evaluation environment:
+
+```bash
+hecate-agent eval-suite --provider ollama --model qwen3.6:35b-a3b-q4_K_M \
+  --repeats 3 --report qwen.json
+hecate-agent eval-suite --provider litellm \
+  --model anthropic/claude-sonnet-4-5-20250929 --repeats 3 --report claude.json
+hecate-agent eval-compare qwen.json claude.json
+```
+
+Direct CLI calls use the selected environment; use the helper for environment
+isolation. Reports refuse to overwrite an existing path. Failed reports are
+retained. No command changes routing, writes demotion gates, publishes content,
+executes BAS or writes into a production workspace when using the helper.
+
+After correcting a scorer, re-score **both** saved response sets offline rather
+than changing answers or paying for new calls:
+
+```bash
+hecate-agent eval-suite --rescore old-report.json --report rescored-report.json
+```
+
+This requires the exact original suite and system prompt, preserves historical
+latency/usage/cost, records the original report digest, and makes zero model
+calls. Keep the originals. Scoring version 2 accepts a complete JSON fence,
+matching production parsing; version 1 rejected it. Reports with different
+scoring versions cannot be compared until both are rescored consistently.
+
+### Model and prompt release checklist
+
+1. Run the offline suite validation/scorer tests in normal CI. No live model
+   calls, model downloads or API credentials are added to regular CI.
+2. Review/freeze the cases before a candidate run. Keep candidate evaluation
+   cases separate from examples used to tune prompts; expand with new unseen
+   cases as the existing set becomes familiar.
+3. Run baseline and candidate on the **same** suite, system prompt, temperature,
+   token limit and repetition count. For local runs, record the installed
+   Ollama model digest as well as its mutable tag. Keep the inference settings
+   and hardware/load context with the artifacts.
+4. Run `hecate-agent eval-compare baseline.json candidate.json --check` for each
+   changed model. Exit 1 means a failed quality gate or a baseline-passing case
+   regressed. A Qwen-versus-Claude comparison is descriptive; it is not by itself
+   an instruction to change model routing.
+5. For production prompt/pipeline changes, also replay the **three full-pipeline
+   cases below**, using a separately configured scratch environment with live
+   publication/deployment/execution disabled. Task-suite prompts do not exercise
+   production generation prompts. Inspect the resulting drafts/rules; scalar
+   scores alone do not establish source relevance or detection effectiveness.
+6. Attach private evaluation artifacts and the reviewed decision to the release
+   record. Changes to the suite/scorer require re-running both sides; comparison
+   refuses mismatched suite, system-prompt hashes or generation parameters.
+
+Live evaluation remains an explicit local/manual release check. It is not a new
+scheduled Actions job or an automatic production model demotion.
+
+## Full-pipeline draft gold sets
+
 A gold set is the reviewed answer for one piece of CTI. Scoring a drafted hunt
 against it measures a pipeline change instead of judging it by eye, and
 nothing in the scoring calls a model, so two scores are comparable.

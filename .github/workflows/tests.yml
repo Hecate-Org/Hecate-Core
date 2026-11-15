@@ -74,6 +74,12 @@ jobs:
       run: |
         pytest tests/ -v --cov=hecate_agent --cov-report=xml --cov-report=term-missing
 
+    - name: Validate model quality gold cases offline
+      env:
+        HECATE_SERVICE_ISOLATED: "1"
+        PYTHON_DOTENV_DISABLED: "1"
+      run: hecate-agent eval-suite --validate-only
+
     - name: Upload coverage to Codecov
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
       # The action can fail before it uploads (a TLS error fetching its uploader),
