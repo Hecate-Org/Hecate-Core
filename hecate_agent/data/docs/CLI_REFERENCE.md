@@ -2902,7 +2902,11 @@ Run the versioned 20-case task suite against an explicit provider/model. Cases
 include the PowerShell recall regression, grounded behavior mapping, benign
 activity, unsupported claims, telemetry gaps, prompt injection, rule semantics
 and the distinction between synthetic matches, native matches and fired alerts.
-The packaged suite records its agent review and pending independent human review.
+The default version 2 suite records the operator's approval of the answers,
+wording and release policy. Every wrong ATT&CK mapping, unsupported security
+claim, unsafe action or malformed/incomplete required answer blocks release,
+even above the 85% minimum score. The threshold cannot be lowered for this suite.
+Version 1 remains frozen for historical report inspection and rescoring.
 
 ```bash
 hecate-agent eval-suite --validate-only
@@ -2921,6 +2925,9 @@ production parsing; arbitrary prose, duplicate keys and missing fields fail.
 `--rescore saved.json --report rescored.json` re-evaluates frozen responses
 offline using the same suite and system prompt, retaining historical latency,
 usage and cost without making model calls. Keep the original report too.
+Rescoring requires the original suite hash: supply the preserved version 1 suite
+explicitly for old reports. Changing review metadata or severity does not
+silently relabel historical results as a new run.
 
 Reports retain per-case results, category scores, variation over repetitions,
 wall-clock latency, token usage, estimated API cost, inference settings and
@@ -3088,6 +3095,10 @@ evaluation is the default path until dedicated CI hardware is available.
 Configured CI retains per-capability reports even on failure, writes stamps
 only for passing checks, and uploads them as artifacts. It never installs those
 artifacts into production automatically.
+The manual workflow first requires three repetitions of the operator-reviewed
+20-case suite to pass at a minimum of 85% with zero hard failures. Only then may
+the legacy per-capability checks run and issue stamps. Regular code CI remains
+offline; a failed reviewed-suite check prevents stamping.
 
 ### JSON Output
 

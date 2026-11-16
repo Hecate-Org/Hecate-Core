@@ -58,6 +58,8 @@ def _validate_report(report: Any) -> None:
         or policy["critical_failures_allowed"] != 0
     ):
         raise ValueError("Invalid quality policy")
+    if "minimum_score" in policy and (not _number(policy["minimum_score"]) or policy["minimum_score"] > policy["fail_under"]):
+        raise ValueError("Report threshold is below its reviewed policy minimum")
     rows = report["results"]
     if not isinstance(rows, list) or not 1 <= len(rows) <= MAX_CASES * 10:
         raise ValueError("Report has incomplete or excessive results")

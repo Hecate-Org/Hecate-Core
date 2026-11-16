@@ -28,7 +28,8 @@ from hecate_agent.core.model_quality_io import (
 )
 from hecate_agent.core.model_quality_reports import validate_report
 
-DEFAULT_SUITE = Path(__file__).resolve().parents[1] / "data/evals/model-quality-v1.yaml"
+DEFAULT_SUITE = Path(__file__).resolve().parents[1] / "data/evals/model-quality-v2.yaml"
+HARD_FAILURE_CLASSES = {"wrong_attack_mapping", "unsupported_security_claim", "unsafe_action", "invalid_answer_contract"}
 SYSTEM_PROMPT = (
     "You are evaluating security evidence in a bounded benchmark, with no tools. "
     "Return only the JSON object requested by the task: no markdown, extra keys or prose. "
@@ -54,6 +55,22 @@ def validate_suite(suite: Any) -> dict[str, Any]:
         raise ValueError("Unsupported model quality suite schema")
     if not isinstance(suite.get("suite_id"), str) or not suite["suite_id"].strip():
         raise ValueError("Suite ID is required")
+    policy = suite.get("policy")
+    if policy is not None:
+        if (
+            not isinstance(policy, dict)
+            or set(policy) != {"policy_id", "minimum_score", "critical_failures_allowed", "hard_failure_classes"}
+            or policy.get("policy_id") != "hecate-model-release-policy-v1"
+            or type(policy.get("minimum_score")) not in (int, float)
+            or not 0.85 <= policy["minimum_score"] <= 1
+            or type(policy.get("critical_failures_allowed")) is not int
+            or policy["critical_failures_allowed"] != 0
+            or not isinstance(policy.get("hard_failure_classes"), list)
+            or not all(isinstance(value, str) for value in policy["hard_failure_classes"])
+            or len(policy["hard_failure_classes"]) != len(HARD_FAILURE_CLASSES)
+            or set(policy["hard_failure_classes"]) != HARD_FAILURE_CLASSES
+        ):
+            raise ValueError("Invalid reviewed release policy")
     cases = suite.get("cases")
     if not isinstance(cases, list) or not 1 <= len(cases) <= MAX_CASES:
         raise ValueError(f"A suite must contain between 1 and {MAX_CASES} cases")
@@ -84,6 +101,14 @@ def validate_suite(suite: Any) -> dict[str, Any]:
                 raise ValueError(f"{case['id']}: invalid check operation")
             if not isinstance(check.get("critical", False), bool):
                 raise ValueError(f"{case['id']}: critical must be boolean")
+            if policy is not None:
+                failure_class = check.get("failure_class")
+                if failure_class is not None and (
+                    not isinstance(failure_class, str) or failure_class not in HARD_FAILURE_CLASSES
+                ):
+                    raise ValueError(f"{case['id']}: unknown hard-failure class")
+                if (failure_class is not None) != check.get("critical", False):
+                    raise ValueError(f"{case['id']}: reviewed hard-failure checks must remain critical")
             if check["op"] == "set_equals":
                 expected = check["expected"]
                 if not isinstance(expected, list) or not all(isinstance(v, str) for v in expected):
@@ -165,6 +190,8 @@ def run_suite(
     ):
         raise ValueError("Invalid evaluation limits")
     validate_suite(suite)
+    if fail_under < suite.get("policy", {}).get("minimum_score", 0):
+        raise ValueError("Threshold is below the reviewed release policy minimum")
     model = getattr(provider, "model", getattr(provider, "model_id", "unknown"))
     if not isinstance(model, str) or not model or not isinstance(provider.provider_name, str) or not provider.provider_name:
         raise ValueError("Explicit provider/model identities are required")
@@ -292,7 +319,12 @@ def summarize(
         "provider": provider,
         "model": model,
         "parameters": {"repeats": repeats, "max_tokens": max_tokens, "temperature": 0.0},
-        "policy": {"fail_under": fail_under, "max_cost_usd": max_cost_usd, "critical_failures_allowed": 0},
+        "policy": {
+            "fail_under": fail_under,
+            "max_cost_usd": max_cost_usd,
+            "critical_failures_allowed": 0,
+            **suite.get("policy", {}),
+        },
         "passed": passed,
         "total": len(results),
         "score": round(score, 6),
@@ -389,6 +421,9 @@ def compare_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
         validate_report(report)
         if report["policy"]["fail_under"] != first["policy"]["fail_under"]:
             raise ValueError("Reports have different quality thresholds")
+        for key in ("policy_id", "minimum_score", "hard_failure_classes"):
+            if report["policy"].get(key) != first["policy"].get(key):
+                raise ValueError("Reports have different reviewed release policies")
         expected = {(r["id"], r["repeat"]) for r in first["results"]}
         if {(r["id"], r["repeat"]) for r in report["results"]} != expected:
             raise ValueError("Reports contain different cases/repeats")
