@@ -19,6 +19,13 @@ from hecate_agent.core.model_quality_io import interruptible, load_report, reser
 @click.option("--suite", type=click.Path(path_type=Path, exists=True), default=DEFAULT_SUITE, show_default=True)
 @click.option("--validate-only", is_flag=True, help="Validate cases offline; never instantiate a provider.")
 @click.option(
+    "--prompt-profile",
+    type=click.Choice(list(model_quality.PROMPT_PROFILES)),
+    default=model_quality.DEFAULT_PROMPT_PROFILE,
+    show_default=True,
+    help="Versioned evaluation instructions; baseline-v1 reproduces the original prompt.",
+)
+@click.option(
     "--rescore", type=click.Path(path_type=Path, exists=True), help="Score a saved response report offline; no model calls."
 )
 @click.option("--provider", type=click.Choice(["ollama", "litellm", "bedrock", "openai"]))
@@ -33,6 +40,7 @@ from hecate_agent.core.model_quality_io import interruptible, load_report, reser
 def eval_suite_cmd(
     suite: Path,
     validate_only: bool,
+    prompt_profile: str,
     rescore: Path | None,
     provider: str | None,
     model: str | None,
@@ -55,9 +63,9 @@ def eval_suite_cmd(
         raise click.UsageError("--rescore cannot be combined with live model selection or --validate-only")
     if rescore and any(
         click.get_current_context().get_parameter_source(name) == click.core.ParameterSource.COMMANDLINE
-        for name in ("repeats", "max_tokens", "fail_under", "max_cost_usd")
+        for name in ("repeats", "max_tokens", "fail_under", "max_cost_usd", "prompt_profile")
     ):
-        raise click.UsageError("--rescore preserves the original run parameters; live options cannot override them")
+        raise click.UsageError("--rescore preserves the original run parameters and prompt; live options cannot override them")
     if validate_only:
         click.echo(json.dumps({"suite_id": cases["suite_id"], "cases": len(cases["cases"]), "valid": True}))
         return
@@ -101,6 +109,7 @@ def eval_suite_cmd(
                         fail_under=fail_under,
                         max_cost_usd=max_cost_usd,
                         progress=progress,
+                        prompt_profile=prompt_profile,
                     )
                 if provider == "ollama":
                     payload["provider_options"] = {"think": backend.think, "num_ctx": backend.num_ctx}  # type: ignore[attr-defined]

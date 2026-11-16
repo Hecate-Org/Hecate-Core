@@ -1,0 +1,153 @@
+schema: hecate-model-quality/1
+suite_id: hecate-reference-assisted-diagnostic
+review:
+  status: agent-prepared-diagnostic-only
+  limits: Additional authoritative reference context and authored controls; not the approved unaided release
+    suite.
+cases:
+- id: applescript-disambiguation
+  category: grounding
+  instruction: Identify the interpreter actually observed. Return JSON with technique_id and platform.
+    Choose the most specific ATT&CK sub-technique.
+  source:
+    kind: authored-synthetic-observation
+    reference: https://attack.mitre.org/techniques/T1059/002/
+    excerpt: |-
+      On a macOS endpoint, the malicious loader invoked /usr/bin/osascript to execute an AppleScript. No PowerShell process or PowerShell API was observed.
+
+      ATT&CK REFERENCE DATA (identity lookup, not evidence of execution):
+      T1059.001: PowerShell
+      T1059.002: AppleScript
+      T1059.003: Windows Command Shell
+      T1059.004: Unix Shell
+      T1059.005: Visual Basic
+      T1059.006: Python
+      T1059.007: JavaScript
+      T1059.008: Network Device CLI
+      T1059.009: Cloud API
+      T1059.010: AutoHotKey & AutoIT
+      T1059.011: Lua
+      T1059.012: Hypervisor CLI
+      T1059.013: Container CLI/API
+  review_basis: MITRE's AppleScript entry identifies osascript and T1059.002; a negative PowerShell mention
+    must not override the actual observation.
+  checks:
+  - field: technique_id
+    op: equals
+    expected: T1059.002
+    critical: true
+    failure_class: wrong_attack_mapping
+  - field: platform
+    op: equals
+    expected: macOS
+- id: windows-scheduled-task
+  category: behavior-mapping
+  instruction: Return technique_id for the scheduling mechanism and platform as JSON. Use the most specific
+    ATT&CK sub-technique, not an inferred payload technique.
+  source:
+    kind: authored-synthetic-observation
+    reference: https://attack.mitre.org/techniques/T1053/005/
+    excerpt: |-
+      An intruder used schtasks.exe on a Windows host to register a recurring task that launched an executable at user logon. The task creation and subsequent execution were recorded.
+
+      ATT&CK REFERENCE DATA (identity lookup, not evidence of execution):
+      T1059.001: PowerShell
+      T1059.002: AppleScript
+      T1059.003: Windows Command Shell
+      T1059.004: Unix Shell
+      T1059.005: Visual Basic
+      T1059.006: Python
+      T1059.007: JavaScript
+      T1059.008: Network Device CLI
+      T1059.009: Cloud API
+      T1059.010: AutoHotKey & AutoIT
+      T1059.011: Lua
+      T1059.012: Hypervisor CLI
+      T1059.013: Container CLI/API
+  review_basis: Windows scheduled tasks map to T1053.005, not Unix cron or an unobserved registry autorun.
+  checks:
+  - field: technique_id
+    op: equals
+    expected: T1053.005
+    critical: true
+    failure_class: wrong_attack_mapping
+  - field: platform
+    op: equals
+    expected: Windows
+- id: heldout-nsapplescript
+  category: grounding
+  instruction: Identify the interpreter actually observed. Return JSON with technique_id and platform.
+    Choose the most specific ATT&CK sub-technique.
+  source:
+    kind: authored-synthetic-observation
+    reference: https://attack.mitre.org/techniques/T1059/002/
+    excerpt: |-
+      On a macOS host the program used NSAppleScript to execute AppleScript code. No command-line interpreter process was required.
+
+      ATT&CK REFERENCE DATA (identity lookup, not evidence of execution):
+      T1059.001: PowerShell
+      T1059.002: AppleScript
+      T1059.003: Windows Command Shell
+      T1059.004: Unix Shell
+      T1059.005: Visual Basic
+      T1059.006: Python
+      T1059.007: JavaScript
+      T1059.008: Network Device CLI
+      T1059.009: Cloud API
+      T1059.010: AutoHotKey & AutoIT
+      T1059.011: Lua
+      T1059.012: Hypervisor CLI
+      T1059.013: Container CLI/API
+  review_basis: Agent-authored transfer control based on the interpreter descriptions, not human-approved.
+  checks:
+  - field: technique_id
+    op: equals
+    expected: T1059.002
+    critical: true
+    failure_class: wrong_attack_mapping
+  - field: platform
+    op: equals
+    expected: macOS
+- id: heldout-jxa
+  category: grounding
+  instruction: Identify the interpreter actually observed. Return JSON with technique_id and platform.
+    Choose the most specific ATT&CK sub-technique.
+  source:
+    kind: authored-synthetic-observation
+    reference: https://attack.mitre.org/techniques/T1059/007/
+    excerpt: |-
+      On a macOS host the recorded command was /usr/bin/osascript -l JavaScript -e "Application('Finder').name()". The supplied script was JavaScript for Automation.
+
+      ATT&CK REFERENCE DATA (identity lookup, not evidence of execution):
+      T1059.001: PowerShell
+      T1059.002: AppleScript
+      T1059.003: Windows Command Shell
+      T1059.004: Unix Shell
+      T1059.005: Visual Basic
+      T1059.006: Python
+      T1059.007: JavaScript
+      T1059.008: Network Device CLI
+      T1059.009: Cloud API
+      T1059.010: AutoHotKey & AutoIT
+      T1059.011: Lua
+      T1059.012: Hypervisor CLI
+      T1059.013: Container CLI/API
+  review_basis: Agent-authored transfer control based on the interpreter descriptions, not human-approved.
+  checks:
+  - field: technique_id
+    op: equals
+    expected: T1059.007
+    critical: true
+    failure_class: wrong_attack_mapping
+  - field: platform
+    op: equals
+    expected: macOS
+policy:
+  policy_id: hecate-model-release-policy-v1
+  minimum_score: 0.85
+  critical_failures_allowed: 0
+  hard_failure_classes:
+  - wrong_attack_mapping
+  - unsupported_security_claim
+  - unsafe_action
+  - invalid_answer_contract

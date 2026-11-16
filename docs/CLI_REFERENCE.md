@@ -2918,6 +2918,12 @@ hecate-agent eval-suite --provider ollama --model qwen3.6:35b-a3b-q4_K_M \
 `--provider` and `--model`. Options include `--suite PATH`, `--repeats 1..10`
 (default 1), `--max-tokens` (default 512), `--fail-under` (default 0.85),
 `--max-cost-usd` (default 1), and `--report PATH` (exclusive creation).
+`--prompt-profile baseline-v1` (default) preserves the original instructions.
+Opt-in candidates are `checked-v2` (identity and field checks) and `complete-v3`
+(field completeness only). These supply no expected answers. The isolated comparison
+helper accepts the same option. Reports record the selected profile and prompt hash.
+Candidate profiles do not change production prompts or authorize model promotion;
+evaluate the complete suite before adopting one.
 JSON goes to stdout; progress goes to stderr. Exit 1 means a failed/incomplete
 evaluation. Critical failures block the gate even above the aggregate threshold.
 One complete JSON object may be wrapped in a single Markdown JSON fence, as in
@@ -2928,6 +2934,8 @@ usage and cost without making model calls. Keep the original report too.
 Rescoring requires the original suite hash: supply the preserved version 1 suite
 explicitly for old reports. Changing review metadata or severity does not
 silently relabel historical results as a new run.
+Historical baseline prompt hashes are still recognized automatically; a rescore
+cannot select a different profile or relabel an old answer as a new prompt run.
 
 Reports retain per-case results, category scores, variation over repetitions,
 wall-clock latency, token usage, estimated API cost, inference settings and
