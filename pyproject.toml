@@ -184,6 +184,7 @@ version = {attr = "hecate_agent.__version__.__version__"}
 
 [tool.setuptools.package-data]
 "hecate_agent.data" = [
+    "evals/*.yaml",
     "templates/*.md",
     "knowledge/*.md",
     "knowledge/**/*.md",

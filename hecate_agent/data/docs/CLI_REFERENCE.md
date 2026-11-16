@@ -49,6 +49,8 @@ version's complete, authoritative command and option list.
 | [`hecate-agent similar`](#hecate-agent-similar) | AI Optimization | Find similar hunts using semantic search |
 | [`hecate-agent monitor`](#hecate-agent-monitor) | Monitoring | Live terminal dashboard for pipeline activity, host resources, and usage |
 | [`hecate-agent eval`](#hecate-agent-eval) | Model Quality | Score a model against known-answer fixtures |
+| [`hecate-agent eval-suite`](#hecate-agent-eval-suite) | Model Quality | Run 20 frozen task cases with quality, latency and cost reports |
+| [`hecate-agent eval-compare`](#hecate-agent-eval-compare) | Model Quality | Compare compatible reports offline and check regressions |
 | [`hecate-agent mcp serve`](#hecate-agent-mcp-serve) | Integration | Serve Hecate operations as MCP tools |
 
 ## Table of Contents
@@ -88,6 +90,8 @@ version's complete, authoritative command and option list.
 - [hecate-agent investigate promote](#hecate-agent-investigate-promote)
 - [hecate-agent attack gap](#hecate-agent-attack-gap)
 - [hecate-agent eval](#hecate-agent-eval)
+- [hecate-agent eval-suite](#hecate-agent-eval-suite)
+- [hecate-agent eval-compare](#hecate-agent-eval-compare)
 - [hecate-agent mcp serve](#hecate-agent-mcp-serve)
 - [Configuration](#configuration)
 - [Exit Codes](#exit-codes)
@@ -2891,6 +2895,79 @@ hecate-agent attack gap --generate --limit 10
 - `0`: Success (or no STIX data, with a message)
 
 ---
+
+## hecate-agent eval-suite
+
+Run the versioned 20-case task suite against an explicit provider/model. Cases
+include the PowerShell recall regression, grounded behavior mapping, benign
+activity, unsupported claims, telemetry gaps, prompt injection, rule semantics
+and the distinction between synthetic matches, native matches and fired alerts.
+The packaged suite records its agent review and pending independent human review.
+
+```bash
+hecate-agent eval-suite --validate-only
+hecate-agent eval-suite --provider ollama --model qwen3.6:35b-a3b-q4_K_M \
+  --repeats 3 --report qwen.json
+```
+
+`--validate-only` is offline and creates no provider. Live runs require both
+`--provider` and `--model`. Options include `--suite PATH`, `--repeats 1..10`
+(default 1), `--max-tokens` (default 512), `--fail-under` (default 0.85),
+`--max-cost-usd` (default 1), and `--report PATH` (exclusive creation).
+JSON goes to stdout; progress goes to stderr. Exit 1 means a failed/incomplete
+evaluation. Critical failures block the gate even above the aggregate threshold.
+One complete JSON object may be wrapped in a single Markdown JSON fence, as in
+production parsing; arbitrary prose, duplicate keys and missing fields fail.
+`--rescore saved.json --report rescored.json` re-evaluates frozen responses
+offline using the same suite and system prompt, retaining historical latency,
+usage and cost without making model calls. Keep the original report too.
+
+Reports retain per-case results, category scores, variation over repetitions,
+wall-clock latency, token usage, estimated API cost, inference settings and
+suite/prompt/code fingerprints. Local compute cost is unmetered. Remote budget
+accounting is conservative and estimated, not an invoice guarantee. No routing
+or demotion stamp is changed.
+
+Output paths are reserved with private permissions before provider calls, and a
+`.progress.jsonl` sidecar saves durable per-result checkpoints. Ctrl+C/normal
+termination saves a failing partial report and exits 130. Size/depth limits,
+unambiguous YAML/JSON and type/usage checks bound malformed input handling.
+Comparison validates per-case coverage and aggregate measurements before using
+a report's gate; reports are not signed attestations.
+
+For a private, isolated Qwen/Claude comparison from a checkout:
+
+```bash
+.venv/bin/python scripts/compare_model_quality.py --repeats 3 \
+  --output-root /path/to/private/reports
+```
+
+Provide `ANTHROPIC_API_KEY` or `--credential-env-file /path/to/private.env`.
+Only that credential enters the Claude child; the local child inherits no API
+keys. The helper does not inherit production workspace/routing configuration.
+Direct CLI calls use the caller's selected environment. Live runs are manual;
+normal CI validates the suite and tests scoring offline.
+
+This is task-level model evaluation, not full hunt generation or detection
+proof. Production prompt releases also require full-pipeline replay and draft
+review. See the source checkout's `evals/README.md` for the release checklist.
+
+## hecate-agent eval-compare
+
+Compare two or more reports without model calls:
+
+```bash
+hecate-agent eval-compare baseline.json candidate.json
+hecate-agent eval-compare baseline.json candidate.json --check --output json
+```
+
+The first report is the baseline. Comparison requires identical suite and system
+prompt hashes, scoring version, generation parameters and quality threshold.
+`--check` exits 1 for a failed candidate gate or any case/repetition that passed in the
+baseline and fails in a candidate. A model-family comparison does not itself
+authorize routing changes. Provider failures and incomplete runs stay visible.
+A failed baseline is retained as evidence and does not prevent an improved
+passing candidate from passing this check.
 
 ## hecate-agent eval
 
