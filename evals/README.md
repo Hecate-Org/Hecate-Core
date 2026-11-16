@@ -27,6 +27,55 @@ hecate-agent eval-suite --validate-only
 python -m pytest tests/core/test_model_quality.py -q
 ```
 
+### Prompt profiles and reference-assisted diagnostics
+
+The default `baseline-v1` system prompt is unchanged. Two opt-in candidate profiles
+allow controlled instruction tests: `checked-v2` asks the model to verify the
+identity of the observed interpreter/mechanism and include every requested field;
+`complete-v3` adds only a short required-field completeness check. Neither supplies
+technique IDs, case answers or reviewer notes. The 20 approved questions, source
+excerpts and answers stay unchanged. Select a profile with `--prompt-profile` in
+`eval-suite` or the comparison helper. Each report records the profile and prompt
+hash; reports with different prompts cannot be combined in a model comparison.
+Historical rescoring recognizes the original prompt hash and preserves it
+automatically; `--rescore` cannot change profiles.
+
+The initial Claude diagnostic missed the required scheduled-task `platform` field.
+Both candidates passed 60/60 Claude answers over three repetitions on 2026-11-16.
+Qwen scored 48/60 with `checked-v2` and 51/60 with `complete-v3`, including additional
+critical failures. Neither candidate is adopted as a shared default. Candidate
+profiles are opt-in benchmark instruction changes, not changes to production agent
+prompts or model weights. These development-set results must not be presented as
+independent evidence of general model improvement; use new cases before broader
+adoption.
+
+Qwen's AppleScript ID error persisted with the general instructions and with
+reasoning enabled. A separate reference-assisted diagnostic supplies the complete
+13-entry interpreter identity table from [MITRE's parent technique](https://attack.mitre.org/techniques/T1059/),
+verified on 2026-11-16. It covers the two original failures and authored NSAppleScript
+and JavaScript-for-Automation transfer controls. It passed 12/12 Qwen answers with
+thinking disabled. The table is reference knowledge, not evidence that a behavior
+occurred. It is intentionally supplied to the model, and is not derived from the
+gold checks. All 13 sibling entries are included rather than a single suggested ID.
+
+```bash
+hecate-agent eval-suite --provider ollama --model qwen3.6:35b-a3b-q4_K_M \
+  --suite hecate_agent/data/evals/model-quality-grounding-diagnostic-v1.yaml \
+  --prompt-profile checked-v2 --repeats 3 --report grounding-diagnostic.json
+```
+
+This additional suite is an **agent-prepared diagnostic, not a reviewed release
+suite**. Passing it does not fix or waive an unaided-recall failure in the default
+suite, change the approved threshold, or authorize a model promotion. It illustrates
+why production mappings should use the existing source-matched ATT&CK candidates
+and subsequent evidence validation instead of relying on memorized IDs. Production
+grounding requires the ATT&CK extra and an available STIX cache; check those in the
+actual service environment. Raising reasoning effort alone did not fix the observed
+error and substantially increased diagnostic latency.
+
+Production prompt changes still need the full-pipeline checks below. These task
+results alone do not establish production hunt quality or live detection behavior.
+
 Run both configured production model families in isolated scratch processes:
 
 ```bash

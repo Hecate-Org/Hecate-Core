@@ -63,12 +63,18 @@ def main() -> int:
 
 
 def _main() -> int:
+    # Select this checkout before importing evaluation code, without CLI dotenv discovery.
+    checkout = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(checkout))
+    from hecate_agent.core.model_quality import DEFAULT_PROMPT_PROFILE, PROMPT_PROFILES
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--local-model", default="qwen3.6:35b-a3b-q4_K_M")
     parser.add_argument("--claude-model", default="anthropic/claude-sonnet-4-5-20250929")
     parser.add_argument("--credential-env-file", type=Path, help="Read only ANTHROPIC_API_KEY; never source the file")
     parser.add_argument("--output-root", type=Path)
     parser.add_argument("--repeats", type=int, choices=range(1, 11), default=3)
+    parser.add_argument("--prompt-profile", choices=list(PROMPT_PROFILES), default=DEFAULT_PROMPT_PROFILE)
     parser.add_argument("--max-cost-usd", type=float, default=1.0, help="Remote API estimate cap; not an invoice guarantee")
     parser.add_argument("--local-only", action="store_true")
     parser.add_argument("--timeout-seconds", type=int, default=7200, help="Deadline per model subprocess")
@@ -89,7 +95,6 @@ def _main() -> int:
     if args.output_root:
         args.output_root.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix="hecate-quality-", dir=args.output_root)).resolve()
-    checkout = Path(__file__).resolve().parents[1]
     source_snapshot = root / "evaluator-source"
     for relative in (
         "hecate_agent/core/model_quality.py",
@@ -109,6 +114,7 @@ def _main() -> int:
         "local_model": local_model_metadata(args.local_model),
         "remote_model": None if args.local_only else args.claude_model,
         "repeats": args.repeats,
+        "prompt_profile": args.prompt_profile,
         "max_api_estimate_usd": args.max_cost_usd,
         "production_configuration_changed": False,
         "targets": {},
@@ -120,8 +126,6 @@ def _main() -> int:
     if not args.local_only:
         targets.append(("claude", "litellm", args.claude_model))
     status = 0
-    # Import the selected checkout without triggering CLI dotenv discovery.
-    sys.path.insert(0, str(checkout))
     from hecate_agent.core.model_quality import compare_reports
     from hecate_agent.core.model_quality_io import load_report
     from hecate_agent.core.model_quality_reports import validate_report
@@ -143,6 +147,8 @@ def _main() -> int:
             model,
             "--repeats",
             str(args.repeats),
+            "--prompt-profile",
+            args.prompt_profile,
             "--max-cost-usd",
             str(args.max_cost_usd),
             "--report",
