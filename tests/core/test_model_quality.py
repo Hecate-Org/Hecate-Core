@@ -58,7 +58,7 @@ def test_all_twenty_reviewed_answers_pass(case):
 def test_suite_has_required_diversity_and_review_provenance():
     suite = load_suite()
     assert len(suite["cases"]) == 20
-    assert suite["review"]["status"] == "agent-reviewed-human-review-pending"
+    assert suite["review"]["status"] == "human-approved"
     assert {"benign", "unsupported-claims", "adversarial", "telemetry", "rule-semantics", "validation-evidence"} <= {
         c["category"] for c in suite["cases"]
     }
@@ -161,7 +161,7 @@ def test_critical_failure_blocks_high_aggregate_score():
         return response
 
     backend.complete.side_effect = wrong_once
-    report = run_suite(backend, suite, fail_under=0.8)
+    report = run_suite(backend, suite, fail_under=0.85)
     assert report["score"] == 0.95
     assert not report["gate_passed"]
     assert report["critical_failures"] == ["powershell-cold-recall#1"]

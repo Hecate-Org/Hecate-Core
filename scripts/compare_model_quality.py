@@ -97,6 +97,8 @@ def _main() -> int:
         "hecate_agent/core/model_quality_reports.py",
         "hecate_agent/commands/model_quality.py",
         "hecate_agent/data/evals/model-quality-v1.yaml",
+        "hecate_agent/data/evals/model-quality-v2.yaml",
+        "hecate_agent/data/evals/model-quality-v2-review.json",
         "scripts/compare_model_quality.py",
     ):
         destination = source_snapshot / relative

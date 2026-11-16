@@ -2,7 +2,7 @@
 
 ## Twenty-case model quality suite
 
-The packaged [task suite](../hecate_agent/data/evals/model-quality-v1.yaml)
+The packaged [task suite](../hecate_agent/data/evals/model-quality-v2.yaml)
 adds 20 frozen, deterministically scored cases alongside the three full-draft
 gold cases below. It tests cold and grounded PowerShell recall, interpreter
 disambiguation, Windows/Linux/macOS behavior mapping, benign administration,
@@ -12,10 +12,13 @@ bounded queries and corrected sources.
 
 These are **task-level gold answers**, including authored synthetic controls and
 summaries of existing reviewed cases. They are not 20 new incident reports or
-full-pipeline replays. Expected answers and review rationales were checked by
-the implementing agent before live runs; independent human review is pending
-and recorded explicitly in the suite. Review the source snapshots and expected
-answers before treating this as a release acceptance baseline.
+full-pipeline replays. The repository operator approved all 20 expected answers
+and question wordings, then approved the minimum score and hard-failure groups.
+The [review record](../hecate_agent/data/evals/model-quality-v2-review.json)
+binds that approval to the original and reviewed suite hashes. Version 2 keeps
+the model-visible prompts, evidence and expected answers identical to version 1;
+review metadata and failure severities change. The original version 1 fixture
+is frozen for historical reports, including its original review-status snapshot.
 
 Validate without a model, credentials or network:
 
@@ -60,8 +63,13 @@ charges are not measured, so this is not a strict invoice spending guarantee.
 
 Default acceptance requires at least 85% of case/repetition answers to pass,
 zero critical failures, and a complete run. Each case passes only when all its
-checks pass. A PowerShell recall error, invented compromise or overstated live
-validation cannot hide behind a high overall score. One JSON object, optionally
+checks pass. The approved policy makes **every wrong ATT&CK mapping**,
+unsupported security finding/claim, unsafe action and invalid/missing required
+output field a hard failure. Benign/authorized verdicts and validation-proof
+claims are included. Other scored metadata errors still lower the overall score.
+The reviewed suite refuses a `--fail-under` below 0.85 and refuses to weaken
+tagged hard-failure checks. Higher thresholds are allowed. A high aggregate score
+cannot override these blockers. One JSON object, optionally
 inside a single complete Markdown JSON fence as accepted by production parsing,
 is allowed. Duplicate-key, type, missing/extra-field and exact-set checks prevent
 keyword/format shortcuts. Arbitrary prose containing JSON is rejected. Accepted
@@ -105,6 +113,12 @@ latency/usage/cost, records the original report digest, and makes zero model
 calls. Keep the originals. Scoring version 2 accepts a complete JSON fence,
 matching production parsing; version 1 rejected it. Reports with different
 scoring versions cannot be compared until both are rescored consistently.
+The default suite is now version 2. To rescore a historical version 1 report,
+explicitly supply `--suite hecate_agent/data/evals/model-quality-v1.yaml` from
+the source checkout. A report cannot silently migrate to a different suite or
+policy hash. Re-evaluate both models on the reviewed version 2 suite to create
+new release artifacts. An offline analysis of unchanged saved answers may show
+policy impact, but it must be labeled as such rather than a new live model run.
 Scoring version 3 additionally enforces recursive type equality, bounded inputs
 and report consistency. Comparison checks the unique case/repetition schedule,
 per-case checks, summary, gate, token/cost totals and timing against each other.
@@ -160,6 +174,10 @@ and Python memory measurements describe evaluator overhead, not model speed.
 
 Live evaluation remains an explicit local/manual release check. It is not a new
 scheduled Actions job or an automatic production model demotion.
+The manual LLM demotion workflow now requires the reviewed 20-case suite to pass
+before it can write any legacy per-capability stamp. Its default threshold is
+0.85; a failed prerequisite leaves the stamping step skipped. Legacy ten-question
+spot checks alone are not approval under the reviewed release policy.
 
 ## Full-pipeline draft gold sets
 

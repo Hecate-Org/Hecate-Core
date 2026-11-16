@@ -19,7 +19,7 @@ on:
       fail_under:
         description: Minimum eval score (0-1)
         required: true
-        default: "0.8"
+        default: "0.85"
 
 permissions:
   contents: read
@@ -83,10 +83,26 @@ jobs:
           MODEL: ${{ inputs.model || vars.HECATE_LLM_EVAL_MODEL || 'qwen3.6:35b-a3b-q4_K_M' }}
         run: ollama pull "$MODEL"
 
+      - name: Require the reviewed model release policy
+        env:
+          MODEL: ${{ inputs.model || vars.HECATE_LLM_EVAL_MODEL || 'qwen3.6:35b-a3b-q4_K_M' }}
+          FAIL_UNDER: ${{ inputs.fail_under || '0.85' }}
+          HECATE_SERVICE_ISOLATED: "1"
+          PYTHON_DOTENV_DISABLED: "1"
+          HECATE_WORKSPACE: ${{ github.workspace }}/eval-results
+          HECATE_OLLAMA_THINK: "false"
+          HECATE_OLLAMA_NUM_CTX: "16384"
+          HECATE_OLLAMA_TIMEOUT_SEC: "600"
+        run: |
+          mkdir -p eval-results
+          hecate-agent eval-suite --provider ollama --model "$MODEL" \
+            --repeats 3 --fail-under "$FAIL_UNDER" \
+            --report eval-results/reviewed-policy.json > /dev/null
+
       - name: Run demotion eval gates
         env:
           CAPABILITY: ${{ github.event.inputs.capability || 'research_synthesize' }}
-          FAIL_UNDER: ${{ github.event.inputs.fail_under || '0.8' }}
+          FAIL_UNDER: ${{ github.event.inputs.fail_under || '0.85' }}
           HECATE_LLM_SIMPLE_PROVIDER: ollama
           HECATE_LLM_SIMPLE_MODEL: ${{ inputs.model || vars.HECATE_LLM_EVAL_MODEL || 'qwen3.6:35b-a3b-q4_K_M' }}
           HECATE_LLM_SIMPLE_BASE_URL: http://127.0.0.1:11434
@@ -128,6 +144,8 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: llm-demotion-gates
-          path: eval-results/*.json
+          path: |
+            eval-results/*.json
+            eval-results/*.jsonl
           if-no-files-found: ignore
           retention-days: 30
