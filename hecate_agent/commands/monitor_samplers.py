@@ -54,6 +54,33 @@ class DiskSample:
     total: int
 
 
+def _diagnose_state_access(path: Path) -> Optional[str]:
+    """Operator-facing reason quota stats are blank (isolation / group session)."""
+    if not path.exists():
+        return None
+    try:
+        path.read_text(encoding="utf-8")
+        return None
+    except PermissionError:
+        hint = f"Quota file unreadable: {path.name} (permission denied). Services write it for group hecate-data."
+        try:
+            import os
+            import sys
+
+            if sys.platform != "win32":
+                import grp
+
+                gid = getattr(grp, "getgrnam")("hecate-data").gr_gid
+                getgroups = getattr(os, "getgroups")
+                if gid not in getgroups():
+                    return hint + " This session lacks hecate-data — run `newgrp hecate-data` or open a new terminal."
+        except (KeyError, AttributeError, OSError):
+            pass
+        return hint
+    except OSError as exc:
+        return f"Quota file unreadable: {path.name} ({exc})"
+
+
 @dataclass
 class RunnerStatus:
     installed: bool = False
@@ -80,6 +107,8 @@ class RunnerStatus:
     github_confirmed_promotions: int = 0
     misp_confirmed_exports: int = 0
     misp_pending_exports: int = 0
+    #: Set when drafts/research/total quotas could not be loaded.
+    quota_unavailable_reason: Optional[str] = None
 
 
 def _read_env_file(path: Path) -> Dict[str, str]:
@@ -122,6 +151,7 @@ class _HeavyRunnerData:
     github_confirmed_promotions: int = 0
     misp_confirmed_exports: int = 0
     misp_pending_exports: int = 0
+    quota_unavailable_reason: Optional[str] = None
 
 
 class RunnerStatusSampler:
@@ -159,11 +189,14 @@ class RunnerStatusSampler:
         quota_workspace = Path(env.get("HECATE_WORKSPACE", str(self.workspace))).expanduser()
         if not quota_workspace.is_absolute():
             quota_workspace = runner_dir / quota_workspace
+        state_path = quota_workspace / ".orchestrator_state.json"
         state: Dict[str, Any] = {}
-        try:
-            state = json.loads((quota_workspace / ".orchestrator_state.json").read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, TypeError):
-            pass
+        quota_unavailable_reason = _diagnose_state_access(state_path)
+        if quota_unavailable_reason is None:
+            try:
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, TypeError):
+                pass
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         same_day = state.get("date") == today
         queue_dir = Path(env.get("HECATE_RUNNER_CTI_QUEUE_DIR", str(quota_workspace / "cti_queue")).strip("\"'"))
@@ -273,6 +306,7 @@ class RunnerStatusSampler:
             github_confirmed_promotions=gh_published,
             misp_confirmed_exports=misp_confirmed,
             misp_pending_exports=misp_pending,
+            quota_unavailable_reason=quota_unavailable_reason,
         )
 
     def sample(self, force: bool = False) -> RunnerStatus:
@@ -361,6 +395,7 @@ class RunnerStatusSampler:
             github_confirmed_promotions=hd.github_confirmed_promotions,
             misp_confirmed_exports=hd.misp_confirmed_exports,
             misp_pending_exports=hd.misp_pending_exports,
+            quota_unavailable_reason=hd.quota_unavailable_reason,
         )
         return self._cached
 

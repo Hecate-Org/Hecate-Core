@@ -1963,16 +1963,34 @@ def _runner_panel(status: RunnerStatus, events: List[TrailEvent]) -> Panel:
     if cooldown_str:
         rows.append(Text.assemble(("COOLDOWN ", "dim"), (f"next draft in {cooldown_str}", "bright_yellow"), no_wrap=True))
 
-    quota_parts = [
-        ("QUOTA    ", "dim"),
-        ("drafts " + _quota_text(status.drafts_today, status.drafts_limit), "bright_white"),
-        (" · research " + _quota_text(status.research_today, status.research_limit), "bright_white"),
-    ]
-    if status.cost_today is not None and status.cost_today > 0.0:
-        cost_limit = status.cost_limit or 20.0
-        pct = (status.cost_today / cost_limit * 100.0) if cost_limit > 0 else 0.0
-        quota_parts.append((f" · ${status.cost_today:.2f} today (${cost_limit:.2f} cap · {pct:.0f}%)", "bright_green"))
-    rows.append(Text.assemble(*quota_parts, no_wrap=True))
+    if status.quota_unavailable_reason:
+        reason = status.quota_unavailable_reason
+        if len(reason) > 96:
+            reason = reason[:93] + "…"
+        rows.append(
+            Text.assemble(
+                ("QUOTA    ", "dim"),
+                ("n/a — ", "yellow"),
+                (reason, "bright_yellow"),
+                no_wrap=True,
+            )
+        )
+    else:
+        quota_parts = [
+            ("QUOTA    ", "dim"),
+            ("drafts " + _quota_text(status.drafts_today, status.drafts_limit), "bright_white"),
+            (" · research " + _quota_text(status.research_today, status.research_limit), "bright_white"),
+        ]
+        if status.cost_today is not None and status.cost_today > 0.0:
+            cost_limit = status.cost_limit or 20.0
+            pct = (status.cost_today / cost_limit * 100.0) if cost_limit > 0 else 0.0
+            quota_parts.append(
+                (
+                    f" · ${status.cost_today:.2f} today (${cost_limit:.2f} cap · {pct:.0f}%)",
+                    "bright_green",
+                )
+            )
+        rows.append(Text.assemble(*quota_parts, no_wrap=True))
     backlog = _backlog_observation(events)
     if backlog:
         rows.append(
