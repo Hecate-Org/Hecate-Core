@@ -2928,6 +2928,13 @@ suite/prompt/code fingerprints. Local compute cost is unmetered. Remote budget
 accounting is conservative and estimated, not an invoice guarantee. No routing
 or demotion stamp is changed.
 
+Output paths are reserved with private permissions before provider calls, and a
+`.progress.jsonl` sidecar saves durable per-result checkpoints. Ctrl+C/normal
+termination saves a failing partial report and exits 130. Size/depth limits,
+unambiguous YAML/JSON and type/usage checks bound malformed input handling.
+Comparison validates per-case coverage and aggregate measurements before using
+a report's gate; reports are not signed attestations.
+
 For a private, isolated Qwen/Claude comparison from a checkout:
 
 ```bash
@@ -2956,9 +2963,11 @@ hecate-agent eval-compare baseline.json candidate.json --check --output json
 
 The first report is the baseline. Comparison requires identical suite and system
 prompt hashes, scoring version, generation parameters and quality threshold.
-`--check` exits 1 for a failed gate or any case/repetition that passed in the
+`--check` exits 1 for a failed candidate gate or any case/repetition that passed in the
 baseline and fails in a candidate. A model-family comparison does not itself
 authorize routing changes. Provider failures and incomplete runs stay visible.
+A failed baseline is retained as evidence and does not prevent an improved
+passing candidate from passing this check.
 
 ## hecate-agent eval
 

@@ -170,6 +170,7 @@ def test_critical_failure_blocks_high_aggregate_score():
 def test_repeated_runs_keep_denominator_and_expose_variance():
     suite = small_suite()
     backend = provider_for(suite["cases"])
+    backend.model = "qwen"
     backend.complete.side_effect = [
         LLMResponse('{"subtechnique_name":"PowerShell"}', 100, 20, "qwen", 1, 0),
         LLMResponse('{"subtechnique_name":"AppleScript"}', 100, 20, "qwen", 1, 0),
@@ -178,6 +179,7 @@ def test_repeated_runs_keep_denominator_and_expose_variance():
     assert report["total"] == 2
     assert report["score"] == 0.5
     assert report["variable_cases"] == ["powershell-cold-recall"]
+    assert report["scored"] == 2 and report["not_run"] == 0
 
 
 def test_provider_failure_records_no_exception_secrets_and_marks_remaining_not_run():
@@ -250,7 +252,7 @@ def test_comparison_lists_candidate_regressions():
 
 def test_bad_suite_fails_validation_without_model_instantiation(tmp_path):
     suite = small_suite()
-    suite["cases"].append(suite["cases"][0])
+    suite["cases"].append(deepcopy(suite["cases"][0]))
     path = tmp_path / "suite.yaml"
     path.write_text(yaml.safe_dump(suite))
     with pytest.raises(ValueError, match="Duplicate"):

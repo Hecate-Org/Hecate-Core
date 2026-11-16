@@ -84,6 +84,15 @@ isolation. Reports refuse to overwrite an existing path. Failed reports are
 retained. No command changes routing, writes demotion gates, publishes content,
 executes BAS or writes into a production workspace when using the helper.
 
+When `--report` is supplied, the destination and its `.progress.jsonl` sidecar
+are exclusively created with private permissions **before** provider setup or
+calls. Invalid paths and competing writers fail before spending model tokens.
+Every result checkpoint is flushed to disk. Ctrl+C or normal termination saves
+a failed partial report and exits 130; a hard kill may leave an incomplete report
+and its durable checkpoints, which cannot pass comparison. Helper subprocess
+timeouts return failure with retained logs and finished metadata; use
+`--timeout-seconds` to change the per-model deadline (default 7200).
+
 After correcting a scorer, re-score **both** saved response sets offline rather
 than changing answers or paying for new calls:
 
@@ -96,6 +105,33 @@ latency/usage/cost, records the original report digest, and makes zero model
 calls. Keep the originals. Scoring version 2 accepts a complete JSON fence,
 matching production parsing; version 1 rejected it. Reports with different
 scoring versions cannot be compared until both are rescored consistently.
+Scoring version 3 additionally enforces recursive type equality, bounded inputs
+and report consistency. Comparison checks the unique case/repetition schedule,
+per-case checks, summary, gate, token/cost totals and timing against each other.
+Reports are local evidence, not signed attestations: validation does not prove
+authenticity against someone who forges the entire artifact. Both version 1
+and version 2 reports can be rescored with their original frozen suite. Live
+parameter overrides are rejected during offline rescoring.
+
+Resource limits are 1 MiB per suite, 64 MiB per saved report, 64 KiB per answer,
+16 MiB total retained answer text, 1000 cases, 10 repetitions and 32 levels of
+suite nesting. Suites reject duplicate keys, YAML aliases, non-finite numbers
+and non-JSON expected values. Configured local model context bounds are checked
+before calls. Invalid usage, changed model identities or violated token limits
+stop further requests; known usage/cost is retained even for rejected answers.
+
+### Offline stress and failure tests
+
+```bash
+.venv/bin/python scripts/stress_model_quality.py --output-root /path/to/private/stress-results
+```
+
+The repeatable default workload uses 10,000 synthetic provider calls and 50,000
+seeded adversarial inputs. Real CLI subprocesses talk only to a temporary fake
+Ollama server bound to `127.0.0.1`: eight processes contend for one output, four
+run independently, and rate-limit, timeout and termination faults are injected.
+No GPU inference, external API credit or production workspace is used. Timings
+and Python memory measurements describe evaluator overhead, not model speed.
 
 ### Model and prompt release checklist
 
@@ -109,8 +145,9 @@ scoring versions cannot be compared until both are rescored consistently.
    Ollama model digest as well as its mutable tag. Keep the inference settings
    and hardware/load context with the artifacts.
 4. Run `hecate-agent eval-compare baseline.json candidate.json --check` for each
-   changed model. Exit 1 means a failed quality gate or a baseline-passing case
-   regressed. A Qwen-versus-Claude comparison is descriptive; it is not by itself
+   changed model. Exit 1 means a failed candidate quality gate or a baseline-passing
+   case regressed. A failing baseline does not block an improved passing candidate.
+   A Qwen-versus-Claude comparison is descriptive; it is not by itself
    an instruction to change model routing.
 5. For production prompt/pipeline changes, also replay the **three full-pipeline
    cases below**, using a separately configured scratch environment with live
