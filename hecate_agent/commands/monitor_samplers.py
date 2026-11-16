@@ -62,22 +62,19 @@ def _diagnose_state_access(path: Path) -> Optional[str]:
         path.read_text(encoding="utf-8")
         return None
     except PermissionError:
-        hint = (
-            f"Quota file unreadable: {path.name} (permission denied). "
-            "Services write it for group hecate-data."
-        )
+        hint = f"Quota file unreadable: {path.name} (permission denied). Services write it for group hecate-data."
         try:
-            import grp
             import os
+            import sys
 
-            gid = grp.getgrnam("hecate-data").gr_gid
-            if gid not in os.getgroups():
-                return (
-                    hint
-                    + " This session lacks hecate-data — run `newgrp hecate-data` "
-                    "or open a new terminal."
-                )
-        except KeyError:
+            if sys.platform != "win32":
+                import grp
+
+                gid = getattr(grp, "getgrnam")("hecate-data").gr_gid
+                getgroups = getattr(os, "getgroups")
+                if gid not in getgroups():
+                    return hint + " This session lacks hecate-data — run `newgrp hecate-data` or open a new terminal."
+        except (KeyError, AttributeError, OSError):
             pass
         return hint
     except OSError as exc:

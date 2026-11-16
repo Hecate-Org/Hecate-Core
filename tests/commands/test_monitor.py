@@ -1707,3 +1707,31 @@ def test_siem_dashboard_state_latency_alone_does_not_prove_an_alert(tmp_path: Pa
     metrics = m._collect_siem_drift_metrics(tmp_path)
     assert metrics.bas_verified_alerts_count == 0
     assert metrics.last_detection_latency_sec == 0.0
+
+
+def test_diagnose_state_access_missing_and_readable(tmp_path: Path):
+    from hecate_agent.commands.monitor_samplers import _diagnose_state_access
+
+    missing = tmp_path / ".orchestrator_state.json"
+    assert _diagnose_state_access(missing) is None
+
+    present = tmp_path / "readable.json"
+    present.write_text('{"date": "2026-11-16"}', encoding="utf-8")
+    assert _diagnose_state_access(present) is None
+
+
+def test_diagnose_state_access_permission_error(tmp_path: Path, monkeypatch):
+    from hecate_agent.commands.monitor_samplers import _diagnose_state_access
+
+    locked = tmp_path / "locked.json"
+    locked.write_text("{}", encoding="utf-8")
+
+    def _mock_raise(self, *args, **kwargs):
+        raise PermissionError("Access denied")
+
+    monkeypatch.setattr(Path, "read_text", _mock_raise)
+    reason = _diagnose_state_access(locked)
+    assert reason is not None
+    assert "Quota file unreadable" in reason
+    assert "locked.json" in reason
+
