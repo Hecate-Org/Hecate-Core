@@ -1,8 +1,42 @@
 from pathlib import Path
 
+import pytest
+from click.testing import CliRunner
+
 from hecate_agent.commands._hunt_dedup import _resolve_query_paths
+from hecate_agent.commands.hunt import hunt
 from hecate_agent.commands.monitor_metrics import _collect_hunts_metrics, _collect_purple_team_metrics, _find_siem_dir
 from hecate_agent.core.workspace import load_workspace_env, workspace_root
+
+
+@pytest.mark.parametrize("arguments", [["validate"], ["validate", "H-0001"]])
+def test_validation_checks_selected_workspace_from_foreign_cwd(tmp_path, monkeypatch, sample_hunt_content, arguments):
+    selected = tmp_path / "selected"
+    (selected / "hunts").mkdir(parents=True)
+    selected_file = selected / "hunts/H-0001.md"
+    selected_file.write_text("This selected hunt is invalid.\n")
+    foreign = tmp_path / "foreign"
+    (foreign / "hunts").mkdir(parents=True)
+    (foreign / "hunts/H-0001.md").write_text(sample_hunt_content)
+    monkeypatch.chdir(foreign)
+    monkeypatch.setenv("HECATE_WORKSPACE", str(selected))
+    result = CliRunner().invoke(hunt, arguments)
+    assert result.exit_code == 1, result.output
+    assert "No hunt" not in result.output
+    assert selected_file.read_text() == "This selected hunt is invalid.\n"
+
+
+def test_validation_does_not_broaden_an_empty_selected_workspace(tmp_path, monkeypatch):
+    selected = tmp_path / "empty-selected"
+    (selected / "hunts").mkdir(parents=True)
+    (tmp_path / "hunts").mkdir()
+    (tmp_path / "hunts/H-9999.md").write_text("Invalid foreign content")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HECATE_WORKSPACE", str(selected))
+    result = CliRunner().invoke(hunt, ["validate"])
+    assert result.exit_code == 0
+    assert "No hunt files found" in result.output
+    assert "H-9999" not in result.output
 
 
 def test_dedup_uses_selected_workspace_and_never_broadens_missing_scope(tmp_path, monkeypatch):
@@ -61,4 +95,5 @@ def test_environment_discovery_never_loads_old_home_checkout(tmp_path, monkeypat
     monkeypatch.delenv("HECATE_ISOLATION_TEST_VALUE", raising=False)
     load_workspace_env()
     import os
+
     assert "HECATE_ISOLATION_TEST_VALUE" not in os.environ
