@@ -1,209 +1,71 @@
 # Using Hecate in Your Organization
 
-Hecate is a **framework for building agentic capability** in threat hunting. This guide helps you adopt it.
-
-## Philosophy
-
-Hecate teaches systems how to hunt with memory, learning, and augmentation.
-
-- **Framework, not platform** - Structure over software, adapt to your environment
-- **Capability-focused** - Adds memory and agents to any hunting methodology ([PEAK](https://www.splunk.com/en_us/blog/security/peak-threat-hunting-framework.html), [SQRRL](https://www.threathunting.net/files/The%20Threat%20Hunting%20Reference%20Model%20Part%202_%20The%20Hunting%20Loop%20_%20Sqrrl.pdf), custom)
-- **Progression-minded** - Start simple, scale when complexity demands it
+Use LOCK records to preserve hunt context and lessons. Add search, models and
+automation where they solve an operational problem. LOCK can document work done
+under PEAK, SQRRL or another hunting methodology.
 
 ## How to Adopt Hecate
 
-### 1. Clone and Customize
+1. Follow [onboarding](ONBOARDING.md) and select a private enterprise workspace.
+2. Copy reviewed catalog content and starter knowledge into it.
+3. Complete `knowledge/environment.md` with verified telemetry and field mappings.
+4. Adapt `AGENTS.md` and `knowledge/hunting-knowledge.md` to your review process.
+5. Document a few hunts, review their usefulness, then add capabilities using the
+   [maturity model](maturity-model.md).
 
-```bash
-git clone https://github.com/Hecate-Org/Hecate-Core
-cd Hecate-Core
+Use the CLI to create managed records and allocate IDs. Search past work before
+creating a new hunt. AI-generated hypotheses require prior research; model output
+and generic reference data are not evidence of enterprise coverage.
 
-# Option A: With CLI (Recommended)
-pip install -e .
-hecate-agent hunt new
-
-# Option B: Markdown-Only
-# Just start documenting hunts in hunts/ folder
-```
-
-> The CLI is optional convenience tooling. The framework structure (hunts/, LOCK pattern, AGENTS.md) enables AI assistance.
-
-### 2. Choose Your Integration Approach
-
-**Standalone:** Use Hecate's LOCK pattern as your hunting methodology (simple, agentic-first).
-
-**Layered:** Keep your existing framework ([PEAK](https://www.splunk.com/en_us/blog/security/peak-threat-hunting-framework.html), [SQRRL](https://www.threathunting.net/files/The%20Threat%20Hunting%20Reference%20Model%20Part%202_%20The%20Hunting%20Loop%20_%20Sqrrl.pdf), [TaHiTI](https://www.betaalvereniging.nl/en/safety/tahiti/)) and use Hecate to add memory and AI capability.
-
-### 3. Customize Environmental Context
-
-**environment.md** - Your actual tech stack:
-- Security tools (SIEM, EDR, firewalls)
-- Technology stack (languages, frameworks, cloud platforms)
-- Known gaps and blind spots
-- Update quarterly or when major changes occur
-
-**AGENTS.md** - AI assistant context:
-- Data sources and tools
-- Organization threat model and priorities
-- Compliance requirements
-- High-priority ATT&CK TTPs
-
-**knowledge/hunting-knowledge.md** - Expert hunting frameworks (included):
-- Pre-loaded hunting methodology and analytical rigor
-- Use as-is or customize for your organization
-
-### 4. Start at Your Maturity Level
-
-See the [README](README.md) for detailed maturity model explanation.
-
-**Level 1: Documented (Week 1)**
-- Create repository, start documenting hunts in LOCK format
-- Use `hecate-agent hunt new` or manual markdown
-
-**Level 2: Searchable (Week 2-4)**
-- Add AGENTS.md and hunting-knowledge.md
-- Choose AI tool (GitHub Copilot, Claude Code, Cursor)
-- AI reads your hunt history automatically
-
-**Level 3+: Generative/Agentic (Month 3-6+)**
-- Build scripts for repetitive tasks (if needed)
-- Add structured memory when grep becomes slow (50+ hunts)
+Keep credentials, private telemetry, findings, `.hecate/` and logs out of public
+Git history. Core and Runner use the same selected workspace; they do not
+combine it automatically with Public or a sibling directory.
 
 ## Maintaining Environmental Context
 
-### Ownership & Cadence
+| Content | Owner | Review trigger |
+| --- | --- | --- |
+| Tools, architecture and telemetry contracts | Infrastructure and security owners | Quarterly and after significant changes |
+| Field mappings, coverage gaps and hunt lessons | Threat hunters | Findings, ingestion changes and newly identified gaps |
+| Assistant permissions and workflows | Security/workflow owner | New tools, credentials or approval policies |
+| Hunting methods | Hunting lead | Changes in team practice or analytical standards |
 
-**Who maintains:**
-- **Infrastructure/DevOps:** Tech stack changes, new services
-- **Security architects:** Network architecture, security tools
-- **Threat hunters:** Hunt findings, discovered services, blind spots
+Record the source and date of coverage claims. Asset inventories and CMDB links
+can help maintain the profile; automated imports still need review.
 
-**When to update:**
-- **Quarterly:** Scheduled review of environment.md
-- **Event-driven:** New security tools, infrastructure migrations, major application launches
-- **AGENTS.md:** As needed when data sources or AI tools change
-- **hunting-knowledge.md:** Rarely (core hunting frameworks are stable)
+## Search and Team Scale
 
-### Memory Scaling
-
-| Hunt Volume | Approach | Tools |
-|-------------|----------|-------|
-| **10-50 hunts** | Grep or CLI search | `grep -i "keyword" hunts/*.md` or `hecate-agent hunt search` |
-| **50-200 hunts** | CLI + simple helpers | Tags in markdown, hunt index, `hecate-agent hunt list --filter` |
-| **200+ hunts** | Structured memory | JSON index, SQLite, full-text search |
-
-**Key principle:** Don't build structure until grep becomes painful.
-
-### Asset Management Integration (Optional)
-
-**Manual (Level 1-2):** Reference CMDB/asset inventory in environment.md, add links to ServiceNow/Jira/wikis.
-
-**Automated (Level 3+):** Script to pull tech stack from CMDB API, auto-update environment.md sections.
-
-## Scaling by Team Size
-
-| Team Size | Level | Focus |
-|-----------|-------|-------|
-| **Solo Hunter** | 1-2 | Personal repo + AI tool, maintain environment.md yourself (15-30 min/quarter) |
-| **Small Team (2-5)** | 1-2 | Shared repo + AI tools, collaborative memory, shared environment.md responsibility |
-| **Security Team (5-20)** | 2-3 | Optional automation scripts, metrics dashboards, formalized environment.md updates |
-| **Enterprise SOC (20+)** | 3-4 | Hunt library by TTP, detection engineering pipeline, automated environment.md from CMDB |
+Start with `hunt list`, `hunt search` and `context`. Add similarity search when
+keyword retrieval misses related work. Establish ownership and peer review before
+introducing another index or automated workflow. Choose tooling based on measured
+retrieval and review effort rather than a fixed hunt-count threshold.
 
 ## Customizing the LOCK Loop
 
-LOCK is flexible—add gates as needed:
+Add peer review, management approval or a detection-engineering handoff where
+needed. Preserve the distinction between a proposal, an executed query and a
+supported finding. Follow the selected workspace's query limits and approval
+policy before execution.
 
-```
-# Add approval gates
-Learn → Observe → [Manager Approval] → Check → Keep
-
-# Add peer review
-Learn → Observe → Check → [Peer Review] → Keep
-
-# Add detection pipeline
-Learn → Observe → Check → Keep → [AI Converts to Detection] → Deploy
-```
-
-## Customization Examples
-
-### Add Organization-Specific Fields
-
-```markdown
-## Organization Context
-**Business Unit**: [Sales / Engineering / Finance]
-**Data Classification**: [Public / Internal / Confidential]
-**Compliance Framework**: [NIST / PCI / SOC2]
-```
-
-### Add Your Threat Model
-
-Create `threat_model.md` to document:
-- Priority threat actors for your industry
-- Common initial access vectors
-- Crown jewels and critical assets
-- Known coverage gaps
-
-### Organize Hunts by Priority
-
-```
-hunts/
-├── ransomware/
-├── insider_threat/
-├── supply_chain/
-└── cloud_compromise/
-```
+Put business scope, classification, owners and threat priorities in the workspace
+profile or template. Use [template configuration](CONFIGURATION.md#hunt-template-hunt_templatej2)
+for supported fields; retain IDs and metadata needed by validation and metrics.
 
 ## Integration Patterns
 
-### With HEARTH
-```bash
-./tools/convert_to_hearth.py hunts/H-0001.md
-```
+For catalog sweeps, CTI intake, Slack, publishing and BAS, follow
+[Runner onboarding](https://github.com/Hecate-Org/Hecate-Runner/blob/main/docs/ONBOARDING.md).
+Each live integration needs its own credentials, destinations and approval boundary.
+Keep mock execution while verifying setup.
 
-### With Detection-as-Code
-```bash
-./tools/export_to_sigma.py queries/H-0001.spl
-```
+Export reviewed hunt content with `hecate-agent hunt promote`; use Core's
+`transpile_sigma_rule` API for native Sigma conversion. Exports do not deploy or
+execute detections. Custom HEARTH, SOAR or ticketing adapters require separate
+implementation; the repository does not supply generic conversion scripts.
 
-### With SOAR
-Trigger automated hunts from playbooks using generated hypotheses.
+## Sharing Back
 
-## Making Hecate "Yours"
-
-### Rebrand
-- Change logo, update terminology, add your security principles
-
-### Add Your Voice
-- Replace examples with your real hunts (redacted)
-- Document your team's unique lessons
-- Share your threat hunting philosophy
-
-### Extend with Tools
-
-**Built-in CLI:** See [README](CLI_REFERENCE.md) for complete command reference including:
-- Hunt management (`hecate-agent hunt new/list/search/validate/stats/coverage`)
-- Research agent (`hecate-agent research new`) - Deep pre-hunt research with 5-skill methodology
-- Hypothesis generator (`hecate-agent agent run hypothesis-generator`) - AI-generated hunt hypotheses
-
-**Custom helpers:** Build additional tools as needed (query validators, metrics dashboards, SOAR integrations).
-
-## Questions?
-
-1. Review templates and example hunt (H-0001) for patterns
-2. Check prompts/ folder for AI-assisted workflows
-3. See [README](README.md) for workflow diagrams and integration patterns
-4. Adapt freely - this framework is yours to modify
-
-## Sharing Back (Optional)
-
-We'd love to hear how you're using Hecate:
-- Blog about your experience
-- Share anonymized metrics
-- Present at conferences
-- Open an issue at [github.com/Hecate-Org/Hecate-Core/issues](https://github.com/Hecate-Org/Hecate-Core/issues)
-
-Your hunts, data, and lessons stay **yours**.
-
----
-
-**Remember**: Hecate is a framework to internalize, not a platform to extend. Make it yours.
+Share redacted examples or reproducible issues when useful. Review privacy,
+source attribution and redistribution rights before publishing any snapshot.
+See [LICENSES.md](../LICENSES.md), [operating recipes](HOW_TO.md) and the
+[CLI reference](CLI_REFERENCE.md).

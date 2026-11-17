@@ -1,34 +1,38 @@
 # Hecate Documentation
 
-New to the project? Start with the [onboarding guide](ONBOARDING.md).
+Start with [onboarding](ONBOARDING.md) for installation or
+[Getting Started](getting-started.md) for your first workspace and hunt.
+
+## Choose a Guide
+
+| Need | Guide |
+| --- | --- |
+| Install Core or choose extras | [Installation](INSTALL.md) |
+| Set providers, credentials, workspace or templates | [Configuration](CONFIGURATION.md) |
+| Find commands and options | [CLI reference](CLI_REFERENCE.md) |
+| Follow common command sequences | [Operating recipes](HOW_TO.md) |
+| Adopt Hecate as a team | [Using Hecate](USING_HECATE.md) |
+| Understand the hunt record | [LOCK pattern](lock-pattern.md) |
+| Choose the next capability | [Maturity model](maturity-model.md) |
+| Design scheduled workflows | [Level 4 patterns](level4-agentic-workflows.md) |
+| Review illustrative records | [Showcase](SHOWCASE.md) |
+| Understand package/workspace boundaries | [Architecture](ARCHITECTURE.md), [compatibility](COMPATIBILITY.md) |
+| Configure Runner operations | [Runner onboarding](https://github.com/Hecate-Org/Hecate-Runner/blob/main/docs/ONBOARDING.md) |
 
 ## Core Framework Docs
 
-The guides in this directory are the GitHub source of truth. Matching files in
-`hecate_agent/data/docs/` ship with the Python package so installed workspaces
-can use them. When a guide changes, copy it to the matching package-data path.
-Run `python scripts/sync_docs.py` to update all mirrored framework guides, or
-`python scripts/sync_docs.py --check` to report drift.
-
-Only the guides listed below are mirrored. The repository's own `prompts/`,
-`templates/` and `integrations/` are this workspace's working copies and may
-differ from the defaults bundled under `hecate_agent/data/`.
+This directory is the source of truth for framework guides. The following have
+matching copies under `hecate_agent/data/docs/` for installed packages:
 
 - [Getting Started](getting-started.md)
-- [The LOCK Pattern](lock-pattern.md)
-- [Maturity Model](maturity-model.md)
-- [Level 4: Agentic Workflows](level4-agentic-workflows.md)
-- [CLI Reference](CLI_REFERENCE.md)
-- [Environment Setup](environment.md)
+- [LOCK pattern](lock-pattern.md)
+- [Maturity model](maturity-model.md)
+- [Level 4 workflows](level4-agentic-workflows.md)
+- [CLI reference](CLI_REFERENCE.md)
+- [Environment profile](environment.md)
 - [Why Hecate?](why-hecate.md)
 
-## Supplementary Docs (this directory)
-
-Files here are GitHub/developer-facing and are not deployed into workspaces:
-
-- [Onboarding](ONBOARDING.md) — What Hecate is for, how the two repositories fit, and a first run
-- [Core architecture](ARCHITECTURE.md) and [system architecture](https://github.com/Hecate-Org/Hecate-Runner/blob/main/docs/ARCHITECTURE.md) — Engine boundaries and Runner operating paths
-- [Installation](INSTALL.md) — Install options and requirements
-- [Configuration Reference](CONFIGURATION.md) — All config keys and environment variables
-- [Using Hecate](USING_HECATE.md) — Adoption guide for teams
-- [Hunt Showcase](SHOWCASE.md) — Illustrative sample hunts and workflows
+After editing one of these, run `python scripts/sync_docs.py`, then
+`python scripts/sync_docs.py --check`. Other guides here are repository-facing.
+Workspace copies under `prompts/`, `templates/` and `integrations/` may intentionally
+differ from the defaults shipped in `hecate_agent/data/`.

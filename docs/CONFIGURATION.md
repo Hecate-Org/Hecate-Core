@@ -31,63 +31,19 @@ working credentials or measured enterprise knowledge.
 
 ## How the Pipeline Works
 
-```
-User / AI assistant
-        │
-        ▼
-┌───────────────────────────────────────────────────────────────────┐
-│  1. RESEARCH   hecate-agent research new --topic "..." --technique T1003  │
-│     • Skill 1: System internals (web search via Tavily)           │
-│     • Skill 2: Adversary tradecraft (web search + ATT&CK STIX)    │
-│     • Skill 3: Telemetry mapping (OCSF schema + environment.md)   │
-│     • Skill 4: Related past hunts (semantic similarity search)    │
-│     • Skill 5: Synthesis (LLM aggregation)                        │
-│     → Creates R-XXXX.md in research/                              │
-└────────────────────────────┬──────────────────────────────────────┘
-                             │
-                             ▼
-┌───────────────────────────────────────────────────────────────────┐
-│  2. HYPOTHESIS   hecate-agent agent run hypothesis-generator              │
-│     • Loads research context from R-XXXX.md                       │
-│     • Injects real ATT&CK technique names (STIX grounding)        │
-│     • Calls LLM to generate structured JSON hypothesis            │
-│     • Validates output T-codes against ATT&CK (strips hallucinations) │
-│     → Prints hypothesis; optionally appends to R-XXXX.md          │
-└────────────────────────────┬──────────────────────────────────────┘
-                             │
-                             ▼
-┌───────────────────────────────────────────────────────────────────┐
-│  3. HUNT CREATION   hecate-agent hunt new --research R-XXXX               │
-│     • Renders HUNT_TEMPLATE.j2 with hypothesis fields             │
-│     • Creates H-XXXX.md in hunts/production/YYYY/QN/             │
-│     • Validates YAML frontmatter                                  │
-│     → Hunt file ready for query development                       │
-└────────────────────────────┬──────────────────────────────────────┘
-                             │
-                             ▼
-┌───────────────────────────────────────────────────────────────────┐
-│  4. QUERY EXECUTION   (human or data source integration)          │
-│     • Analyst writes and runs queries (Splunk, KQL, SQL, etc.)    │
-│     • hecate-agent splunk search (Splunk REST integration)                │
-│     • Results recorded in hunt file (CHECK section)               │
-└────────────────────────────┬──────────────────────────────────────┘
-                             │
-                             ▼
-┌───────────────────────────────────────────────────────────────────┐
-│  5. DOCUMENTATION   (human edits hunt file)                       │
-│     • KEEP section: findings, TP/FP counts, lessons learned       │
-│     • hecate-agent hunt validate H-XXXX (CI/CD check)                    │
-│     • hecate-agent investigate promote I-XXXX (if started as investigation)│
-└───────────────────────────────────────────────────────────────────┘
-```
+1. **Research:** `research new` records source context, tradecraft, telemetry
+   mapping, related work and synthesis in `research/R-XXXX.md`.
+2. **Hypothesis:** `agent run hypothesis-generator` proposes structured content
+   using the actual research ID and available ATT&CK reference data.
+3. **Record:** `hunt new --research R-XXXX` creates a managed LOCK record.
+4. **Check:** A separately approved integration executes bounded queries;
+   the analyst records results and unknowns.
+5. **Keep:** Document findings and lessons, then run `hunt validate` for structure.
 
-Each LLM call is grounded with real data where possible:
-- **Technique names/descriptions** come from local ATT&CK STIX data (`hecate-agent attack update`)
-- **Adversary tradecraft** comes from Tavily web search results
-- **Telemetry fields** come from `knowledge/OCSF_SCHEMA_REFERENCE.md` and `environment.md`
-- **Past hunt context** comes from local semantic search against `hunts/`
-
----
+The selected workspace supplies environment knowledge and past hunts. Local STIX
+and configured web search support grounding; neither a valid ID nor model output
+proves a source claim or live coverage. See [operating recipes](HOW_TO.md) for the
+command sequence and [architecture](ARCHITECTURE.md) for component boundaries.
 
 ## Quick Setup
 
@@ -118,14 +74,15 @@ ollama pull qwen2.5:14b
 # Hecate auto-detects Ollama at localhost:11434
 ```
 
-### With research agent (requires web search)
+### With research agent (web search enabled)
 
 ```bash
 export TAVILY_API_KEY=tvly-...
 hecate-agent research new --topic "LSASS dumping" --technique T1003.001
 ```
 
-Get a free Tavily key at <https://tavily.com> (1,000 free searches/month).
+Web search requires its own credentials. `--no-web-search` selects source-only
+research; it does not provide independent corroboration.
 
 ### With live ATT&CK data (better grounding)
 
@@ -152,7 +109,7 @@ hecate-agent attack update   # Downloads ~50 MB STIX bundle once
 
 | Missing Key | Effect |
 |-------------|--------|
-| No LLM key and no Ollama | `hecate-agent agent run` and `hecate-agent research new` fall back to template-based output (no AI analysis) |
+| No LLM key and no Ollama | Some commands create an empty research template or offer heuristic modes; neither is model analysis. Model-backed stages need a configured provider |
 | No `TAVILY_API_KEY` | Research Skill 1 and Skill 2 proceed with model recall only; findings are flagged `[UNCERTAIN]` |
 | No `SPLUNK_TOKEN` | `hecate-agent splunk` commands fail with a credentials error |
 | No ATT&CK STIX | Technique grounding uses FallbackProvider; output T-code validation is skipped |
