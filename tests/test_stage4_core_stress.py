@@ -175,6 +175,10 @@ class TestInvestigationAndResearchFuzzing:
         assert data_empty["frontmatter"] == {}
         assert data_empty["content"] == ""
 
+    @pytest.mark.skipif(
+        os.name == "nt",
+        reason="allocation lock is a documented no-op without fcntl (Windows); concurrent allocation is not serialized there",
+    )
     def test_research_manager_counter_concurrency_stress(self, tmp_path: Path) -> None:
         """Concurrent research ID allocation under 8 worker threads must not duplicate IDs."""
         res_dir = tmp_path / "research"
