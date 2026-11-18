@@ -1,493 +1,129 @@
 # Getting Started with Hecate
 
-This guide walks you through setting up Hecate, from your first documented hunt to advanced AI-powered capabilities.
-
-**This framework is meant to be flexible.** Adapt it to your environment, data sources, and team structure. Use what works for you, modify what doesn't, and skip what isn't relevant.
-
-> **Configuration reference:** For a complete list of API keys, environment variables, `.hecateconfig.yaml` format, and the hunt template, see [CONFIGURATION.md](https://github.com/Hecate-Org/Hecate-Core/blob/main/docs/CONFIGURATION.md).
+Start by selecting a workspace, documenting a hunt and reviewing the result.
+Models, live queries and background automation are optional additions.
 
 ## Step 1: Choose Your Setup Path
 
-Hecate offers two paths to get started:
+For a source installation, follow [Core onboarding](https://github.com/Hecate-Org/Hecate-Core/blob/main/docs/ONBOARDING.md)
+or [Runner onboarding](https://github.com/Hecate-Org/Hecate-Runner/blob/main/docs/ONBOARDING.md)
+for the combined application. [Installation options](https://github.com/Hecate-Org/Hecate-Core/blob/main/docs/INSTALL.md)
+cover prerequisites and optional dependencies.
 
-### Option A: CLI-Enabled (Recommended)
-
-Install the Python CLI for convenience commands:
-
-```bash
-# Clone and install
-git clone https://github.com/Hecate-Org/Hecate-Core
-cd Hecate-Core
-pip install -e .
-
-# Verify installation
-hecate-agent --version
-```
-
-**Benefits:** Interactive hunt creation, automated validation, built-in search and stats
-
-### Option B: Markdown-Only
-
-Use the framework structure without CLI tools:
-
-```bash
-# Clone only
-git clone https://github.com/Hecate-Org/Hecate-Core
-cd Hecate-Core
-```
-
-**Benefits:** Maximum simplicity, full control, no dependencies
-
-> **Note:** Both paths work equally well. The CLI is optional convenience - the framework structure (hunts/, LOCK pattern, AGENTS.md) is what enables AI assistance.
+You can read and use the LOCK documentation without Python. Use the CLI when
+creating framework-managed records: it allocates IDs and writes the required
+frontmatter. Browsing hunts and the offline demo need no model or API keys.
 
 ## Step 2: Explore the Structure
 
-Take a few minutes to understand the repository layout:
+With the installed CLI available, select your workspace before running commands:
 
-```
-workspace/
-├── .hecateconfig.yaml     # Optional workspace settings
-├── hunts/                 # Hunt documents (created when needed)
-├── research/              # Research documents (created when needed)
-├── queries/               # Query files (created when needed)
-├── templates/             # Workspace templates
-├── knowledge/             # Environment and hunting context
-└── integrations/          # Integration guides
+```bash
+export HECATE_WORKSPACE=/absolute/path/to/your/workspace
+hecate-agent hunt list
+hecate-agent env check
 ```
 
-The installed CLI's Python source lives in the Hecate package, not in a
-workspace. Exact folders vary with the commands and templates you use.
+Core contains the application code; the workspace contains your content:
 
-**Key files to review:**
+| Path | Purpose |
+| --- | --- |
+| `hunts/`, `research/`, `queries/` | Hunt records, supporting research and detection content |
+| `knowledge/environment.md` | Verified telemetry, field mappings, retention and gaps |
+| `knowledge/hunting-knowledge.md` | Local hunting methodology and lessons |
+| `AGENTS.md` | Assistant instructions and execution guardrails |
+| `.env`, `.hecate/`, `logs/` | Private configuration and operational state |
 
-- [templates/](../templates/) - Ready-to-use LOCK hunt templates
-- [hunts/](../hunts/) - Example hunts showing the LOCK pattern
-- [AGENTS.md](https://github.com/Hecate-Org/Hecate-Core/blob/main/AGENTS.md) - Template for AI context (customize later)
+Commands create content directories as needed. Seed an enterprise workspace with
+reviewed catalog content and keep real credentials, telemetry and findings private.
+A starter environment profile does not establish that a data source is available.
 
 ## Step 3: Document Your First Hunt (Level 1)
 
-Start simple. Pick a recent hunt or create a new one and document it using the LOCK pattern.
-
-### Create a Hunt File
-
-**Using the CLI (Option A):**
+For a human-authored hypothesis, create a record interactively or supply its scope:
 
 ```bash
-# Interactive mode - CLI will prompt you for details
-hecate-agent hunt new
-
-# Or non-interactive with flags
 hecate-agent hunt new \
   --technique T1110.001 \
   --title "SSH Brute Force Detection" \
-  --platform linux \
+  --platform Linux \
   --tactic credential-access \
   --non-interactive
-
-# Validate the hunt structure
 hecate-agent hunt validate
-
-# View your hunt catalog
-hecate-agent hunt list
 ```
 
-**Manual Creation (Option B):**
+Complete the [LOCK sections](lock-pattern.md):
 
-1. Copy a template:
+- **Learn:** Record the source, motivation and available telemetry.
+- **Observe:** State a falsifiable behavior and expected benign alternatives.
+- **Check:** Record bounded queries, approvals and actual results.
+- **Keep:** Separate supported findings from unknowns and document next steps.
 
-   ```bash
-   cp templates/HUNT_LOCK.md hunts/H-0001.md
-   ```
-
-2. Fill out the LOCK sections:
-   - **Learn:** What motivated this hunt?
-   - **Observe:** What behavior are you looking for?
-   - **Check:** What query did you run?
-   - **Keep:** What did you find? What's next?
-
-3. Save and commit:
-
-   ```bash
-   git add hunts/H-0001.md
-   git commit -m "Add hunt H-0001: [Brief description]"
-   ```
-
-> **Tip:** The CLI (`hecate-agent hunt new`) creates the file with YAML frontmatter automatically. Manual creation gives you full control over the content.
-
-### Example Structure
-
-See [hunts/H-0001.md](https://github.com/Hecate-Org/Hecate-Core/blob/main/hecate_agent/data/hunts/2026/Q1/H-0001.md) for a complete example. Here's a simplified structure:
-
-```markdown
-# H-0001: SSH Brute Force Detection
-
-**Learn**
-Recent CTI indicates increased SSH brute force activity targeting cloud infrastructure.
-Available data: Linux auth.log via Splunk (index=linux_secure)
-
-**Observe**
-Adversaries may attempt multiple SSH authentication failures from a single source IP.
-Successful login after many failures is highly suspicious.
-
-**Check**
-index=linux_secure action=failure
-| stats count by src_ip
-| where count > 20
-
-**Keep**
-Found 3 IPs with >100 attempts.
-- 203.0.113.45: 247 attempts, 0 successes
-- 198.51.100.22: 189 attempts, 1 success (investigate)
-- 192.0.2.15: 134 attempts, 0 successes
-
-Next: Correlate with EDR to see if successful login led to further activity.
-```
-
-**Congratulations!** You're now at Level 1. You have persistent, searchable hunt records.
+Review [worked examples](https://github.com/Hecate-Org/Hecate-Core/blob/main/docs/SHOWCASE.md)
+for complete records. Preserve the generated YAML frontmatter; it supports search,
+metrics and ATT&CK coverage. Structural validation does not prove a detection works.
 
 ## Step 4: Add AI Context Files (Level 2)
 
-To make your hunts AI-accessible, add context files that describe your environment and provide domain expertise.
-
-### Customize AGENTS.md
-
-1. Open [AGENTS.md](https://github.com/Hecate-Org/Hecate-Core/blob/main/AGENTS.md)
-2. Update the following sections:
-   - **Data Sources:** Replace placeholders with your actual SIEM indexes, EDR platforms, etc.
-   - **Technology Stack:** List your security tools
-   - **Known Visibility Gaps:** Document what you can't see
-
-Example customization:
-
-```markdown
-## Data Sources
-
-### SIEM / Log Aggregation
-- **Platform:** Splunk Enterprise
-- **Indexes:**
-  - `index=winlogs` - Windows Event Logs
-  - `index=linux_secure` - Linux auth.log
-  - `index=edr` - CrowdStrike Falcon telemetry
-- **Retention:** 90 days
-- **Query Language:** SPL
-
-### EDR / Endpoint Security
-- **Platform:** CrowdStrike Falcon
-- **Telemetry:** Process execution, network connections, file modifications
-- **Query Access:** Splunk integration via index=edr
-```
-
-### Review hunting-knowledge.md
-
-The repository includes [knowledge/hunting-knowledge.md](../knowledge/hunting-knowledge.md) with expert threat hunting frameworks. Review it to understand:
-
-- How to generate quality hypotheses
-- Observable-to-TTP mapping patterns
-- Analytical rigor best practices
-
-Use the selected workspace's copy for local hunting guidance. Generic guidance
-does not establish measured telemetry coverage; verify `knowledge/environment.md`.
-
-### Configure an LLM Provider (Optional)
-
-Research and model-assisted agents require a configured supported provider. Some
-agents offer an explicit `--no-llm` heuristic mode; do not assume every command
-automatically falls back when a model is missing.
-
-Set **one** of the following environment variables and Hecate auto-detects your provider:
-
-| Provider | Environment Variable | Install Extra |
-|----------|---------------------|---------------|
-| Anthropic (Claude) | `ANTHROPIC_API_KEY` | `pip install -e ".[litellm]"` |
-| OpenAI (GPT) | `OPENAI_API_KEY` | `pip install -e ".[openai]"` |
-| AWS Bedrock | `AWS_PROFILE` or `AWS_ACCESS_KEY_ID` | `pip install -e ".[bedrock]"` |
-| Ollama (local) | `OLLAMA_HOST` (default: `localhost:11434`) | `pip install -e ".[ollama]"` |
-| Any via LiteLLM | varies | `pip install -e ".[litellm]"` |
+Complete `knowledge/environment.md` before requesting queries or hypotheses.
+Adapt `AGENTS.md` and hunting guidance to your team's scope and review process.
+Use existing work before creating a duplicate:
 
 ```bash
-# Example: configure OpenAI
-export OPENAI_API_KEY=sk-...
-
-# Example: configure a local Ollama instance
-export OLLAMA_HOST=http://localhost:11434
+hecate-agent hunt search "credential access"
+hecate-agent similar "SSH authentication failures"
+hecate-agent context --hunt H-0001 --format json
 ```
 
-To override auto-detection and explicitly set a provider and model:
+Replace example IDs with IDs returned by `hunt list`. Similarity search needs its
+optional dependency. See the [configuration reference](https://github.com/Hecate-Org/Hecate-Core/blob/main/docs/CONFIGURATION.md)
+for models, endpoints and credentials.
+
+Research must precede an AI-generated hypothesis. Configure the model and optional
+search provider, then use the actual research ID returned by the first command:
 
 ```bash
-export HECATE_LLM_PROVIDER=openai
-export HECATE_LLM_MODEL=replace-with-your-available-model-id
+hecate-agent research new --topic "SSH authentication abuse"
+hecate-agent agent run hypothesis-generator \
+  --threat-intel "Source-backed behavior" --research R-0001
+hecate-agent hunt new --title "Reviewed hypothesis" \
+  --technique T1110.001 --research R-0001 --non-interactive
 ```
 
-See [`.env.example`](https://github.com/Hecate-Org/Hecate-Core/blob/main/.env.example) for all supported variables.
-
-### Try AI-Assisted Features
-
-1. Open your repository in Claude Code, GitHub Copilot, or Cursor
-2. Ask: "What hunts have we documented?"
-3. Ask: "What data sources do we have for Windows endpoint hunting?"
-4. Try the agent framework:
-   ```bash
-   # List available agents
-   hecate-agent agent list
-
-   # Generate a hypothesis using the hypothesis-generator agent
-   hecate-agent agent run hypothesis-generator \
-     --threat-intel "APT29 using LSASS dumping for credential theft"
-
-   # Conduct pre-hunt research
-   hecate-agent research new --topic "LSASS dumping" --technique T1003.001
-   ```
-
-If the AI can answer these questions and the agent commands work, you're successfully at Level 2!
-
-**Time investment:** Approximately 1 week to customize AGENTS.md and test AI integration.
-
-### Hunt Metadata Evolution (Level 2+)
-
-At Level 2+, enhance your hunt files with **YAML frontmatter** - machine-readable metadata that enables AI to filter, analyze, and track hunts programmatically.
-
-**What is YAML Frontmatter?**
-
-YAML frontmatter is structured metadata placed at the top of hunt files, enabling:
-
-- AI-powered filtering by status, tactics, techniques, platform
-- Automated hunt success metrics calculation
-- ATT&CK coverage gap analysis
-- Hunt relationship tracking
-
-**When to Adopt:**
-
-| Maturity Level | YAML Recommendation |
-|----------------|---------------------|
-| Level 0-1 (Manual) | Optional - Focus on learning LOCK first |
-| Level 2 (Searchable) | Recommended - Enables AI filtering |
-| Level 3+ (Generative/Agentic) | Required - Automation needs structured data |
-
-**How to Add YAML Frontmatter:**
-
-1. Open an existing hunt file (e.g., `hunts/H-0001.md`)
-2. Add YAML block at the very top:
-
-```yaml
----
-hunt_id: H-0001
-title: Linux Crontab Persistence Detection
-status: completed
-date: 2026-10-15
-hunter: Security Team
-platform: [Linux]
-tactics: [persistence]
-techniques: [T1053.003]
-data_sources: [Auditd, Syslog]
-related_hunts: []
-findings_count: 3
-true_positives: 1
-false_positives: 1
-customer_deliverables: []
-tags: [linux, cron, persistence]
----
-```
-
-1. Keep the existing markdown metadata section below the title for human readability
-
-**Full documentation:** See [hunts/FORMAT_GUIDELINES.md](https://github.com/Hecate-Org/Hecate-Core/blob/main/docs/CLI_REFERENCE.md#hecate-agent-hunt-validate)
-
-**Why Both YAML and Markdown Metadata?**
-
-- **YAML** - Enables AI filtering: "Find all completed credential-access hunts"
-- **Markdown** - Provides at-a-glance context when reading hunts
-
-**AI Benefits with YAML:**
-
-Once you add frontmatter to your hunts, AI can:
-
-- Filter: "Show me all Windows persistence hunts"
-- Analyze: "What's our hunt success rate by tactic?"
-- Discover: "Which T1003 sub-techniques have we hunted?"
-- Track: "Find hunts related to H-0015"
+Review source support, ATT&CK mappings and telemetry assumptions. Research without
+web search is source-only synthesis, not independent corroboration. If required
+research cannot run, report the limitation rather than silently skipping it.
 
 ## Step 5: Connect Tools (Level 3 - Optional)
 
-Level 3 is about giving AI the ability to execute queries and interact with your security stack.
+Start with one integration from the [integration guides](../integrations/README.md).
+Verify access and field mappings with a bounded, read-only query. Use count-first
+checks, time bounds and result limits; obtain approval before live execution.
 
-### Choose Your First Integration
-
-Start with the tool you use most frequently:
-
-- **Splunk:** [integrations/quickstart/splunk.md](../integrations/quickstart/splunk.md)
-- **Other tools:** Browse [integrations/MCP_CATALOG.md](../integrations/MCP_CATALOG.md)
-
-### Setup Process
-
-1. **Find the MCP server** for your tool
-2. **Follow the quickstart guide** for configuration
-3. **Test with a simple query** (e.g., "Search for failed SSH logins in the past hour")
-4. **Verify AI can execute** the query and return results
-
-### Success Criteria
-
-You're at Level 3 when:
-
-- Claude can execute queries in your SIEM without copy-paste
-- AI enriches findings with threat intel automatically
-- Tickets are created with full context
-
-**Time investment:** 2-4 weeks depending on tool availability and complexity.
-
-**Detailed examples:** See [../integrations/README.md](../integrations/README.md)
+For existing catalog hunts, Runner's [sweep workflow](https://github.com/Hecate-Org/Hecate-Runner/blob/main/docs/ONBOARDING.md#existing-hunt-execution)
+is separate from CTI intake and new-hunt generation. Keep its query provider
+`mock` while practicing.
 
 ## Step 6: Deploy Agents (Level 4 - Optional)
 
-Level 4 is for teams ready to move from reactive assistance to proactive automation.
+Automate one reviewed workflow at a time. Define its inputs, quotas, credentials,
+review gates, failure handling and recovery before scheduling it. See
+[Level 4 workflows](level4-agentic-workflows.md) for design patterns and links to
+the implemented Runner services.
 
-### Planning Your Agent Architecture
+A generated rule, synthetic match, native query match and fired SIEM alert are
+different outcomes. Record the evidence each check actually provides.
 
-Before building agents, define:
+## Common Tasks
 
-1. **What should agents monitor?** (CTI feeds, internal alerts, anomaly detection)
-2. **What should they generate?** (Draft hunts, enriched tickets, summary reports)
-3. **Where do humans review?** (Approval gates, validation checkpoints)
-4. **What are the guardrails?** (No auto-execution, human-in-the-loop, logging)
+| Task | Command |
+| --- | --- |
+| Read a hunt | `hecate-agent context --hunt H-0001 --format json` |
+| Validate records | `hecate-agent hunt validate` |
+| Review metrics or coverage | `hecate-agent hunt stats` / `hecate-agent hunt coverage` |
+| Inspect ATT&CK data | `hecate-agent attack status` / `hecate-agent attack lookup T1003.001` |
+| Download reference data | `hecate-agent attack update` |
+| Inspect command options | `hecate-agent <command> --help` |
 
-### Choose an Agent Framework
-
-- **LangGraph** - Best for stateful, multi-step workflows
-- **CrewAI** - Best for role-based agent teams
-- **AutoGen** - Best for conversational patterns
-- **Custom** - Build exactly what you need
-
-### Start Small
-
-Don't build a full agent pipeline on day one:
-
-1. **First agent:** CTI monitor that flags new TTPs
-2. **Second agent:** Hypothesis generator that creates draft hunts
-3. **Third agent:** Notifier that alerts your team
-
-**Time investment:** 1-3 months with custom development.
-
-**Detailed examples:** See [level4-agentic-workflows.md](level4-agentic-workflows.md)
-
-## CLI Quick Reference
-
-If you installed the CLI (Option A), here are the most useful commands:
-
-### Agent Framework
-
-```bash
-# List all available agents
-hecate-agent agent list
-
-# Get details about a specific agent
-hecate-agent agent info hypothesis-generator
-
-# Run an agent
-hecate-agent agent run hypothesis-generator --threat-intel "APT29 using WMI"
-```
-
-### Research Workflow (Optional)
-
-```bash
-# Create research document (15-20 min deep research)
-hecate-agent research new --topic "LSASS dumping" --technique T1003.001
-
-# Quick research for urgent hunts (5 min)
-hecate-agent research new --topic "Pass-the-Hash" --depth basic
-
-# List and view research
-hecate-agent research list
-hecate-agent research view R-0001
-```
-
-### Hunt Management
-
-```bash
-# Create hunts
-hecate-agent hunt new                           # Interactive mode
-hecate-agent hunt new --technique T1003.001 --title "LSASS Dumping"
-hecate-agent hunt new --research R-0001         # Link to research document
-
-# Review available hunt commands
-hecate-agent hunt --help
-
-# List and search
-hecate-agent hunt list                          # All hunts
-hecate-agent hunt list --status completed       # Filter by status
-hecate-agent hunt list --platform windows       # Filter by platform
-hecate-agent hunt search "kerberoasting"        # Full-text search
-
-# Validation and stats
-hecate-agent hunt validate                      # Validate all hunts
-hecate-agent hunt validate H-0001               # Validate specific hunt
-hecate-agent hunt stats                         # Show statistics
-hecate-agent hunt coverage                      # MITRE ATT&CK coverage
-```
-
-### Workspace health
-
-```bash
-hecate-agent env check                          # Dependency + workspace checklist
-```
-
-There is no initialization step. `hunts/`, `research/` and `queries/` are created
-the first time a command needs them.
-
-**Full documentation:** [CLI Reference](CLI_REFERENCE.md)
-
-## Next Steps
-
-**At Level 1:**
-
-- Document 5-10 hunts (use `hecate-agent hunt new` or manual markdown)
-- Establish a hunt numbering convention (CLI handles this automatically)
-- Train team on LOCK pattern
-- Optional: Run `hecate-agent hunt validate` to ensure consistency
-
-**At Level 2:**
-
-- Customize AGENTS.md for your environment
-- Use AI to search past hunts (or `hecate-agent hunt search` for CLI users)
-- Generate hypotheses based on lessons learned
-- Optional: Use `hecate-agent hunt stats` and `hecate-agent hunt coverage` to identify gaps
-
-**At Level 3:**
-
-- Connect your most-used tool (Splunk, CrowdStrike, etc.)
-- Run a full hunt with AI executing queries (AI can use `hecate-agent hunt new` to document results)
-- Measure time saved vs. manual execution
-
-**At Level 4:**
-
-- Deploy one monitoring agent (agents can use `hecate-agent hunt new --non-interactive` to create hunts autonomously)
-- Review agent-generated drafts (use `hecate-agent hunt validate` for automated checks)
-- Iterate on guardrails and approval gates
-
-## Common Questions
-
-**Q: Do I need to implement all levels?**
-A: No. Most teams will live at Levels 1-2. Levels 3-4 are optional maturity.
-
-**Q: How long does it take to get started?**
-A: Level 1 can be operational in a day. Level 2 takes about a week. Levels 3-4 depend on your technical capability and available tools.
-
-**Q: Can I customize the LOCK pattern?**
-A: Yes! Adapt it to your methodology. The structure is a starting point, not a prescription.
-
-**Q: What if we use a different hunting methodology (PEAK, TaHiTI)?**
-A: Hecate works with any methodology. LOCK is the documentation layer, not a replacement for your existing process.
-
-**Q: Do I need to use the CLI?**
-A: No. The CLI is optional convenience tooling. You can achieve all maturity levels (1-4) using just markdown files. The framework structure (hunts/, LOCK pattern, AGENTS.md) is what enables AI assistance, not the CLI.
-
-**Q: Can I use the CLI with my existing hunt files?**
-A: Yes! The CLI commands (`hecate-agent hunt list`, `hecate-agent hunt search`, `hecate-agent hunt validate`) work with any markdown files in the hunts/ directory, whether created manually or via CLI.
-
-## Need Help?
-
-- Browse [docs/](.) for detailed guides
-- Check [integrations/](../integrations/) for tool-specific setup
-- Review [hunts/](../hunts/) for example hunts
-- Open an issue on [GitHub](https://github.com/Hecate-Org/Hecate-Core/issues)
-
-Happy thrunting!
+For complete options, use the [CLI reference](CLI_REFERENCE.md). For adoption and
+team ownership, see [Using Hecate](https://github.com/Hecate-Org/Hecate-Core/blob/main/docs/USING_HECATE.md).
