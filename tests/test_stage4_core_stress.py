@@ -13,12 +13,13 @@ from __future__ import annotations
 
 import concurrent.futures
 import os
-import subprocess
 import time
 from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 
+from hecate_agent.cli import cli
 from hecate_agent.core.attack_matrix import (
     canonical_tactic,
     get_technique,
@@ -408,35 +409,25 @@ class TestCLIContractsAndWheelConsistency:
 
     def test_cli_help_and_subcommand_registration(self) -> None:
         """hecate-agent top-level CLI and all registered subcommands must display help cleanly."""
+        runner = CliRunner()
         commands = [
-            ["hecate-agent", "--help"],
-            ["hecate-agent", "hunt", "--help"],
-            ["hecate-agent", "research", "--help"],
-            ["hecate-agent", "investigate", "--help"],
-            ["hecate-agent", "attack", "--help"],
-            ["hecate-agent", "monitor", "--help"],
-            ["hecate-agent", "context", "--help"],
+            ["--help"],
+            ["hunt", "--help"],
+            ["research", "--help"],
+            ["investigate", "--help"],
+            ["attack", "--help"],
+            ["monitor", "--help"],
+            ["context", "--help"],
         ]
 
-        for cmd in commands:
-            res = subprocess.run(
-                ["uv", "run", *cmd],
-                cwd="/home/chemch/betas/Hecate-Core",
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            assert res.returncode == 0, f"Command {' '.join(cmd)} failed: {res.stderr}"
-            assert "Usage:" in res.stdout or "Options:" in res.stdout or "Commands:" in res.stdout
+        for args in commands:
+            res = runner.invoke(cli, args)
+            assert res.exit_code == 0, f"Command {' '.join(args)} failed: {res.output}"
+            assert "Usage:" in res.output or "Options:" in res.output or "Commands:" in res.output
 
     def test_cli_invalid_subcommand_behavior(self) -> None:
         """Invalid CLI subcommand must fail with non-zero exit code and informative error."""
-        res = subprocess.run(
-            ["uv", "run", "hecate-agent", "nonexistent-subcommand-xyz"],
-            cwd="/home/chemch/betas/Hecate-Core",
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert res.returncode != 0
-        assert "No such command" in res.stderr or "Error:" in res.stderr
+        runner = CliRunner()
+        res = runner.invoke(cli, ["nonexistent-subcommand-xyz"])
+        assert res.exit_code != 0
+        assert "No such command" in res.output or "Error:" in res.output
