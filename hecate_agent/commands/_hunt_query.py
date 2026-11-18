@@ -14,6 +14,7 @@ from rich.table import Table
 
 from hecate_agent.core.hunt_manager import HuntManager
 from hecate_agent.core.hunt_parser import validate_hunt_file_with_warnings
+from hecate_agent.core.workspace import workspace_root
 from hecate_agent.utils.validation import validate_hunt_id
 
 console = Console()
@@ -226,7 +227,7 @@ def _resolve_hunt_for_validation(hunt_id: str) -> Optional[Path]:
         console.print("[yellow]Expected format: H-0001[/yellow]")
         return None
 
-    hunts_dir = HuntManager().hunts_dir
+    hunts_dir = workspace_root() / "hunts"
     hunt_file = hunts_dir / f"{hunt_id}.md"
     if not hunt_file.exists():
         matching_files = list(hunts_dir.rglob(f"{hunt_id}.md"))
@@ -300,23 +301,24 @@ def validate(hunt_id: str) -> None:
         hunt_file = _resolve_hunt_for_validation(hunt_id)
         if hunt_file is None:
             import sys
+
             sys.exit(1)
 
         is_valid, _ = _validate_single_hunt(hunt_file)
         if not is_valid:
             import sys
+
             sys.exit(1)
     else:
         # Validate all hunts
         console.print("\n[bold]🔍 Validating all hunts...[/bold]\n")
 
-        manager = HuntManager()
-        hunts_dir = manager.hunts_dir
+        hunts_dir = workspace_root() / "hunts"
         if not hunts_dir.exists():
             console.print("[yellow]No hunts directory found.[/yellow]")
             return
 
-        hunt_files = manager.find_all_hunt_files()
+        hunt_files = HuntManager(hunts_dir).find_all_hunt_files()
 
         if not hunt_files:
             console.print("[yellow]No hunt files found.[/yellow]")
@@ -330,6 +332,7 @@ def validate(hunt_id: str) -> None:
         console.print(summary)
         if invalid_count > 0:
             import sys
+
             sys.exit(1)
 
 
