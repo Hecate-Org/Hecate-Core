@@ -16,21 +16,19 @@ import os
 import subprocess
 import time
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from hecate_agent.core.attack_matrix import (
     canonical_tactic,
-    get_sorted_tactics,
     get_technique,
 )
 from hecate_agent.core.grounding import audit_draft
 from hecate_agent.core.hunt_manager import HuntManager
-from hecate_agent.core.hunt_parser import HuntParser, parse_hunt_file, validate_hunt_file
+from hecate_agent.core.hunt_parser import HuntParser
 from hecate_agent.core.investigation_parser import InvestigationParser
 from hecate_agent.core.query_validator import QueryValidator
-from hecate_agent.core.research_manager import ResearchManager, ResearchParser
+from hecate_agent.core.research_manager import ResearchManager
 from hecate_agent.core.sigma_transpiler import SigmaTranspiler
 from hecate_agent.core.workspace import workspace_root
 
@@ -219,9 +217,7 @@ class TestSigmaTranspilerAndValidatorStress:
     def validator(self) -> QueryValidator:
         return QueryValidator()
 
-    def test_transpiler_resilience_to_malformed_and_injection_rules(
-        self, transpiler: SigmaTranspiler
-    ) -> None:
+    def test_transpiler_resilience_to_malformed_and_injection_rules(self, transpiler: SigmaTranspiler) -> None:
         """Transpiler must safely reject malformed or adversarial Sigma rules without unhandled exceptions."""
         malformed_rules = [
             # Missing detection
@@ -342,8 +338,7 @@ class TestAttackMatrixAndGrounding:
         cti_text = "Adversaries executed PowerShell to download payload from example.com."
         research_text = "Investigation confirmed PowerShell execution (T1059.001)."
         draft_prose = (
-            "The threat actor leveraged CVE-2029-99999 and exploited technique T9999 "
-            "to achieve persistence via rundll32.exe."
+            "The threat actor leveraged CVE-2029-99999 and exploited technique T9999 to achieve persistence via rundll32.exe."
         )
 
         report = audit_draft(draft_text=draft_prose, cti_text=cti_text, research_text=research_text)
