@@ -226,7 +226,7 @@ def _resolve_hunt_for_validation(hunt_id: str) -> Optional[Path]:
         console.print("[yellow]Expected format: H-0001[/yellow]")
         return None
 
-    hunts_dir = Path("hunts")
+    hunts_dir = HuntManager().hunts_dir
     hunt_file = hunts_dir / f"{hunt_id}.md"
     if not hunt_file.exists():
         matching_files = list(hunts_dir.rglob(f"{hunt_id}.md"))
@@ -310,12 +310,13 @@ def validate(hunt_id: str) -> None:
         # Validate all hunts
         console.print("\n[bold]🔍 Validating all hunts...[/bold]\n")
 
-        hunts_dir = Path("hunts")
+        manager = HuntManager()
+        hunts_dir = manager.hunts_dir
         if not hunts_dir.exists():
             console.print("[yellow]No hunts directory found.[/yellow]")
             return
 
-        hunt_files = HuntManager(hunts_dir).find_all_hunt_files()
+        hunt_files = manager.find_all_hunt_files()
 
         if not hunt_files:
             console.print("[yellow]No hunt files found.[/yellow]")
